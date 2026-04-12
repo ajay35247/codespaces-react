@@ -1,29 +1,40 @@
-import './App.css';
+import React, { useEffect } from 'react';
+import { BrowserRouter, useLocation } from 'react-router-dom';
+import { Provider } from 'react-redux';
+import { store } from './app/store';
+import { BrandHeader } from './components/BrandHeader';
+import { PrimaryNav } from './components/PrimaryNav';
+import { AppRoutes } from './routes/AppRoutes';
+import { CookieConsentBanner } from './components/CookieConsentBanner';
+import { Footer } from './components/Footer';
+import { trackPageView } from './utils/analytics';
 
-function App() {
+function AppWrapper() {
+  const location = useLocation();
+
+  useEffect(() => {
+    trackPageView(location.pathname);
+  }, [location.pathname]);
+
   return (
-    <div className="App">
-      <header className="App-header">
-        <img src="Octocat.png" className="App-logo" alt="logo" />
-        <p>
-          GitHub Codespaces <span className="heart">♥️</span> React
-        </p>
-        <p className="small">
-          Edit <code>src/App.jsx</code> and save to reload.
-        </p>
-        <p>
-          <a
-            className="App-link"
-            href="https://reactjs.org"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Learn React
-          </a>
-        </p>
-      </header>
-    </div>
+    <>
+      <BrandHeader />
+      <PrimaryNav />
+      <AppRoutes />
+      <Footer />
+      <CookieConsentBanner />
+    </>
   );
 }
 
-export default App;
+export default function App() {
+  return (
+    <Provider store={store}>
+      <div className="min-h-screen bg-slate-950 text-white">
+        <BrowserRouter>
+          <AppWrapper />
+        </BrowserRouter>
+      </div>
+    </Provider>
+  );
+}

@@ -1,41 +1,71 @@
-# GitHub Codespaces ♥️ React
+# Speedy Trucks Logistics Platform
 
-Welcome to your shiny new Codespace running React! We've got everything fired up and running for you to explore React.
+A starter scaffold for the `aptrucking.in` enterprise logistics platform.
 
-You've got a blank canvas to work on from a git perspective as well. There's a single initial commit with the what you're seeing right now - where you go from here is up to you!
+## What’s included
 
-Everything you do here is contained within this one codespace. There is no repository on GitHub yet. If and when you’re ready you can click "Publish Branch" and we’ll create your repository and push up your project. If you were just exploring then and have no further need for this code then you can simply delete your codespace and it's gone forever.
+- React + Vite frontend with role-based dashboards
+- Redux Toolkit state management
+- Tailwind-ready styling and modern enterprise UI
+- Node.js + Express backend API scaffold
+- MongoDB connection template with Mongoose
+- Route placeholders for authentication, loads, tracking, and payments
+- Docker container definitions and compose stack
+- Architecture and deployment documentation
 
-This project was bootstrapped for you with [Vite](https://vitejs.dev/).
+## Local development
 
-## Available Scripts
+### Frontend
+```bash
+npm install
+npm run start
+```
+Open http://localhost:3000
 
-In the project directory, you can run:
+### Environment
+Copy the example environment file and update settings before development:
+```bash
+cp .env.example .env
+```
 
-### `npm start`
+### Backend
+```bash
+cd backend
+npm install
+npm run dev
+```
+Open http://localhost:5000/api/health
 
-We've already run this for you in the `Codespaces: server` terminal window below. If you need to stop the server for any reason you can just run `npm start` again to bring it back online.
+### Backend environment
+Copy the backend example environment file and update settings before starting the server:
+```bash
+cd backend
+cp .env.example .env
+```
 
-Runs the app in the development mode.\
-Open [http://localhost:3000/](http://localhost:3000/) in the built-in Simple Browser (`Cmd/Ctrl + Shift + P > Simple Browser: Show`) to view your running application.
+### Docker Compose
+```bash
+docker-compose up --build
+```
 
-The page will reload automatically when you make changes.\
-You may also see any lint errors in the console.
+## Project structure
 
-### `npm test`
+- `src/` - frontend application components, pages, and routes
+- `backend/` - backend API server and schema models
+- `ARCHITECTURE.md` - platform architecture overview
+- `DEPLOYMENT.md` - deploy and Docker guide
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+## Notes
 
-### `npm run build`
-
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
-
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
-
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+This scaffold provides a strong foundation for the full Speedy Trucks platform:
+- freight marketplace
+- GPS tracking
+- broker workflows
+- fleet management
+- payment & escrow
+- GST billing
+- AI logistics engine
+- real-time and simulation modules
 
 ## Learn More
 
