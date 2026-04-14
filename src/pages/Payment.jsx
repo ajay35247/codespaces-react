@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSelector } from 'react-redux';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
@@ -9,19 +9,27 @@ const plans = [
   { id: 'enterprise', name: 'Enterprise', price: 4999, benefits: ['Unlimited loads', 'Dedicated account manager', 'Fleet analytics'] },
 ];
 
+function loadRazorpayScript() {
+  return new Promise((resolve) => {
+    if (window.Razorpay) {
+      return resolve(true);
+    }
+
+    const script = document.createElement('script');
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.onload = () => resolve(true);
+    script.onerror = () => resolve(false);
+    document.body.appendChild(script);
+  });
+}
+
 export function Payment() {
   const [status, setStatus] = useState(null);
-  const [searchParams] = useSearchParams();
-  const paymentStatus = searchParams.get('status');
+  const user = useSelector((state) => state.auth.user);
 
   useEffect(() => {
     document.title = 'Payments | Speedy Trucks';
-    if (paymentStatus === 'success') {
-      setStatus('success');
-    } else if (paymentStatus === 'cancel') {
-      setStatus('cancel');
-    }
-  }, [paymentStatus]);
+  }, []);
 
   const handlePayment = async (planId) => {
     setStatus('processing');
@@ -32,12 +40,46 @@ export function Payment() {
         body: JSON.stringify({ planId, currency: 'INR' }),
       });
       const data = await response.json();
-      if (!response.ok || !data.url) {
+      if (!response.ok || !data.orderId) {
         throw new Error(data.error || 'Payment gateway error');
       }
+
+      const loaded = await loadRazorpayScript();
+      if (!loaded) {
+        throw new Error('Unable to load Razorpay checkout');
+      }
+
+      const options = {
+        key: data.keyId,
+        amount: data.amount,
+        currency: data.currency,
+        name: 'Speedy Trucks',
+        description: data.plan.description,
+        order_id: data.orderId,
+        handler: function (response) {
+          if (response.razorpay_payment_id) {
+            setStatus('success');
+          } else {
+            setStatus('error');
+          }
+        },
+        prefill: {
+          name: user?.name || '',
+          email: user?.email || '',
+        },
+        notes: {
+          planId: data.plan.id,
+        },
+        theme: {
+          color: '#0B3D91',
+        },
+      };
+
+      const razorpay = new window.Razorpay(options);
+      razorpay.open();
       setStatus('redirect');
-      window.location.href = data.url;
     } catch (error) {
+      console.error(error);
       setStatus('error');
     }
   };
@@ -69,6 +111,7 @@ export function Payment() {
           ))}
         </div>
 
+        {status === 'processing' && <p className="mt-6 text-sky-300">Preparing checkout...</p>}
         {status === 'success' && <p className="mt-6 text-green-300">Payment success! Your subscription is active.</p>}
         {status === 'cancel' && <p className="mt-6 text-orange-300">Checkout canceled. You can retry a plan above.</p>}
         {status === 'redirect' && <p className="mt-6 text-sky-300">Redirecting to the checkout page...</p>}

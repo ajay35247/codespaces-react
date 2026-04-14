@@ -1,9 +1,11 @@
-import Stripe from 'stripe';
+import Razorpay from 'razorpay';
 import { Router } from 'express';
+import crypto from 'crypto';
 
 const router = Router();
-const stripeSecret = process.env.STRIPE_SECRET_KEY || '';
-const stripe = stripeSecret ? new Stripe(stripeSecret, { apiVersion: '2020-08-27' }) : null;
+const razorpayKeyId = process.env.RAZORPAY_KEY_ID || '';
+const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET || '';
+const razorpay = razorpayKeyId && razorpayKeySecret ? new Razorpay({ key_id: razorpayKeyId, key_secret: razorpayKeySecret }) : null;
 
 const plans = [
   { id: 'basic', title: 'Starter', price: 999, currency: 'INR', description: 'Up to 50 loads / month' },
@@ -16,7 +18,7 @@ router.get('/plans', (req, res) => {
 });
 
 router.post('/subscribe', async (req, res) => {
-  if (!stripe) {
+  if (!razorpay) {
     return res.status(500).json({ error: 'Payment gateway is not configured' });
   }
 
@@ -27,29 +29,27 @@ router.post('/subscribe', async (req, res) => {
   }
 
   try {
-    const clientUrl = process.env.CLIENT_URL || 'http://localhost:3000';
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ['card'],
-      mode: 'payment',
-      line_items: [
-        {
-          price_data: {
-            currency: currency || 'INR',
-            product_data: { name: plan.title },
-            unit_amount: plan.price * 100,
-          },
-          quantity: 1,
-        },
-      ],
-      success_url: `${clientUrl}/payment?session_id={CHECKOUT_SESSION_ID}&status=success`,
-      cancel_url: `${clientUrl}/payment?status=cancel`,
-      metadata: { planId: plan.id },
-    });
+    const amount = plan.price * 100;
+    const orderOptions = {
+      amount,
+      currency: currency || 'INR',
+      receipt: `receipt_${crypto.randomUUID()}`,
+      notes: { planId: plan.id },
+      payment_capture: 1,
+    };
 
-    return res.status(200).json({ url: session.url });
+    const order = await razorpay.orders.create(orderOptions);
+
+    return res.status(200).json({
+      orderId: order.id,
+      amount: order.amount,
+      currency: order.currency,
+      keyId: razorpayKeyId,
+      plan,
+    });
   } catch (error) {
-    console.error('Stripe checkout error:', error.message);
-    return res.status(500).json({ error: 'Failed to create Stripe checkout session' });
+    console.error('Razorpay order creation error:', error.message);
+    return res.status(500).json({ error: 'Failed to create payment order' });
   }
 });
 
