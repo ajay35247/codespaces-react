@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@capacitor/android": "^8.3.0",
+    "@capacitor/cli": "^8.3.0",
+    "@capacitor/core": "^8.3.0",
     "@heroicons/react": "^2.0.18",
     "@react-google-maps/api": "^2.20.8",
     "@reduxjs/toolkit": "^2.11.2",
@@ -25,7 +28,11 @@
     "build": "vite build",
     "preview": "vite preview",
     "docker:up": "docker-compose up --build",
-    "test": "vitest"
+    "test": "vitest",
+    "cap:init": "cap init \"Speedy Trucks\" \"com.speedytrucks.app\" --web-dir=dist",
+    "cap:add:android": "cap add android",
+    "cap:sync": "cap sync",
+    "cap:open:android": "cap open android"
   },
   "eslintConfig": {
     "extends": [
