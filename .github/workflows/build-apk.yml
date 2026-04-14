@@ -17,13 +17,15 @@ jobs:
       uses: actions/setup-node@v4
       with:
         node-version: '20'
-        cache: 'npm'
 
     - name: Install dependencies
       run: npm ci
 
     - name: Build web app
       run: npm run build
+
+    - name: Copy web assets to Android
+      run: cp -r dist android/app/src/main/assets/public
 
     - name: Setup Java
       uses: actions/setup-java@v4
@@ -33,27 +35,19 @@ jobs:
 
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
+      with:
+        api-level: 33
+        target: default
 
-    - name: Install Capacitor
-      run: npm install @capacitor/core @capacitor/cli @capacitor/android
-
-    - name: Initialize Capacitor
-      run: npx cap init "Speedy Trucks" "com.speedytrucks.app" --web-dir=dist
-
-    - name: Add Android platform
-      run: npx cap add android
-
-    - name: Sync Capacitor
-      run: npx cap sync android
-
-    - name: Build APK
+    - name: Build Android APK
       run: |
         cd android
         chmod +x gradlew
-        ./gradlew assembleDebug
+        ./gradlew assembleDebug --no-daemon
 
-    - name: Upload APK
+    - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       with:
         name: speedy-trucks-apk
         path: android/app/build/outputs/apk/debug/app-debug.apk
+        retention-days: 30
