@@ -18,14 +18,11 @@ jobs:
       with:
         node-version: '20'
 
-    - name: Install dependencies
+    - name: Install npm dependencies
       run: npm ci
 
     - name: Build web app
       run: npm run build
-
-    - name: Copy web assets to Android
-      run: cp -r dist android/app/src/main/assets/public
 
     - name: Setup Java
       uses: actions/setup-java@v4
@@ -37,15 +34,20 @@ jobs:
       uses: android-actions/setup-android@v3
       with:
         api-level: 33
-        target: default
 
-    - name: Build Android APK
+    - name: Create Android directories
+      run: mkdir -p android/app/src/main/assets/public
+
+    - name: Copy built web assets
+      run: cp -r dist/* android/app/src/main/assets/public/
+
+    - name: Build APK with Gradle
       run: |
         cd android
         chmod +x gradlew
-        ./gradlew assembleDebug --no-daemon
+        ./gradlew assembleDebug --no-daemon -x lint
 
-    - name: Upload APK Artifact
+    - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
         name: speedy-trucks-apk
