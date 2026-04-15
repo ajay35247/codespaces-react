@@ -2,41 +2,54 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { getAdminEmail, normalizeEmail } from '../utils/securityPolicy.js';
 
-const JWT_SECRET = process.env.JWT_SECRET;
-const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET;
-const JWT_EXPIRE = process.env.JWT_EXPIRE || '15m';
-const JWT_REFRESH_EXPIRE = process.env.JWT_REFRESH_EXPIRE || '7d';
+function getJwtConfig() {
+  const jwtSecret = process.env.JWT_SECRET;
+  const jwtRefreshSecret = process.env.JWT_REFRESH_SECRET;
+  const jwtExpire = process.env.JWT_EXPIRE || '15m';
+  const jwtRefreshExpire = process.env.JWT_REFRESH_EXPIRE || '7d';
 
-if (!JWT_SECRET || !JWT_REFRESH_SECRET) {
-  throw new Error('JWT_SECRET and JWT_REFRESH_SECRET must be set');
+  if (!jwtSecret || !jwtRefreshSecret) {
+    throw new Error('JWT_SECRET and JWT_REFRESH_SECRET must be set');
+  }
+
+  return {
+    jwtSecret,
+    jwtRefreshSecret,
+    jwtExpire,
+    jwtRefreshExpire,
+  };
 }
 
 /** Sign a short-lived access token (15 min default) */
 export function signToken(user) {
+  const { jwtSecret, jwtExpire } = getJwtConfig();
   return jwt.sign(
     { id: user._id, email: user.email, role: user.role, name: user.name },
-    JWT_SECRET,
-    { expiresIn: JWT_EXPIRE }
+    jwtSecret,
+    { expiresIn: jwtExpire }
   );
 }
 
 /** Sign a long-lived refresh token (7 days default) */
 export function signRefreshToken(user) {
+  const { jwtRefreshSecret, jwtRefreshExpire } = getJwtConfig();
   return jwt.sign(
     { id: user._id },
-    JWT_REFRESH_SECRET,
-    { expiresIn: JWT_REFRESH_EXPIRE }
+    jwtRefreshSecret,
+    { expiresIn: jwtRefreshExpire }
   );
 }
 
 /** Verify and decode an access token */
 export function verifyAccessToken(token) {
-  return jwt.verify(token, JWT_SECRET);
+  const { jwtSecret } = getJwtConfig();
+  return jwt.verify(token, jwtSecret);
 }
 
 /** Verify and decode a refresh token */
 export function verifyRefreshToken(token) {
-  return jwt.verify(token, JWT_REFRESH_SECRET);
+  const { jwtRefreshSecret } = getJwtConfig();
+  return jwt.verify(token, jwtRefreshSecret);
 }
 
 /** Hash a refresh token before storing in DB */

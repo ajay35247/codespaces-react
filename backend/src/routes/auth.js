@@ -502,3 +502,5 @@ router.get('/admin/security-events', verifyJWT, requireAjayAdmin, async (req, re
   }
 });
 
+export default router;
+
