@@ -59,6 +59,39 @@ const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://www.speedy-trucks.example.com';
 const CLIENT_URL = process.env.CLIENT_URL || 'https://www.speedy-trucks.example.com';
 
+async function connectRedisClient(url) {
+  const client = createClient({ url });
+  try {
+    await client.connect();
+    return client;
+  } catch (error) {
+    console.warn(`Redis unavailable, continuing without Redis-backed features: ${error.message}`);
+    try {
+      await client.disconnect();
+    } catch {
+      // Ignore disconnect failures for partially connected clients.
+    }
+    return null;
+  }
+}
+
+function createLimiter(options, redisClient, prefix) {
+  const limiterOptions = {
+    ...options,
+    standardHeaders: true,
+    legacyHeaders: false,
+  };
+
+  if (redisClient?.isOpen) {
+    limiterOptions.store = new RedisStore({
+      sendCommand: (...args) => redisClient.sendCommand(args),
+      prefix,
+    });
+  }
+
+  return rateLimit(limiterOptions);
+}
+
 const createApp = async () => {
   const app = express();
 
@@ -106,48 +139,32 @@ const createApp = async () => {
     next();
   });
 
-  const redisClient = createClient({ url: REDIS_URL });
-  await redisClient.connect();
+  const redisClient = await connectRedisClient(REDIS_URL);
 
-  const apiLimiter = rateLimit({
+  const apiLimiter = createLimiter({
     windowMs: parseInt(process.env.RATE_LIMIT_WINDOW || '900000', 10),
     max: parseInt(process.env.RATE_LIMIT_MAX || '1000', 10),
-    standardHeaders: true,
-    legacyHeaders: false,
-    store: new RedisStore({
-      sendCommand: (...args) => redisClient.sendCommand(args),
-      prefix: 'rl:'
-    }),
-  });
+  }, redisClient, 'rl:');
 
-  const authLimiter = rateLimit({
+  const authLimiter = createLimiter({
     windowMs: 15 * 60 * 1000,
     max: 20,
     message: 'Too many authentication requests from this IP, please try again later.',
-    standardHeaders: true,
-    legacyHeaders: false,
-    store: new RedisStore({
-      sendCommand: (...args) => redisClient.sendCommand(args),
-      prefix: 'rl:auth:'
-    }),
-  });
+  }, redisClient, 'rl:auth:');
 
-  const paymentLimiter = rateLimit({
+  const paymentLimiter = createLimiter({
     windowMs: 15 * 60 * 1000,
     max: 10,
     message: 'Too many payment attempts from this IP, please slow down.',
-    standardHeaders: true,
-    legacyHeaders: false,
-    store: new RedisStore({
-      sendCommand: (...args) => redisClient.sendCommand(args),
-      prefix: 'rl:payment:'
-    }),
-  });
+  }, redisClient, 'rl:payment:');
 
   app.use(apiLimiter);
 
   if (process.env.NODE_ENV === 'production') {
     app.use((req, res, next) => {
+      if (req.path === '/api/health') {
+        return next();
+      }
       if (req.headers['x-forwarded-proto'] === 'http') {
         return res.redirect(301, `https://${req.headers.host}${req.url}`);
       }
@@ -163,6 +180,9 @@ const createApp = async () => {
   await ensureAdminAccount();
 
   app.use((req, res, next) => {
+    if (req.path === '/api/health') {
+      return next();
+    }
     if (process.env.NODE_ENV === 'production' && req.secure !== true && req.headers['x-forwarded-proto'] !== 'https') {
       return res.status(400).json({ error: 'HTTPS is required' });
     }
@@ -179,7 +199,7 @@ const createApp = async () => {
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
       mongoState: mongoose.connection.readyState,
-      redisConnected: redisClient.isOpen ? 'connected' : 'disconnected'
+      redisConnected: redisClient?.isOpen ? 'connected' : 'disconnected'
     });
   });
 
@@ -216,10 +236,6 @@ const startWorker = async () => {
   const { app, redisClient } = await createApp();
   const server = createServer(app);
 
-  const pubClient = createClient({ url: REDIS_URL });
-  const subClient = pubClient.duplicate();
-  await Promise.all([pubClient.connect(), subClient.connect()]);
-
   const io = new Server(server, {
     path: '/socket.io',
     cors: {
@@ -230,7 +246,16 @@ const startWorker = async () => {
     transports: ['websocket', 'polling'],
   });
 
-  io.adapter(createAdapter(pubClient, subClient));
+  let pubClient = null;
+  let subClient = null;
+
+  if (redisClient?.isOpen) {
+    pubClient = await connectRedisClient(REDIS_URL);
+    subClient = pubClient ? await connectRedisClient(REDIS_URL) : null;
+    if (pubClient?.isOpen && subClient?.isOpen) {
+      io.adapter(createAdapter(pubClient, subClient));
+    }
+  }
 
   // Socket.IO JWT authentication middleware
   io.use((socket, next) => {
@@ -291,7 +316,15 @@ const startWorker = async () => {
     console.log('Graceful shutdown started');
     await io.close();
     await server.close();
-    await redisClient.disconnect();
+    if (subClient?.isOpen) {
+      await subClient.disconnect();
+    }
+    if (pubClient?.isOpen) {
+      await pubClient.disconnect();
+    }
+    if (redisClient?.isOpen) {
+      await redisClient.disconnect();
+    }
     process.exit(0);
   };
 
