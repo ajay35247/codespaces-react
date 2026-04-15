@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "worker": "node src/worker.js"
+    "worker": "node src/worker.js",
+    "test:security": "node --test tests/security/security-layers.test.js"
   },
   "dependencies": {
     "@socket.io/redis-adapter": "^8.3.0",

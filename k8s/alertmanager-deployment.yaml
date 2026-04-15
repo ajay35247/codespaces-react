@@ -1,0 +1,105 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager
+  labels:
+    app: alertmanager
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alertmanager
+  template:
+    metadata:
+      labels:
+        app: alertmanager
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: alertmanager
+          image: prom/alertmanager:v0.27.0
+          args:
+            - --config.file=/etc/alertmanager/alertmanager.yml
+            - --config.expand-env
+            - --storage.path=/alertmanager
+          ports:
+            - containerPort: 9093
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: ALERT_SLACK_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: speedy-trucks-secrets
+                  key: ALERT_SLACK_WEBHOOK_URL
+            - name: ALERT_EMAIL_FROM
+              valueFrom:
+                secretKeyRef:
+                  name: speedy-trucks-secrets
+                  key: ALERT_EMAIL_FROM
+            - name: ALERT_EMAIL_SMARTHOST
+              valueFrom:
+                secretKeyRef:
+                  name: speedy-trucks-secrets
+                  key: ALERT_EMAIL_SMARTHOST
+            - name: ALERT_EMAIL_AUTH_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: speedy-trucks-secrets
+                  key: ALERT_EMAIL_AUTH_USERNAME
+            - name: ALERT_EMAIL_AUTH_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: speedy-trucks-secrets
+                  key: ALERT_EMAIL_AUTH_PASSWORD
+            - name: ALERT_EMAIL_TO
+              valueFrom:
+                secretKeyRef:
+                  name: speedy-trucks-secrets
+                  key: ALERT_EMAIL_TO
+            - name: ALERT_PAGERDUTY_ROUTING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: speedy-trucks-secrets
+                  key: ALERT_PAGERDUTY_ROUTING_KEY
+          volumeMounts:
+            - name: alertmanager-config
+              mountPath: /etc/alertmanager
+            - name: alertmanager-data
+              mountPath: /alertmanager
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: alertmanager-config
+          configMap:
+            name: alertmanager-config
+        - name: alertmanager-data
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager
+  labels:
+    app: alertmanager
+spec:
+  type: ClusterIP
+  selector:
+    app: alertmanager
+  ports:
+    - port: 9093
+      targetPort: 9093
+      protocol: TCP

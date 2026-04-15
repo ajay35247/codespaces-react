@@ -10,8 +10,63 @@ data:
       scrape_interval: 15s
       evaluation_interval: 15s
       scrape_timeout: 10s
+      external_labels:
+        environment: staging
+    rule_files:
+      - /etc/prometheus/alerts.yml
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets: ['alertmanager:9093']
     scrape_configs:
       - job_name: backend
         metrics_path: /metrics
         static_configs:
           - targets: ['speedy-trucks-backend:5000']
+  alerts.yml: |
+    groups:
+      - name: security-alerts
+        rules:
+          - alert: BackendDown
+            expr: up{job="backend"} == 0
+            for: 2m
+            labels:
+              severity: critical
+              service: backend
+              team: security
+            annotations:
+              summary: "Backend target is down"
+              description: "Prometheus cannot scrape backend metrics for over 2 minutes."
+
+          - alert: HighAuthFailureRate
+            expr: sum(increase(speedy_trucks_auth_failures_total[10m])) > 30
+            for: 5m
+            labels:
+              severity: critical
+              service: backend
+              team: security
+            annotations:
+              summary: "High authentication failure rate"
+              description: "More than 30 authentication/authorization failures in 10 minutes."
+
+          - alert: Elevated5xxRate
+            expr: sum(increase(speedy_trucks_http_requests_total{status_code=~"5.."}[10m])) > 20
+            for: 5m
+            labels:
+              severity: warning
+              service: backend
+              team: platform
+            annotations:
+              summary: "Elevated backend 5xx error rate"
+              description: "Backend returned more than 20 5xx responses in 10 minutes."
+
+          - alert: SuspiciousAdminEndpointFailures
+            expr: sum(increase(speedy_trucks_auth_failures_total{path=~"/api/auth/admin.*"}[15m])) > 5
+            for: 3m
+            labels:
+              severity: critical
+              service: backend
+              team: security
+            annotations:
+              summary: "Suspicious failures on admin auth endpoints"
+              description: "Admin auth endpoints have repeated failed attempts."

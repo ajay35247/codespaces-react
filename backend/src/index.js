@@ -20,6 +20,7 @@ import connectDatabase from './config/db.js';
 import { globalErrorHandler } from './middleware/errorHandler.js';
 import { auditLogger } from './middleware/auditLogger.js';
 import { verifyAccessToken } from './middleware/authorize.js';
+import { ensureAdminAccount } from './services/securityBootstrap.js';
 
 promClient.collectDefaultMetrics({ timeout: 5000 });
 import authRoutes from './routes/auth.js';
@@ -33,6 +34,18 @@ import fleetRoutes from './routes/fleet.js';
 import supportRoutes from './routes/support.js';
 
 dotenv.config();
+
+const httpRequestsTotal = new promClient.Counter({
+  name: 'speedy_trucks_http_requests_total',
+  help: 'Total HTTP requests handled by the backend',
+  labelNames: ['method', 'path', 'status_code'],
+});
+
+const authFailuresTotal = new promClient.Counter({
+  name: 'speedy_trucks_auth_failures_total',
+  help: 'Total failed authentication and authorization events',
+  labelNames: ['path', 'status_code'],
+});
 
 // ── Startup env validation ─────────────────────────────────────────────────
 const REQUIRED_ENV = ['JWT_SECRET', 'JWT_REFRESH_SECRET', 'MONGODB_URI'];
@@ -54,10 +67,14 @@ const createApp = async () => {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        connectSrc: ["'self'", FRONTEND_URL, 'https:'],
-        scriptSrc: ["'self'", "'unsafe-inline'"],
+        connectSrc: ["'self'", FRONTEND_URL, CLIENT_URL, 'https:', 'wss:'],
+        scriptSrc: ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", 'data:', 'https:'],
+        objectSrc: ["'none'"],
+        frameAncestors: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
         frameSrc: ["'self'"],
       },
     },
@@ -78,6 +95,16 @@ const createApp = async () => {
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
   app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'tiny'));
+
+  app.use((req, res, next) => {
+    res.on('finish', () => {
+      httpRequestsTotal.inc({ method: req.method, path: req.path, status_code: String(res.statusCode) });
+      if (req.path.startsWith('/api/auth') && [401, 403, 423].includes(res.statusCode)) {
+        authFailuresTotal.inc({ path: req.path, status_code: String(res.statusCode) });
+      }
+    });
+    next();
+  });
 
   const redisClient = createClient({ url: REDIS_URL });
   await redisClient.connect();
@@ -132,7 +159,18 @@ const createApp = async () => {
     });
   }
 
-  connectDatabase();
+  await connectDatabase();
+  await ensureAdminAccount();
+
+  app.use((req, res, next) => {
+    if (process.env.NODE_ENV === 'production' && req.secure !== true && req.headers['x-forwarded-proto'] !== 'https') {
+      return res.status(400).json({ error: 'HTTPS is required' });
+    }
+    return next();
+  });
+
+  // Audit middleware must be registered before route handlers.
+  app.use('/api', auditLogger);
 
   app.get('/api/health', (req, res) => {
     res.json({
@@ -163,9 +201,6 @@ const createApp = async () => {
   app.use('/api/gst', gstRoutes);
   app.use('/api/broker', brokerRoutes);
   app.use('/api/fleet', fleetRoutes);
-
-  // Audit all mutating API requests
-  app.use('/api', auditLogger);
 
   app.use((req, res) => {
     res.status(404).json({ error: 'API endpoint not found' });

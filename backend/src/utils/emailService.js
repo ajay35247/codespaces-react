@@ -54,3 +54,18 @@ export async function sendPasswordResetEmail(user, resetUrl) {
     `,
   });
 }
+
+export async function sendAdminMfaCodeEmail(user, code) {
+  return sendMail({
+    from,
+    to: user.email,
+    subject: 'Your Speedy Trucks admin MFA code',
+    html: `
+      <p>Hi ${user.name},</p>
+      <p>Your one-time admin login verification code is:</p>
+      <p style="font-size: 24px; letter-spacing: 4px;"><strong>${code}</strong></p>
+      <p>This code expires in 5 minutes.</p>
+      <p>If you did not attempt this login, immediately reset your password and review account activity.</p>
+    `,
+  });
+}

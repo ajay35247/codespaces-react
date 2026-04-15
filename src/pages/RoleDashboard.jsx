@@ -1,7 +1,11 @@
 import { useMemo } from 'react';
 import { useParams } from 'react-router-dom';
+import { useSelector } from 'react-redux';
+import { Navigate } from 'react-router-dom';
 import { StatsCard } from '../components/StatsCard';
 import { ROLE_CARDS } from '../data/roles';
+
+const ADMIN_EMAIL = 'ajay35247@gmail.com';
 
 const ROLE_METRICS = {
   shipper: [
@@ -33,9 +37,19 @@ const ROLE_METRICS = {
 
 export function RoleDashboard() {
   const { role } = useParams();
+  const authRole = useSelector((state) => state.auth.role);
+  const authUser = useSelector((state) => state.auth.user);
 
   const card = useMemo(() => ROLE_CARDS.find((item) => item.key === role), [role]);
   const metrics = ROLE_METRICS[role] || [];
+
+  if (!authRole || role !== authRole) {
+    return <Navigate to="/" replace />;
+  }
+
+  if (authRole === 'admin' && authUser?.email?.toLowerCase() !== ADMIN_EMAIL) {
+    return <Navigate to="/" replace />;
+  }
 
   return (
     <main className="mx-auto max-w-7xl px-6 py-10 sm:px-10">

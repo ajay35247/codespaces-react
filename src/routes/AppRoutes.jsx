@@ -51,7 +51,14 @@ export function AppRoutes() {
           </ProtectedRoute>
         }
       />
-      <Route path="/dashboard/:role" element={<RoleDashboard />} />
+      <Route
+        path="/dashboard/:role"
+        element={
+          <ProtectedRoute allowedRoles={['shipper', 'driver', 'fleet-manager', 'broker', 'admin']}>
+            <RoleDashboard />
+          </ProtectedRoute>
+        }
+      />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

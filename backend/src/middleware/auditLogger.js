@@ -5,7 +5,7 @@ import AuditLog from '../schemas/AuditLogSchema.js';
  * (POST, PUT, PATCH, DELETE) after the response is sent.
  */
 export function auditLogger(req, res, next) {
-  const shouldLog = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method);
+  const shouldLog = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) || req.user?.role === 'admin';
   if (!shouldLog) return next();
 
   const originalJson = res.json.bind(res);
@@ -39,9 +39,9 @@ export function auditLogger(req, res, next) {
   next();
 }
 
-function sanitizeBody(body) {
+export function sanitizeBody(body) {
   const safe = { ...body };
-  for (const field of ['password', 'token', 'refreshToken', 'key', 'secret']) {
+  for (const field of ['password', 'token', 'refreshToken', 'mfaCode', 'mfaChallengeToken', 'key', 'secret']) {
     if (safe[field]) safe[field] = '[REDACTED]';
   }
   return safe;

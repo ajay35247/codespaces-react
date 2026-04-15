@@ -63,6 +63,8 @@ docker-compose -f docker-compose.yml up --build
 kubectl apply -f k8s/secrets.yaml
 kubectl apply -f k8s/mongo-statefulset.yaml
 kubectl apply -f k8s/redis-statefulset.yaml
+kubectl apply -f k8s/alertmanager-configmap.yaml
+kubectl apply -f k8s/alertmanager-deployment.yaml
 kubectl apply -f k8s/prometheus-configmap.yaml
 kubectl apply -f k8s/prometheus-deployment.yaml
 kubectl apply -f k8s/grafana-datasource-configmap.yaml
@@ -70,9 +72,16 @@ kubectl apply -f k8s/grafana-deployment.yaml
 kubectl apply -f k8s/backend-deployment.yaml
 kubectl apply -f k8s/backend-worker-deployment.yaml
 kubectl apply -f k8s/frontend-deployment.yaml
+kubectl apply -f k8s/network-policies.yaml
 kubectl apply -f k8s/mongo-backup-cronjob.yaml
 kubectl apply -f k8s/ingress-prod.yaml
 ```
+
+### Mandatory Security Verification
+```bash
+cd backend && npm run test:security
+```
+Expected result: 50 passed, 0 failed.
 
 ## CI / CD Pipeline
 Add a GitHub Actions workflow that builds Docker images, pushes to your container registry, and applies K8s manifests. Use branch protection and secret variables for registry credentials and cluster access.
@@ -116,16 +125,24 @@ JWT_SECRET=your-secure-random-secret-key
 FRONTEND_URL=https://aptrucking.in
 ```
 
+### Alerting Secrets (Kubernetes)
+Populate these in `k8s/secrets.yaml` before applying manifests:
+- `ALERT_SLACK_WEBHOOK_URL`
+- `ALERT_EMAIL_FROM`
+- `ALERT_EMAIL_SMARTHOST`
+- `ALERT_EMAIL_AUTH_USERNAME`
+- `ALERT_EMAIL_AUTH_PASSWORD`
+- `ALERT_EMAIL_TO`
+- `ALERT_PAGERDUTY_ROUTING_KEY`
+
 ---
 
 ## Authentication System
 
-### Demo Credentials (Development)
-```
-Email:    demo@aptrucking.in
-Password: demo123
-Role:     admin
-```
+### Admin Authentication Policy
+- Admin login is restricted to Ajay's configured admin email identity.
+- Admin login always requires MFA verification.
+- Guest/default/demo accounts are blocked by security policy.
 
 ### Auth Endpoints
 - **POST** `/api/auth/login` - Returns JWT token
@@ -172,7 +189,7 @@ All routes require valid JWT in `Authorization: Bearer <token>` header.
 - [ ] Set up environment files (.env, .env.local)
 
 ### Testing
-- [ ] Login with demo credentials
+- [ ] Verify Ajay admin login with MFA
 - [ ] Verify JWT persists in localStorage
 - [ ] Access protected routes with token
 - [ ] Test PDF download from GST page

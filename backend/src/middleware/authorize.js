@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
+import { getAdminEmail, normalizeEmail } from '../utils/securityPolicy.js';
 
 const JWT_SECRET = process.env.JWT_SECRET;
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET;
@@ -54,6 +55,9 @@ export function verifyJWT(req, res, next) {
   const token = authorization.slice(7);
   try {
     req.user = verifyAccessToken(token);
+    if (req.user.role === 'admin' && normalizeEmail(req.user.email) !== getAdminEmail()) {
+      return res.status(403).json({ error: 'Forbidden: invalid admin identity' });
+    }
     next();
   } catch (error) {
     if (error.name === 'TokenExpiredError') {
@@ -72,7 +76,20 @@ export function requireRole(allowedRoles = []) {
     if (allowedRoles.length > 0 && !allowedRoles.includes(req.user.role)) {
       return res.status(403).json({ error: 'Forbidden: insufficient role' });
     }
+    if (req.user.role === 'admin' && normalizeEmail(req.user.email) !== getAdminEmail()) {
+      return res.status(403).json({ error: 'Forbidden: invalid admin identity' });
+    }
     next();
   };
+}
+
+export function requireAjayAdmin(req, res, next) {
+  if (!req.user) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  if (req.user.role !== 'admin' || normalizeEmail(req.user.email) !== getAdminEmail()) {
+    return res.status(403).json({ error: 'Forbidden: admin access denied' });
+  }
+  return next();
 }
 

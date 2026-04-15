@@ -1,11 +1,37 @@
 import crypto from 'crypto';
 import rateLimit from 'express-rate-limit';
 import { Router } from 'express';
+import { body, validationResult } from 'express-validator';
 import User from '../schemas/UserSchema.js';
-import { verifyJWT, signToken, signRefreshToken, verifyRefreshToken, hashToken } from '../middleware/authorize.js';
-import { sendVerificationEmail, sendPasswordResetEmail } from '../utils/emailService.js';
+import AuditLog from '../schemas/AuditLogSchema.js';
+import {
+  verifyJWT,
+  signToken,
+  signRefreshToken,
+  verifyRefreshToken,
+  hashToken,
+  requireAjayAdmin,
+} from '../middleware/authorize.js';
+import { sendVerificationEmail, sendPasswordResetEmail, sendAdminMfaCodeEmail } from '../utils/emailService.js';
+import {
+  getAdminBootstrapPassword,
+  getAdminEmail,
+  getStrongPasswordErrors,
+  isAjayAdmin,
+  isBlockedAccountEmail,
+  normalizeEmail,
+} from '../utils/securityPolicy.js';
+import {
+  calculateLockUntil,
+  generateMfaCode,
+  incrementFailedAttempts,
+  isTemporarilyLocked,
+} from '../utils/accountSecurity.js';
 
 const router = Router();
+const LOGIN_MAX_FAILED_ATTEMPTS = 5;
+const LOGIN_LOCK_WINDOW_MS = 15 * 60 * 1000;
+const MFA_EXPIRY_MS = 5 * 60 * 1000;
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -17,12 +43,63 @@ const authLimiter = rateLimit({
 
 router.use(['/login', '/request-password-reset', '/refresh-token'], authLimiter);
 
-router.post('/register', async (req, res) => {
-  try {
-    const { email, password, name, role, phone, gstin } = req.body;
+function ensureValidRequest(req, res) {
+  const errors = validationResult(req);
+  if (errors.isEmpty()) {
+    return true;
+  }
+  res.status(400).json({ error: 'Invalid request payload', details: errors.array() });
+  return false;
+}
 
-    if (!email || !password || !name || !role) {
-      return res.status(400).json({ error: 'Email, password, name, and role are required' });
+async function recordFailedLogin(user) {
+  if (!user) return;
+
+  const next = incrementFailedAttempts(user.failedLoginCount, LOGIN_MAX_FAILED_ATTEMPTS);
+  user.failedLoginCount = next.nextCount;
+  if (next.shouldLock) {
+    user.lockUntil = calculateLockUntil(LOGIN_LOCK_WINDOW_MS);
+  }
+  await user.save();
+}
+
+function issueTokensForUser(user) {
+  const accessToken = signToken(user);
+  const refreshToken = signRefreshToken(user);
+  user.refreshTokens.push(hashToken(refreshToken));
+  if (user.refreshTokens.length > 5) {
+    user.refreshTokens = user.refreshTokens.slice(-5);
+  }
+  return { accessToken, refreshToken };
+}
+
+router.post('/register', [
+  body('email').isEmail().normalizeEmail(),
+  body('password').isString().isLength({ min: 12 }),
+  body('name').isString().trim().isLength({ min: 2, max: 120 }),
+  body('role').isString().isIn(['shipper', 'driver', 'fleet-manager', 'broker', 'admin']),
+  body('phone').optional().isString().trim().isLength({ max: 30 }),
+  body('gstin').optional().isString().trim().isLength({ max: 30 }),
+], async (req, res) => {
+  try {
+    if (!ensureValidRequest(req, res)) return;
+    const { password, name, role, phone, gstin } = req.body;
+    const email = normalizeEmail(req.body.email);
+
+    if (isBlockedAccountEmail(email)) {
+      return res.status(403).json({ error: 'This account is disabled by security policy' });
+    }
+
+    const passwordErrors = getStrongPasswordErrors(password);
+    if (passwordErrors.length > 0) {
+      return res.status(400).json({ error: 'Password does not meet complexity policy', details: passwordErrors });
+    }
+
+    if (role === 'admin' && email !== getAdminEmail()) {
+      return res.status(403).json({ error: 'Only the configured admin identity can register as admin' });
+    }
+    if (role === 'admin' && password !== getAdminBootstrapPassword()) {
+      return res.status(403).json({ error: 'Admin password must match the configured security policy' });
     }
 
     const existingUser = await User.findOne({ email });
@@ -38,23 +115,24 @@ router.post('/register', async (req, res) => {
       role,
       phone,
       gstin,
+      mfaEnabled: role === 'admin',
       verificationToken,
-      isEmailVerified: false,
+      isEmailVerified: role === 'admin',
     });
 
     await user.save();
-    const accessToken = signToken(user);
-    const refreshToken = signRefreshToken(user);
-    user.refreshTokens.push(hashToken(refreshToken));
+    const { accessToken, refreshToken } = issueTokensForUser(user);
     await user.save();
 
     const clientUrl = process.env.CLIENT_URL || 'http://localhost:3000';
     const verificationUrl = `${clientUrl}/verify-email/${verificationToken}`;
 
-    try {
-      await sendVerificationEmail(user, verificationUrl);
-    } catch (emailError) {
-      console.warn('Failed to send verification email:', emailError.message);
+    if (role !== 'admin') {
+      try {
+        await sendVerificationEmail(user, verificationUrl);
+      } catch (emailError) {
+        console.warn('Failed to send verification email:', emailError.message);
+      }
     }
 
     return res.status(201).json({
@@ -74,28 +152,17 @@ router.post('/register', async (req, res) => {
   }
 });
 
-router.post('/login', async (req, res) => {
+router.post('/login', [
+  body('email').isEmail().normalizeEmail(),
+  body('password').isString().isLength({ min: 1, max: 200 }),
+], async (req, res) => {
   try {
-    const { email, password } = req.body;
+    if (!ensureValidRequest(req, res)) return;
+    const email = normalizeEmail(req.body.email);
+    const { password } = req.body;
 
-    if (!email || !password) {
-      return res.status(400).json({ error: 'Email and password are required' });
-    }
-
-    // Demo user – development/staging only
-    if (process.env.NODE_ENV !== 'production' && email === 'demo@aptrucking.in' && password === 'demo123') {
-      const demoUser = {
-        _id: 'demo-user-001',
-        email: 'demo@aptrucking.in',
-        name: 'Demo User',
-        role: 'admin',
-        isEmailVerified: true,
-      };
-      return res.json({
-        token: signToken(demoUser),
-        refreshToken: 'demo-refresh-token',
-        user: { id: demoUser._id, email: demoUser.email, name: demoUser.name, role: demoUser.role, isEmailVerified: demoUser.isEmailVerified },
-      });
+    if (isBlockedAccountEmail(email)) {
+      return res.status(403).json({ error: 'This account is disabled by security policy' });
     }
 
     const user = await User.findOne({ email });
@@ -103,23 +170,120 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
+    if (isTemporarilyLocked(user.lockUntil)) {
+      return res.status(423).json({ error: 'Account temporarily locked due to failed login attempts' });
+    }
+
     const isPasswordValid = await user.comparePassword(password);
     if (!isPasswordValid) {
+      await recordFailedLogin(user);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
+    user.failedLoginCount = 0;
+    user.lockUntil = undefined;
+
     if (!user.isEmailVerified) {
+      await user.save();
       return res.status(403).json({ error: 'Please verify your email address first' });
     }
 
-    const accessToken = signToken(user);
-    const refreshToken = signRefreshToken(user);
+    if (user.role === 'admin') {
+      if (!isAjayAdmin(user.email, user.role)) {
+        await user.save();
+        return res.status(403).json({ error: 'Only Ajay is allowed to use the admin role' });
+      }
 
-    // Keep at most 5 active refresh tokens per user
-    user.refreshTokens.push(hashToken(refreshToken));
-    if (user.refreshTokens.length > 5) {
-      user.refreshTokens = user.refreshTokens.slice(-5);
+      const mfaCode = generateMfaCode();
+      const mfaChallengeToken = crypto.randomBytes(32).toString('hex');
+      user.mfaEnabled = true;
+      user.mfaCodeHash = hashToken(mfaCode);
+      user.mfaCodeExpires = new Date(Date.now() + MFA_EXPIRY_MS);
+      user.mfaChallengeHash = hashToken(mfaChallengeToken);
+      user.mfaChallengeExpires = new Date(Date.now() + MFA_EXPIRY_MS);
+      user.mfaAttemptCount = 0;
+      await user.save();
+
+      try {
+        await sendAdminMfaCodeEmail(user, mfaCode);
+      } catch (emailError) {
+        console.warn('Failed to send admin MFA code:', emailError.message);
+      }
+
+      return res.status(202).json({
+        mfaRequired: true,
+        mfaChallengeToken,
+        email: user.email,
+        expiresInSeconds: Math.floor(MFA_EXPIRY_MS / 1000),
+      });
     }
+
+    const { accessToken, refreshToken } = issueTokensForUser(user);
+    await user.save();
+
+    return res.json({
+      token: accessToken,
+      refreshToken,
+      user: {
+        id: user._id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        isEmailVerified: user.isEmailVerified,
+      },
+    });
+  } catch (error) {
+    console.error('Login error:', error.message);
+    return res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+router.post('/login/mfa-verify', [
+  body('email').isEmail().normalizeEmail(),
+  body('mfaChallengeToken').isString().isLength({ min: 32, max: 128 }),
+  body('mfaCode').matches(/^\d{6}$/),
+], async (req, res) => {
+  try {
+    if (!ensureValidRequest(req, res)) return;
+    const email = normalizeEmail(req.body.email);
+    const { mfaChallengeToken, mfaCode } = req.body;
+
+    const user = await User.findOne({ email, role: 'admin' });
+    if (!user || !isAjayAdmin(user.email, user.role)) {
+      return res.status(403).json({ error: 'Admin identity is not allowed' });
+    }
+
+    if (isTemporarilyLocked(user.lockUntil)) {
+      return res.status(423).json({ error: 'Account temporarily locked due to failed login attempts' });
+    }
+
+    const isChallengeValid = user.mfaChallengeHash
+      && user.mfaChallengeExpires
+      && user.mfaChallengeExpires.getTime() > Date.now()
+      && user.mfaChallengeHash === hashToken(mfaChallengeToken);
+
+    const isCodeValid = user.mfaCodeHash
+      && user.mfaCodeExpires
+      && user.mfaCodeExpires.getTime() > Date.now()
+      && user.mfaCodeHash === hashToken(mfaCode);
+
+    if (!isChallengeValid || !isCodeValid) {
+      const next = incrementFailedAttempts(user.mfaAttemptCount, LOGIN_MAX_FAILED_ATTEMPTS);
+      user.mfaAttemptCount = next.nextCount;
+      if (next.shouldLock) {
+        user.lockUntil = calculateLockUntil(LOGIN_LOCK_WINDOW_MS);
+      }
+      await user.save();
+      return res.status(401).json({ error: 'Invalid MFA code or challenge token' });
+    }
+
+    user.mfaAttemptCount = 0;
+    user.mfaCodeHash = undefined;
+    user.mfaCodeExpires = undefined;
+    user.mfaChallengeHash = undefined;
+    user.mfaChallengeExpires = undefined;
+
+    const { accessToken, refreshToken } = issueTokensForUser(user);
     await user.save();
 
     return res.json({
@@ -192,12 +356,10 @@ router.post('/logout', verifyJWT, async (req, res) => {
   }
 });
 
-router.post('/request-password-reset', async (req, res) => {
+router.post('/request-password-reset', [body('email').isEmail().normalizeEmail()], async (req, res) => {
   try {
-    const { email } = req.body;
-    if (!email) {
-      return res.status(400).json({ error: 'Email is required' });
-    }
+    if (!ensureValidRequest(req, res)) return;
+    const email = normalizeEmail(req.body.email);
 
     const user = await User.findOne({ email });
     // Always return 200 to prevent email enumeration
@@ -230,13 +392,18 @@ router.post('/reset-password', async (req, res) => {
     if (!token || !password) {
       return res.status(400).json({ error: 'Token and password are required' });
     }
-    if (password.length < 8) {
-      return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    const passwordErrors = getStrongPasswordErrors(password);
+    if (passwordErrors.length > 0) {
+      return res.status(400).json({ error: 'Password does not meet complexity policy', details: passwordErrors });
     }
 
     const user = await User.findOne({ resetToken: token, resetTokenExpires: { $gt: Date.now() } });
     if (!user) {
       return res.status(400).json({ error: 'Invalid or expired reset token' });
+    }
+
+    if (isAjayAdmin(user.email, user.role) && password !== getAdminBootstrapPassword()) {
+      return res.status(403).json({ error: 'Admin password must match the configured security policy' });
     }
 
     user.password = password;
@@ -277,9 +444,6 @@ router.get('/verify-email/:token', async (req, res) => {
 
 router.get('/me', verifyJWT, async (req, res) => {
   try {
-    if (req.user.id === 'demo-user-001') {
-      return res.json({ user: { id: 'demo-user-001', email: 'demo@aptrucking.in', name: 'Demo User', role: 'admin', isEmailVerified: true } });
-    }
     const user = await User.findById(req.user.id).select('-password -refreshTokens');
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
@@ -288,6 +452,53 @@ router.get('/me', verifyJWT, async (req, res) => {
   } catch (error) {
     console.error('Auth check error:', error.message);
     return res.status(500).json({ error: 'Authentication check failed' });
+  }
+});
+
+router.get('/admin/audit-logs', verifyJWT, requireAjayAdmin, async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit || '100', 10), 200);
+    const logs = await AuditLog.find({}).sort({ createdAt: -1 }).limit(limit);
+    return res.json({ logs });
+  } catch (error) {
+    console.error('Audit log fetch error:', error.message);
+    return res.status(500).json({ error: 'Unable to fetch audit logs' });
+  }
+});
+
+router.get('/admin/security-events', verifyJWT, requireAjayAdmin, async (req, res) => {
+  try {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    const [failedLogins, failedMfa, lockouts] = await Promise.all([
+      AuditLog.countDocuments({ path: '/login', statusCode: { $in: [401, 403, 423] }, createdAt: { $gte: since } }),
+      AuditLog.countDocuments({ path: '/login/mfa-verify', statusCode: { $in: [401, 423] }, createdAt: { $gte: since } }),
+      AuditLog.countDocuments({ statusCode: 423, createdAt: { $gte: since } }),
+    ]);
+
+    const topSourceIps = await AuditLog.aggregate([
+      {
+        $match: {
+          statusCode: { $in: [401, 403, 423] },
+          path: { $in: ['/login', '/login/mfa-verify'] },
+          createdAt: { $gte: since },
+        },
+      },
+      { $group: { _id: '$ipAddress', attempts: { $sum: 1 } } },
+      { $sort: { attempts: -1 } },
+      { $limit: 10 },
+    ]);
+
+    return res.json({
+      window: '24h',
+      failedLogins,
+      failedMfa,
+      lockouts,
+      topSourceIps,
+    });
+  } catch (error) {
+    console.error('Security events fetch error:', error.message);
+    return res.status(500).json({ error: 'Unable to fetch security events' });
   }
 });
 
