@@ -17,6 +17,9 @@ import { createAdapter } from '@socket.io/redis-adapter';
 import promClient from 'prom-client';
 import dotenv from 'dotenv';
 import connectDatabase from './config/db.js';
+import { globalErrorHandler } from './middleware/errorHandler.js';
+import { auditLogger } from './middleware/auditLogger.js';
+import { verifyAccessToken } from './middleware/authorize.js';
 
 promClient.collectDefaultMetrics({ timeout: 5000 });
 import authRoutes from './routes/auth.js';
@@ -30,8 +33,12 @@ import fleetRoutes from './routes/fleet.js';
 import supportRoutes from './routes/support.js';
 
 dotenv.config();
-if (!process.env.JWT_SECRET) {
-  throw new Error('JWT_SECRET is required for production deployments');
+
+// ── Startup env validation ─────────────────────────────────────────────────
+const REQUIRED_ENV = ['JWT_SECRET', 'JWT_REFRESH_SECRET', 'MONGODB_URI'];
+const missing = REQUIRED_ENV.filter((k) => !process.env[k]);
+if (missing.length) {
+  throw new Error(`Missing required env vars: ${missing.join(', ')}`);
 }
 const PORT = process.env.PORT || 5000;
 const USE_CLUSTER = process.env.USE_CLUSTER === 'true';
@@ -157,9 +164,15 @@ const createApp = async () => {
   app.use('/api/broker', brokerRoutes);
   app.use('/api/fleet', fleetRoutes);
 
+  // Audit all mutating API requests
+  app.use('/api', auditLogger);
+
   app.use((req, res) => {
     res.status(404).json({ error: 'API endpoint not found' });
   });
+
+  // Global error handler – must be last
+  app.use(globalErrorHandler);
 
   return { app, redisClient };
 };
@@ -184,28 +197,54 @@ const startWorker = async () => {
 
   io.adapter(createAdapter(pubClient, subClient));
 
+  // Socket.IO JWT authentication middleware
+  io.use((socket, next) => {
+    const token = socket.handshake.auth?.token || socket.handshake.headers?.authorization?.slice(7);
+    if (!token) {
+      return next(new Error('Authentication required'));
+    }
+    try {
+      socket.user = verifyAccessToken(token);
+      next();
+    } catch {
+      next(new Error('Invalid or expired token'));
+    }
+  });
+
   io.on('connection', (socket) => {
-    socket.on('join', (userId) => {
-      socket.join(userId);
+    // Auto-join personal room authenticated by JWT
+    socket.join(socket.user.id);
+
+    socket.on('join-vehicle', (vehicleId) => {
+      socket.join(`vehicle:${vehicleId}`);
     });
 
-    socket.on('leave', (userId) => {
-      socket.leave(userId);
+    socket.on('leave-vehicle', (vehicleId) => {
+      socket.leave(`vehicle:${vehicleId}`);
     });
 
     socket.on('update-location', async (data) => {
+      if (!data?.vehicleId || !data?.location?.lat || !data?.location?.lng) return;
+      // Only drivers can push location
+      if (!['driver', 'fleet-manager'].includes(socket.user.role)) return;
+
       try {
         await mongoose.connection.db.collection('vehicles').updateOne(
           { _id: new mongoose.Types.ObjectId(data.vehicleId) },
           { $set: { currentLocation: data.location, updatedAt: new Date() } }
         );
-        io.to(data.vehicleId).emit('vehicle-location-updated', {
+        io.to(`vehicle:${data.vehicleId}`).emit('vehicle-location-updated', {
           vehicleId: data.vehicleId,
-          location: data.location
+          location: data.location,
+          updatedAt: new Date().toISOString(),
         });
       } catch (err) {
-        console.error('Location update error:', err);
+        console.error('Location update error:', err.message);
       }
+    });
+
+    socket.on('disconnect', () => {
+      socket.leave(socket.user.id);
     });
   });
 

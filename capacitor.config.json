@@ -1,5 +1,21 @@
 {
   "appId": "com.speedytrucks.app",
   "appName": "Speedy Trucks",
-  "webDir": "dist"
+  "webDir": "dist",
+  "android": {
+    "buildOptions": {
+      "keystorePath": "android/app/speedy-trucks.keystore",
+      "keystoreAlias": "speedy-trucks"
+    },
+    "webContentsDebuggingEnabled": false
+  },
+  "server": {
+    "cleartext": false
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 2000,
+      "backgroundColor": "#1a1a2e"
+    }
+  }
 }

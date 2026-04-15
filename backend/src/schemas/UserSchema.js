@@ -24,6 +24,7 @@ const UserSchema = new mongoose.Schema({
   verificationToken: { type: String },
   resetToken: { type: String },
   resetTokenExpires: { type: Date },
+  refreshTokens: [{ type: String }],  // stored hashed
   trucks: [TruckSchema],
   createdAt: { type: Date, default: Date.now },
 });
@@ -33,7 +34,7 @@ UserSchema.pre('save', async function (next) {
     return next();
   }
   try {
-    const salt = await bcrypt.genSalt(10);
+    const salt = await bcrypt.genSalt(12);
     this.password = await bcrypt.hash(this.password, salt);
     next();
   } catch (error) {

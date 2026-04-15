@@ -3,41 +3,44 @@ import io, { Socket } from 'socket.io-client';
 
 const SOCKET_URL = import.meta.env.VITE_API_URL?.replace('/api', '') || 'http://localhost:5000';
 
+function getAuthToken(): string | null {
+  try {
+    const raw = localStorage.getItem('speedy-trucks-auth');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed?.token ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export const useSocket = (userId?: string) => {
   const [socket, setSocket] = useState<Socket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout>();
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
 
   useEffect(() => {
+    const token = getAuthToken();
     const newSocket = io(SOCKET_URL, {
       transports: ['websocket', 'polling'],
       timeout: 20000,
       forceNew: true,
+      auth: { token },
     });
 
     newSocket.on('connect', () => {
-      console.log('Connected to server');
       setIsConnected(true);
-
-      if (userId) {
-        newSocket.emit('join', userId);
-      }
     });
 
     newSocket.on('disconnect', () => {
-      console.log('Disconnected from server');
       setIsConnected(false);
     });
 
     newSocket.on('connect_error', (error) => {
-      console.error('Connection error:', error);
+      console.error('Socket connection error:', error.message);
       setIsConnected(false);
 
-      // Retry connection after delay
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-      }
-
+      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = setTimeout(() => {
         newSocket.connect();
       }, 5000);
@@ -46,19 +49,10 @@ export const useSocket = (userId?: string) => {
     setSocket(newSocket);
 
     return () => {
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-      }
+      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
       newSocket.disconnect();
     };
-  }, [userId]);
-
-  // Join room when userId changes
-  useEffect(() => {
-    if (socket && userId && isConnected) {
-      socket.emit('join', userId);
-    }
-  }, [socket, userId, isConnected]);
+  }, []);  // token is read once on mount; reconnect triggers re-auth via auth.token
 
   const emit = (event: string, data?: any) => {
     if (socket && isConnected) {

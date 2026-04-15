@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import rateLimit from 'express-rate-limit';
 import { Router } from 'express';
 import User from '../schemas/UserSchema.js';
-import { verifyJWT, signToken } from '../middleware/authorize.js';
+import { verifyJWT, signToken, signRefreshToken, verifyRefreshToken, hashToken } from '../middleware/authorize.js';
 import { sendVerificationEmail, sendPasswordResetEmail } from '../utils/emailService.js';
 
 const router = Router();
@@ -15,7 +15,7 @@ const authLimiter = rateLimit({
   message: { error: 'Too many auth requests, please try again later.' },
 });
 
-router.use(['/login', '/request-password-reset'], authLimiter);
+router.use(['/login', '/request-password-reset', '/refresh-token'], authLimiter);
 
 router.post('/register', async (req, res) => {
   try {
@@ -30,7 +30,7 @@ router.post('/register', async (req, res) => {
       return res.status(409).json({ error: 'Email already registered' });
     }
 
-    const verificationToken = crypto.randomBytes(20).toString('hex');
+    const verificationToken = crypto.randomBytes(32).toString('hex');
     const user = new User({
       email,
       password,
@@ -43,7 +43,11 @@ router.post('/register', async (req, res) => {
     });
 
     await user.save();
-    const token = signToken(user);
+    const accessToken = signToken(user);
+    const refreshToken = signRefreshToken(user);
+    user.refreshTokens.push(hashToken(refreshToken));
+    await user.save();
+
     const clientUrl = process.env.CLIENT_URL || 'http://localhost:3000';
     const verificationUrl = `${clientUrl}/verify-email/${verificationToken}`;
 
@@ -54,7 +58,8 @@ router.post('/register', async (req, res) => {
     }
 
     return res.status(201).json({
-      token,
+      token: accessToken,
+      refreshToken,
       user: {
         id: user._id,
         email: user.email,
@@ -62,7 +67,6 @@ router.post('/register', async (req, res) => {
         role: user.role,
         isEmailVerified: user.isEmailVerified,
       },
-      verificationUrl,
     });
   } catch (error) {
     console.error('Registration error:', error.message);
@@ -78,7 +82,8 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'Email and password are required' });
     }
 
-    if (email === 'demo@aptrucking.in' && password === 'demo123') {
+    // Demo user – development/staging only
+    if (process.env.NODE_ENV !== 'production' && email === 'demo@aptrucking.in' && password === 'demo123') {
       const demoUser = {
         _id: 'demo-user-001',
         email: 'demo@aptrucking.in',
@@ -86,16 +91,10 @@ router.post('/login', async (req, res) => {
         role: 'admin',
         isEmailVerified: true,
       };
-      const token = signToken(demoUser);
       return res.json({
-        token,
-        user: {
-          id: demoUser._id,
-          email: demoUser.email,
-          name: demoUser.name,
-          role: demoUser.role,
-          isEmailVerified: demoUser.isEmailVerified,
-        },
+        token: signToken(demoUser),
+        refreshToken: 'demo-refresh-token',
+        user: { id: demoUser._id, email: demoUser.email, name: demoUser.name, role: demoUser.role, isEmailVerified: demoUser.isEmailVerified },
       });
     }
 
@@ -113,10 +112,19 @@ router.post('/login', async (req, res) => {
       return res.status(403).json({ error: 'Please verify your email address first' });
     }
 
-    const token = signToken(user);
+    const accessToken = signToken(user);
+    const refreshToken = signRefreshToken(user);
+
+    // Keep at most 5 active refresh tokens per user
+    user.refreshTokens.push(hashToken(refreshToken));
+    if (user.refreshTokens.length > 5) {
+      user.refreshTokens = user.refreshTokens.slice(-5);
+    }
+    await user.save();
 
     return res.json({
-      token,
+      token: accessToken,
+      refreshToken,
       user: {
         id: user._id,
         email: user.email,
@@ -131,6 +139,59 @@ router.post('/login', async (req, res) => {
   }
 });
 
+/** Rotate access token using a valid refresh token */
+router.post('/refresh-token', async (req, res) => {
+  try {
+    const { refreshToken } = req.body;
+    if (!refreshToken) {
+      return res.status(400).json({ error: 'Refresh token is required' });
+    }
+
+    let decoded;
+    try {
+      decoded = verifyRefreshToken(refreshToken);
+    } catch {
+      return res.status(401).json({ error: 'Invalid or expired refresh token' });
+    }
+
+    const hashed = hashToken(refreshToken);
+    const user = await User.findOne({ _id: decoded.id, refreshTokens: hashed });
+    if (!user) {
+      return res.status(401).json({ error: 'Refresh token revoked' });
+    }
+
+    // Rotate: remove old, issue new
+    user.refreshTokens = user.refreshTokens.filter((t) => t !== hashed);
+    const newAccessToken = signToken(user);
+    const newRefreshToken = signRefreshToken(user);
+    user.refreshTokens.push(hashToken(newRefreshToken));
+    if (user.refreshTokens.length > 5) {
+      user.refreshTokens = user.refreshTokens.slice(-5);
+    }
+    await user.save();
+
+    return res.json({ token: newAccessToken, refreshToken: newRefreshToken });
+  } catch (error) {
+    console.error('Refresh token error:', error.message);
+    return res.status(500).json({ error: 'Token refresh failed' });
+  }
+});
+
+/** Logout – revoke the presented refresh token */
+router.post('/logout', verifyJWT, async (req, res) => {
+  try {
+    const { refreshToken } = req.body;
+    if (refreshToken) {
+      const hashed = hashToken(refreshToken);
+      await User.updateOne({ _id: req.user.id }, { $pull: { refreshTokens: hashed } });
+    }
+    return res.json({ message: 'Logged out successfully' });
+  } catch (error) {
+    console.error('Logout error:', error.message);
+    return res.status(500).json({ error: 'Logout failed' });
+  }
+});
+
 router.post('/request-password-reset', async (req, res) => {
   try {
     const { email } = req.body;
@@ -138,16 +199,13 @@ router.post('/request-password-reset', async (req, res) => {
       return res.status(400).json({ error: 'Email is required' });
     }
 
-    if (email === 'demo@aptrucking.in') {
-      return res.json({ message: 'Password reset link has been sent to your email.', resetToken: 'demo-reset-token' });
-    }
-
     const user = await User.findOne({ email });
+    // Always return 200 to prevent email enumeration
     if (!user) {
-      return res.json({ message: 'If the email exists, a reset link has been sent.' });
+      return res.json({ message: 'If that email is registered you will receive a reset link.' });
     }
 
-    user.resetToken = crypto.randomBytes(20).toString('hex');
+    user.resetToken = crypto.randomBytes(32).toString('hex');
     user.resetTokenExpires = Date.now() + 3600000;
     await user.save();
     const clientUrl = process.env.CLIENT_URL || 'http://localhost:3000';
@@ -159,10 +217,7 @@ router.post('/request-password-reset', async (req, res) => {
       console.warn('Failed to send password reset email:', emailError.message);
     }
 
-    return res.json({
-      message: 'Password reset link generated.',
-      resetUrl,
-    });
+    return res.json({ message: 'If that email is registered you will receive a reset link.' });
   } catch (error) {
     console.error('Password reset request error:', error.message);
     return res.status(500).json({ error: 'Password reset request failed' });
@@ -175,9 +230,8 @@ router.post('/reset-password', async (req, res) => {
     if (!token || !password) {
       return res.status(400).json({ error: 'Token and password are required' });
     }
-
-    if (token === 'demo-reset-token') {
-      return res.json({ message: 'Password reset for demo account successful' });
+    if (password.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters' });
     }
 
     const user = await User.findOne({ resetToken: token, resetTokenExpires: { $gt: Date.now() } });
@@ -188,6 +242,7 @@ router.post('/reset-password', async (req, res) => {
     user.password = password;
     user.resetToken = undefined;
     user.resetTokenExpires = undefined;
+    user.refreshTokens = []; // invalidate all sessions on password reset
     await user.save();
 
     return res.json({ message: 'Password has been reset successfully' });
@@ -202,10 +257,6 @@ router.get('/verify-email/:token', async (req, res) => {
     const { token } = req.params;
     if (!token) {
       return res.status(400).json({ error: 'Token is required' });
-    }
-
-    if (token === 'demo-verification-token') {
-      return res.json({ message: 'Email verified successfully for demo user' });
     }
 
     const user = await User.findOne({ verificationToken: token });
@@ -226,7 +277,10 @@ router.get('/verify-email/:token', async (req, res) => {
 
 router.get('/me', verifyJWT, async (req, res) => {
   try {
-    const user = await User.findById(req.user.id).select('-password');
+    if (req.user.id === 'demo-user-001') {
+      return res.json({ user: { id: 'demo-user-001', email: 'demo@aptrucking.in', name: 'Demo User', role: 'admin', isEmailVerified: true } });
+    }
+    const user = await User.findById(req.user.id).select('-password -refreshTokens');
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -237,4 +291,3 @@ router.get('/me', verifyJWT, async (req, res) => {
   }
 });
 
-export default router;

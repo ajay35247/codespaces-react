@@ -10,10 +10,13 @@ class ApiError extends Error {
 class ApiService {
   private baseURL: string;
   private token: string | null = null;
+  private refreshToken: string | null = null;
+  private refreshPromise: Promise<void> | null = null;
 
   constructor(baseURL: string = import.meta.env.VITE_API_URL || 'http://localhost:5000/api') {
     this.baseURL = baseURL;
     this.token = localStorage.getItem('authToken');
+    this.refreshToken = localStorage.getItem('refreshToken');
   }
 
   setToken(token: string) {
@@ -21,9 +24,29 @@ class ApiService {
     localStorage.setItem('authToken', token);
   }
 
+  setRefreshToken(token: string) {
+    this.refreshToken = token;
+    localStorage.setItem('refreshToken', token);
+  }
+
   clearToken() {
     this.token = null;
+    this.refreshToken = null;
     localStorage.removeItem('authToken');
+    localStorage.removeItem('refreshToken');
+  }
+
+  private async tryRefresh(): Promise<void> {
+    if (!this.refreshToken) throw new Error('No refresh token');
+    const res = await fetch(`${this.baseURL}/auth/refresh-token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken: this.refreshToken }),
+    });
+    if (!res.ok) throw new Error('Refresh failed');
+    const data = await res.json();
+    this.setToken(data.token);
+    this.setRefreshToken(data.refreshToken);
   }
 
   private async request<T>(
@@ -51,6 +74,21 @@ class ApiService {
       const response = await fetch(url, config);
 
       if (response.status === 401) {
+        const body = await response.json().catch(() => ({}));
+        // Token expired – try silent refresh once
+        if (body?.code === 'TOKEN_EXPIRED' && retryCount === 0 && this.refreshToken) {
+          if (!this.refreshPromise) {
+            this.refreshPromise = this.tryRefresh().finally(() => { this.refreshPromise = null; });
+          }
+          try {
+            await this.refreshPromise;
+            return this.request<T>(endpoint, options, retryCount + 1);
+          } catch {
+            this.clearToken();
+            window.location.href = '/login';
+            throw new ApiError(401, 'Session expired');
+          }
+        }
         this.clearToken();
         window.location.href = '/login';
         throw new ApiError(401, 'Unauthorized');
@@ -58,7 +96,7 @@ class ApiService {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new ApiError(response.status, errorData.message || 'Request failed', errorData);
+        throw new ApiError(response.status, errorData.error || errorData.message || 'Request failed', errorData);
       }
 
       const data = await response.json();
@@ -68,8 +106,8 @@ class ApiService {
         throw error;
       }
 
-      // Retry logic for network errors
-      if (retryCount < 3 && (error.name === 'TypeError' || error.message.includes('fetch'))) {
+      // Retry on transient network errors (max 3 attempts with exponential backoff)
+      if (retryCount < 3 && (error instanceof TypeError || (error as Error).message?.includes('fetch'))) {
         await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
         return this.request<T>(endpoint, options, retryCount + 1);
       }
@@ -79,14 +117,17 @@ class ApiService {
   }
 
   // Auth methods
-  async login(email: string, password: string): Promise<ApiResponse<{ user: any; token: string }>> {
-    const response = await this.request<ApiResponse<{ user: any; token: string }>>('/auth/login', {
+  async login(email: string, password: string): Promise<{ user: any; token: string; refreshToken: string }> {
+    const response = await this.request<{ user: any; token: string; refreshToken: string }>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     });
 
-    if (response.data?.token) {
-      this.setToken(response.data.token);
+    if (response?.token) {
+      this.setToken(response.token);
+    }
+    if (response?.refreshToken) {
+      this.setRefreshToken(response.refreshToken);
     }
 
     return response;
@@ -98,26 +139,37 @@ class ApiService {
     role: string;
     name: string;
     phone: string;
-  }): Promise<ApiResponse<{ user: any; token: string }>> {
-    const response = await this.request<ApiResponse<{ user: any; token: string }>>('/auth/register', {
+  }): Promise<{ user: any; token: string; refreshToken: string }> {
+    const response = await this.request<{ user: any; token: string; refreshToken: string }>('/auth/register', {
       method: 'POST',
       body: JSON.stringify(userData),
     });
 
-    if (response.data?.token) {
-      this.setToken(response.data.token);
+    if (response?.token) {
+      this.setToken(response.token);
+    }
+    if (response?.refreshToken) {
+      this.setRefreshToken(response.refreshToken);
     }
 
     return response;
   }
 
-  async getProfile(): Promise<ApiResponse<any>> {
-    return this.request<ApiResponse<any>>('/auth/me');
+  async logout(): Promise<void> {
+    await this.request('/auth/logout', {
+      method: 'POST',
+      body: JSON.stringify({ refreshToken: this.refreshToken }),
+    }).catch(() => {});
+    this.clearToken();
+  }
+
+  async getProfile(): Promise<any> {
+    return this.request<any>('/auth/me');
   }
 
   // Vehicle methods
-  async getVehicles(): Promise<ApiResponse<any[]>> {
-    return this.request<ApiResponse<any[]>>('/vehicles');
+  async getVehicles(): Promise<any[]> {
+    return this.request<any[]>('/vehicles');
   }
 
   async createVehicle(vehicleData: any): Promise<ApiResponse<any>> {
