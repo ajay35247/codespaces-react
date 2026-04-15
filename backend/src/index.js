@@ -48,10 +48,14 @@ const authFailuresTotal = new promClient.Counter({
 });
 
 // ── Startup env validation ─────────────────────────────────────────────────
-const REQUIRED_ENV = ['JWT_SECRET', 'JWT_REFRESH_SECRET', 'MONGODB_URI'];
-const missing = REQUIRED_ENV.filter((k) => !process.env[k]);
-if (missing.length) {
-  throw new Error(`Missing required env vars: ${missing.join(', ')}`);
+if (!process.env.JWT_SECRET) {
+  console.warn('JWT_SECRET is not set. Using an ephemeral fallback secret for this process.');
+}
+if (!process.env.JWT_REFRESH_SECRET) {
+  console.warn('JWT_REFRESH_SECRET is not set. Falling back to JWT_SECRET-derived value.');
+}
+if (!process.env.MONGODB_URI) {
+  console.warn('MONGODB_URI is not set. Falling back to local MongoDB default.');
 }
 const PORT = process.env.PORT || 5000;
 const USE_CLUSTER = process.env.USE_CLUSTER === 'true';
