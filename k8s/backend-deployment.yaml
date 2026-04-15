@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: speedy-trucks-backend
+  labels:
+    app: speedy-trucks-backend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: speedy-trucks-backend
+  template:
+    metadata:
+      labels:
+        app: speedy-trucks-backend
+    spec:
+      containers:
+        - name: backend
+          image: ajay35247/codespaces-react-backend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5000
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: PORT
+              value: "5000"
+            - name: MONGODB_URI
+              value: "mongodb://mongo-0.mongo-headless:27017,mongo-1.mongo-headless:27017,mongo-2.mongo-headless:27017/speedy-trucks?replicaSet=rs0"
+            - name: REDIS_URL
+              value: "redis://redis:6379"
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: speedy-trucks-secrets
+                  key: JWT_SECRET
+            - name: FRONTEND_URL
+              value: "https://speedy-trucks.example.com"
+            - name: CLIENT_URL
+              value: "https://speedy-trucks.example.com"
+            - name: USE_CLUSTER
+              value: "true"
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 5000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 5000
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: speedy-trucks-backend
+spec:
+  type: ClusterIP
+  selector:
+    app: speedy-trucks-backend
+  ports:
+    - port: 5000
+      targetPort: 5000
+      protocol: TCP

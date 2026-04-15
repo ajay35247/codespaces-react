@@ -5,21 +5,31 @@
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "nodemon src/index.js"
+    "dev": "nodemon src/index.js",
+    "worker": "node src/worker.js"
   },
   "dependencies": {
+    "@socket.io/redis-adapter": "^8.3.0",
     "bcrypt": "^5.1.1",
-    "cors": "^2.8.5",
-    "dotenv": "^16.3.1",
+    "bull": "^4.16.5",
+    "compression": "^1.8.1",
+    "cors": "^2.8.6",
+    "dotenv": "^16.6.1",
     "express": "^4.18.2",
-    "express-rate-limit": "^7.0.0",
-    "helmet": "^7.0.0",
-    "jsonwebtoken": "^9.0.0",
-    "mongoose": "^7.7.1",
+    "express-mongo-sanitize": "^2.2.0",
+    "express-rate-limit": "^7.5.1",
+    "express-validator": "^7.3.2",
+    "helmet": "^7.2.0",
+    "hpp": "^0.2.3",
+    "joi": "^18.1.2",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^7.8.9",
     "morgan": "^1.10.0",
     "nodemailer": "^6.9.4",
     "pdfkit": "^0.14.0",
+    "rate-limit-redis": "^4.3.1",
     "razorpay": "^2.9.6",
+    "redis": "^5.12.1",
     "socket.io": "^4.7.2"
   },
   "devDependencies": {
