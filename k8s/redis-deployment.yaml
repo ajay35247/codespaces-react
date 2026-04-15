@@ -4,6 +4,7 @@ metadata:
   name: redis
   labels:
     app: redis
+    role: cache
 spec:
   replicas: 1
   selector:
@@ -27,6 +28,24 @@ spec:
           ports:
             - containerPort: 6379
           command: ["redis-server", "--appendonly", "yes", "--save", "60", "1", "--save", "300", "10"]
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+      volumes:
+        - name: redis-data
+          persistentVolumeClaim:
+            claimName: redis-data-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-data-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
 ---
 apiVersion: v1
 kind: Service

@@ -13,7 +13,7 @@ spec:
         - speedy-trucks.example.com
       secretName: speedy-trucks-tls
   rules:
-    - host: speedy-trucks.example.com
+    - host: www.speedy-trucks.example.com
       http:
         paths:
           - path: /api(/|$)(.*)

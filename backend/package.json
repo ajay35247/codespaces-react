@@ -27,6 +27,7 @@
     "morgan": "^1.10.0",
     "nodemailer": "^6.9.4",
     "pdfkit": "^0.14.0",
+    "prom-client": "^15.0.0",
     "rate-limit-redis": "^4.3.1",
     "razorpay": "^2.9.6",
     "redis": "^5.12.1",

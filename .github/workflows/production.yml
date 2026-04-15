@@ -1,0 +1,68 @@
+name: Production CI/CD
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          npm install
+          cd backend && npm install
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Build backend image
+        run: |
+          docker build -f Dockerfile.backend -t ${{ secrets.REGISTRY_HOST }}/speedy-trucks-backend:${{ github.sha }} ./backend
+
+      - name: Build frontend image
+        run: |
+          docker build -f Dockerfile.frontend -t ${{ secrets.REGISTRY_HOST }}/speedy-trucks-frontend:${{ github.sha }} .
+
+      - name: Log in to container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.REGISTRY_HOST }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Push backend image
+        run: docker push ${{ secrets.REGISTRY_HOST }}/speedy-trucks-backend:${{ github.sha }}
+
+      - name: Push frontend image
+        run: docker push ${{ secrets.REGISTRY_HOST }}/speedy-trucks-frontend:${{ github.sha }}
+
+      - name: Deploy to Kubernetes
+        if: github.ref == 'refs/heads/main'
+        env:
+          KUBECONFIG: ${{ secrets.KUBECONFIG }}
+        run: |
+          echo "$KUBECONFIG" > kubeconfig
+          export KUBECONFIG=$PWD/kubeconfig
+          kubectl apply -f k8s/secrets.yaml
+          kubectl apply -f k8s/mongo-statefulset.yaml
+          kubectl apply -f k8s/redis-statefulset.yaml
+          kubectl apply -f k8s/prometheus-configmap.yaml
+          kubectl apply -f k8s/prometheus-deployment.yaml
+          kubectl apply -f k8s/grafana-datasource-configmap.yaml
+          kubectl apply -f k8s/grafana-deployment.yaml
+          kubectl apply -f k8s/backend-deployment.yaml
+          kubectl apply -f k8s/backend-worker-deployment.yaml
+          kubectl apply -f k8s/frontend-deployment.yaml
+          kubectl apply -f k8s/mongo-backup-cronjob.yaml
+          kubectl apply -f k8s/ingress-prod.yaml

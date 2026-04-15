@@ -14,8 +14,11 @@ import mongoose from 'mongoose';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import { createAdapter } from '@socket.io/redis-adapter';
+import promClient from 'prom-client';
 import dotenv from 'dotenv';
 import connectDatabase from './config/db.js';
+
+promClient.collectDefaultMetrics({ timeout: 5000 });
 import authRoutes from './routes/auth.js';
 import loadsRoutes from './routes/loads.js';
 import matchingRoutes from './routes/matching.js';
@@ -27,10 +30,14 @@ import fleetRoutes from './routes/fleet.js';
 import supportRoutes from './routes/support.js';
 
 dotenv.config();
+if (!process.env.JWT_SECRET) {
+  throw new Error('JWT_SECRET is required for production deployments');
+}
 const PORT = process.env.PORT || 5000;
 const USE_CLUSTER = process.env.USE_CLUSTER === 'true';
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
-const FRONTEND_URL = process.env.CLIENT_URL || 'http://localhost:3000';
+const FRONTEND_URL = process.env.FRONTEND_URL || 'https://www.speedy-trucks.example.com';
+const CLIENT_URL = process.env.CLIENT_URL || 'https://www.speedy-trucks.example.com';
 
 const createApp = async () => {
   const app = express();
@@ -52,7 +59,7 @@ const createApp = async () => {
   }));
 
   app.use(cors({
-    origin: FRONTEND_URL,
+    origin: [FRONTEND_URL, CLIENT_URL],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   }));
@@ -60,6 +67,7 @@ const createApp = async () => {
   app.use(compression());
   app.use(hpp());
   app.use(mongoSanitize());
+  app.disable('x-powered-by');
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
   app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'tiny'));
@@ -69,7 +77,7 @@ const createApp = async () => {
 
   const apiLimiter = rateLimit({
     windowMs: parseInt(process.env.RATE_LIMIT_WINDOW || '900000', 10),
-    max: parseInt(process.env.RATE_LIMIT_MAX || '100', 10),
+    max: parseInt(process.env.RATE_LIMIT_MAX || '1000', 10),
     standardHeaders: true,
     legacyHeaders: false,
     store: new RedisStore({
@@ -78,7 +86,44 @@ const createApp = async () => {
     }),
   });
 
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    message: 'Too many authentication requests from this IP, please try again later.',
+    standardHeaders: true,
+    legacyHeaders: false,
+    store: new RedisStore({
+      sendCommand: (...args) => redisClient.sendCommand(args),
+      prefix: 'rl:auth:'
+    }),
+  });
+
+  const paymentLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    message: 'Too many payment attempts from this IP, please slow down.',
+    standardHeaders: true,
+    legacyHeaders: false,
+    store: new RedisStore({
+      sendCommand: (...args) => redisClient.sendCommand(args),
+      prefix: 'rl:payment:'
+    }),
+  });
+
   app.use(apiLimiter);
+
+  if (process.env.NODE_ENV === 'production') {
+    app.use((req, res, next) => {
+      if (req.headers['x-forwarded-proto'] === 'http') {
+        return res.redirect(301, `https://${req.headers.host}${req.url}`);
+      }
+      next();
+    });
+    app.use((req, res, next) => {
+      res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
+      next();
+    });
+  }
 
   connectDatabase();
 
@@ -87,15 +132,26 @@ const createApp = async () => {
       status: 'ok',
       service: 'speedy-trucks-backend',
       timestamp: new Date().toISOString(),
-      uptime: process.uptime()
+      uptime: process.uptime(),
+      mongoState: mongoose.connection.readyState,
+      redisConnected: redisClient.isOpen ? 'connected' : 'disconnected'
     });
   });
 
-  app.use('/api/auth', authRoutes);
+  app.get('/metrics', async (req, res) => {
+    try {
+      res.set('Content-Type', promClient.register.contentType);
+      res.end(await promClient.register.metrics());
+    } catch (error) {
+      res.status(500).json({ error: 'Unable to collect metrics', details: error.message });
+    }
+  });
+
+  app.use('/api/auth', authLimiter, authRoutes);
+  app.use('/api/payments', paymentLimiter, paymentRoutes);
   app.use('/api/loads', loadsRoutes);
   app.use('/api/match', matchingRoutes);
   app.use('/api/tracking', trackingRoutes);
-  app.use('/api/payments', paymentRoutes);
   app.use('/api/support', supportRoutes);
   app.use('/api/gst', gstRoutes);
   app.use('/api/broker', brokerRoutes);

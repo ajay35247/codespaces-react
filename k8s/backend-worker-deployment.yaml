@@ -17,7 +17,7 @@ spec:
       containers:
         - name: worker
           image: ajay35247/codespaces-react-backend:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           command: ["node", "src/worker.js"]
           env:
             - name: NODE_ENV

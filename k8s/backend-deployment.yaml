@@ -4,6 +4,7 @@ metadata:
   name: speedy-trucks-backend
   labels:
     app: speedy-trucks-backend
+    role: backend
 spec:
   replicas: 3
   selector:
@@ -13,11 +14,15 @@ spec:
     metadata:
       labels:
         app: speedy-trucks-backend
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "5000"
+        prometheus.io/path: "/metrics"
     spec:
       containers:
         - name: backend
           image: ajay35247/codespaces-react-backend:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           ports:
             - containerPort: 5000
           env:
@@ -25,15 +30,18 @@ spec:
               value: "production"
             - name: PORT
               value: "5000"
-            - name: MONGODB_URI
-              value: "mongodb://mongo-0.mongo-headless:27017,mongo-1.mongo-headless:27017,mongo-2.mongo-headless:27017/speedy-trucks?replicaSet=rs0"
             - name: REDIS_URL
-              value: "redis://redis:6379"
+              value: "redis://redis-cluster:6379"
             - name: JWT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: speedy-trucks-secrets
                   key: JWT_SECRET
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: speedy-trucks-secrets
+                  key: MONGODB_URI
             - name: FRONTEND_URL
               value: "https://speedy-trucks.example.com"
             - name: CLIENT_URL

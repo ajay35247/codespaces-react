@@ -50,8 +50,52 @@ Services:
 ### Production Deploy
 ```bash
 # With environment variables
+JWT_SECRET=your-secure-random-secret-key \
+VITE_GOOGLE_MAPS_API_KEY=your-google-maps-api-key \
+RAZORPAY_KEY_ID=your-razorpay-id \
+RAZORPAY_KEY_SECRET=your-razorpay-secret \
+FCM_SERVER_KEY=your-firebase-key \
 docker-compose -f docker-compose.yml up --build
 ```
+
+## Kubernetes Production Deploy
+```bash
+kubectl apply -f k8s/secrets.yaml
+kubectl apply -f k8s/mongo-statefulset.yaml
+kubectl apply -f k8s/redis-statefulset.yaml
+kubectl apply -f k8s/prometheus-configmap.yaml
+kubectl apply -f k8s/prometheus-deployment.yaml
+kubectl apply -f k8s/grafana-datasource-configmap.yaml
+kubectl apply -f k8s/grafana-deployment.yaml
+kubectl apply -f k8s/backend-deployment.yaml
+kubectl apply -f k8s/backend-worker-deployment.yaml
+kubectl apply -f k8s/frontend-deployment.yaml
+kubectl apply -f k8s/mongo-backup-cronjob.yaml
+kubectl apply -f k8s/ingress-prod.yaml
+```
+
+## CI / CD Pipeline
+Add a GitHub Actions workflow that builds Docker images, pushes to your container registry, and applies K8s manifests. Use branch protection and secret variables for registry credentials and cluster access.
+
+## TLS Notes
+- The `k8s/ingress.yaml` manifest is configured for `cert-manager` with `letsencrypt-prod`.
+- Ensure cert-manager is installed in the cluster and the DNS records point to the ingress controller.
+- The frontend and API domains must resolve to the same ingress.
+- Grafana should be exposed at `grafana.speedy-trucks.example.com` via the production ingress.
+
+## Monitoring & Backup
+- Use Prometheus + Grafana to scrape `/metrics` from the backend.
+- Add persistent backup for MongoDB and Redis.
+- For MongoDB, use snapshot/backup tooling from Atlas or a managed provider.
+- For Redis, schedule periodic snapshot backups or use a managed Redis cluster for 1M/s traffic.
+
+## Load Testing & Capacity Planning
+- Validate with a real HTTP and WebSocket load test tool like k6, Artillery, or Locust.
+- Start with small throughput and ramp up to determine CPU, memory, database, and Redis saturation points.
+- Test API endpoints separately from socket traffic and background worker queue load.
+- Monitor rate limiter behavior, response time, error rate, and connection churn.
+- Scale backend replicas and worker replicas based on measured `requests/sec` and redis throughput.
+- For extreme loads, leverage managed MongoDB clusters, Redis clusters, and autoscaling infrastructure.
 
 ---
 

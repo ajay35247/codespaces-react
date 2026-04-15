@@ -1,0 +1,47 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mongo-backup
+spec:
+  schedule: "0 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: mongo-backup
+              image: mongo:6.0
+              env:
+                - name: MONGODB_URI
+                  valueFrom:
+                    secretKeyRef:
+                      name: speedy-trucks-secrets
+                      key: MONGODB_URI
+              command:
+                - bash
+                - -lc
+                - |
+                  mkdir -p /backup && \
+                  mongodump --uri="$MONGODB_URI" --archive=/backup/mongo-backup-$(date +%Y%m%d%H%M%S).gz --gzip
+              volumeMounts:
+                - name: backup-volume
+                  mountPath: /backup
+          restartPolicy: OnFailure
+          volumes:
+            - name: backup-volume
+              persistentVolumeClaim:
+                claimName: mongo-backup-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mongo-backup-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi

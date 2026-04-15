@@ -1,0 +1,83 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-cluster
+  labels:
+    app: redis
+    role: cache
+spec:
+  type: ClusterIP
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-cluster-headless
+  labels:
+    app: redis
+    role: cache
+spec:
+  clusterIP: None
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-cluster
+  labels:
+    app: redis
+    role: cache
+spec:
+  serviceName: redis-cluster-headless
+  replicas: 3
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          command:
+            - redis-server
+          args:
+            - --appendonly
+            - yes
+            - --save
+            - "60 1"
+            - --save
+            - "300 10"
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          ports:
+            - containerPort: 6379
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: redis-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 10Gi

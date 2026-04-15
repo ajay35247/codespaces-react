@@ -27,6 +27,8 @@ spec:
     metadata:
       labels:
         app: mongo
+      annotations:
+        prometheus.io/scrape: "false"
     spec:
       containers:
         - name: mongo
