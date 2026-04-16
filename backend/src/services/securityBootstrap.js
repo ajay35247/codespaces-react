@@ -12,6 +12,13 @@ export async function ensureAdminAccount() {
   }
 
   const adminEmail = getAdminEmail();
+  const bootstrapPassword = getAdminBootstrapPassword();
+
+  const adminCount = await User.countDocuments({ role: 'admin' });
+  if (adminCount > 1) {
+    throw new Error('Security policy violation: multiple admin accounts found.');
+  }
+
   const existing = await User.findOne({ email: adminEmail });
   if (existing) {
     if (existing.role !== 'admin' || !existing.mfaEnabled) {
@@ -23,10 +30,15 @@ export async function ensureAdminAccount() {
     return;
   }
 
+  if (!bootstrapPassword) {
+    console.warn('ADMIN_BOOTSTRAP_PASSWORD is not set; admin bootstrap account was not created.');
+    return;
+  }
+
   const admin = new User({
     name: 'Ajay Sharma',
     email: normalizeEmail(adminEmail),
-    password: getAdminBootstrapPassword(),
+    password: bootstrapPassword,
     role: 'admin',
     isEmailVerified: true,
     mfaEnabled: true,

@@ -5,8 +5,6 @@ import { Navigate } from 'react-router-dom';
 import { StatsCard } from '../components/StatsCard';
 import { ROLE_CARDS } from '../data/roles';
 
-const ADMIN_EMAIL = 'ajay35247@gmail.com';
-
 const ROLE_METRICS = {
   shipper: [
     { label: 'Active loads', value: '124', accent: 'text-sky-400' },
@@ -28,26 +26,16 @@ const ROLE_METRICS = {
     { label: 'Commission', value: '₹15.2L', accent: 'text-emerald-400' },
     { label: 'Contracts', value: '18', accent: 'text-orange-400' },
   ],
-  admin: [
-    { label: 'Active sessions', value: '1.2K', accent: 'text-sky-400' },
-    { label: 'Revenue', value: '₹12.8Cr', accent: 'text-emerald-400' },
-    { label: 'Alerts', value: '9', accent: 'text-orange-400' },
-  ],
 };
 
 export function RoleDashboard() {
   const { role } = useParams();
   const authRole = useSelector((state) => state.auth.role);
-  const authUser = useSelector((state) => state.auth.user);
 
   const card = useMemo(() => ROLE_CARDS.find((item) => item.key === role), [role]);
   const metrics = ROLE_METRICS[role] || [];
 
   if (!authRole || role !== authRole) {
-    return <Navigate to="/" replace />;
-  }
-
-  if (authRole === 'admin' && authUser?.email?.toLowerCase() !== ADMIN_EMAIL) {
     return <Navigate to="/" replace />;
   }
 

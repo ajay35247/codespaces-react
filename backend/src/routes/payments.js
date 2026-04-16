@@ -3,6 +3,7 @@ import { Router } from 'express';
 import crypto from 'crypto';
 import express from 'express';
 import { verifyJWT, requireRole } from '../middleware/authorize.js';
+import { requirePaymentsEnabled } from '../middleware/platformControl.js';
 
 const router = Router();
 const razorpayKeyId = process.env.RAZORPAY_KEY_ID || '';
@@ -98,7 +99,7 @@ router.get('/plans', (req, res) => {
   res.json({ plans });
 });
 
-router.post('/subscribe', verifyJWT, flagFraud, async (req, res) => {
+router.post('/subscribe', verifyJWT, requirePaymentsEnabled(), flagFraud, async (req, res) => {
   if (!razorpay) {
     return res.status(500).json({ error: 'Payment gateway is not configured' });
   }
@@ -161,7 +162,7 @@ router.post('/subscription/cancel', verifyJWT, (req, res) => {
   return res.status(200).json({ message: 'Subscription canceled successfully', action: 'cancel' });
 });
 
-router.get('/wallets', verifyJWT, requireRole(['admin', 'fleet-manager']), (req, res) => {
+router.get('/wallets', verifyJWT, requireRole(['fleet-manager']), (req, res) => {
   res.json({
     wallets: [
       { owner: 'Driver A', balance: 42000, currency: 'INR' },
@@ -170,7 +171,7 @@ router.get('/wallets', verifyJWT, requireRole(['admin', 'fleet-manager']), (req,
   });
 });
 
-router.post('/payout', verifyJWT, requireRole(['admin', 'fleet-manager']), (req, res) => {
+router.post('/payout', verifyJWT, requireRole(['fleet-manager']), (req, res) => {
   const { driverId, amount } = req.body;
   if (!driverId || !amount || typeof amount !== 'number' || amount <= 0) {
     return res.status(400).json({ error: 'Valid driverId and positive amount are required' });

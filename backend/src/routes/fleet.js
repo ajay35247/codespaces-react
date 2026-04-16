@@ -16,7 +16,7 @@ const trucks = [
   { id: 'TRK-309', status: 'Maintenance', utilization: '39%', nextService: '2026-04-18' },
 ];
 
-router.use(verifyJWT, requireRole(['fleet-manager', 'admin']));
+router.use(verifyJWT, requireRole(['fleet-manager']));
 
 router.get('/overview', (req, res) => {
   res.json({ fleetOverview });

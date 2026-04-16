@@ -18,6 +18,18 @@ const UserSchema = new mongoose.Schema({
     required: true,
     enum: ['shipper', 'driver', 'fleet-manager', 'broker', 'admin'],
   },
+  accountStatus: {
+    type: String,
+    enum: ['active', 'suspended', 'blocked', 'deleted'],
+    default: 'active',
+  },
+  kycStatus: {
+    type: String,
+    enum: ['pending', 'approved', 'rejected'],
+    default: 'pending',
+  },
+  walletFrozen: { type: Boolean, default: false },
+  shadowModeEnabled: { type: Boolean, default: false },
   gstin: { type: String },
   phone: { type: String },
   isEmailVerified: { type: Boolean, default: false },
@@ -36,6 +48,15 @@ const UserSchema = new mongoose.Schema({
   trucks: [TruckSchema],
   createdAt: { type: Date, default: Date.now },
 });
+
+// Enforce exactly one admin role document at database level.
+UserSchema.index(
+  { role: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { role: 'admin' },
+  }
+);
 
 UserSchema.pre('save', async function (next) {
   if (!this.isModified('password')) {

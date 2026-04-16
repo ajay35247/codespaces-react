@@ -3,35 +3,30 @@ import rateLimit from 'express-rate-limit';
 import { Router } from 'express';
 import { body, validationResult } from 'express-validator';
 import User from '../schemas/UserSchema.js';
-import AuditLog from '../schemas/AuditLogSchema.js';
 import {
   verifyJWT,
   signToken,
   signRefreshToken,
   verifyRefreshToken,
   hashToken,
-  requireAjayAdmin,
 } from '../middleware/authorize.js';
-import { sendVerificationEmail, sendPasswordResetEmail, sendAdminMfaCodeEmail } from '../utils/emailService.js';
+import { sendVerificationEmail, sendPasswordResetEmail } from '../utils/emailService.js';
 import {
-  getAdminBootstrapPassword,
-  getAdminEmail,
   getStrongPasswordErrors,
-  isAjayAdmin,
   isBlockedAccountEmail,
   normalizeEmail,
 } from '../utils/securityPolicy.js';
 import {
   calculateLockUntil,
-  generateMfaCode,
   incrementFailedAttempts,
   isTemporarilyLocked,
 } from '../utils/accountSecurity.js';
+import { requireRegistrationsEnabled } from '../middleware/platformControl.js';
 
 const router = Router();
 const LOGIN_MAX_FAILED_ATTEMPTS = 5;
 const LOGIN_LOCK_WINDOW_MS = 15 * 60 * 1000;
-const MFA_EXPIRY_MS = 5 * 60 * 1000;
+const PUBLIC_ROLES = ['shipper', 'driver', 'fleet-manager', 'broker'];
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -74,10 +69,11 @@ function issueTokensForUser(user) {
 }
 
 router.post('/register', [
+  requireRegistrationsEnabled(),
   body('email').isEmail().normalizeEmail(),
   body('password').isString().isLength({ min: 12 }),
   body('name').isString().trim().isLength({ min: 2, max: 120 }),
-  body('role').isString().isIn(['shipper', 'driver', 'fleet-manager', 'broker', 'admin']),
+  body('role').isString().isIn(PUBLIC_ROLES),
   body('phone').optional().isString().trim().isLength({ max: 30 }),
   body('gstin').optional().isString().trim().isLength({ max: 30 }),
 ], async (req, res) => {
@@ -95,13 +91,6 @@ router.post('/register', [
       return res.status(400).json({ error: 'Password does not meet complexity policy', details: passwordErrors });
     }
 
-    if (role === 'admin' && email !== getAdminEmail()) {
-      return res.status(403).json({ error: 'Only the configured admin identity can register as admin' });
-    }
-    if (role === 'admin' && password !== getAdminBootstrapPassword()) {
-      return res.status(403).json({ error: 'Admin password must match the configured security policy' });
-    }
-
     const existingUser = await User.findOne({ email });
     if (existingUser) {
       return res.status(409).json({ error: 'Email already registered' });
@@ -115,9 +104,9 @@ router.post('/register', [
       role,
       phone,
       gstin,
-      mfaEnabled: role === 'admin',
+      mfaEnabled: false,
       verificationToken,
-      isEmailVerified: role === 'admin',
+      isEmailVerified: false,
     });
 
     await user.save();
@@ -127,12 +116,10 @@ router.post('/register', [
     const clientUrl = process.env.CLIENT_URL || 'http://localhost:3000';
     const verificationUrl = `${clientUrl}/verify-email/${verificationToken}`;
 
-    if (role !== 'admin') {
-      try {
-        await sendVerificationEmail(user, verificationUrl);
-      } catch (emailError) {
-        console.warn('Failed to send verification email:', emailError.message);
-      }
+    try {
+      await sendVerificationEmail(user, verificationUrl);
+    } catch (emailError) {
+      console.warn('Failed to send verification email:', emailError.message);
     }
 
     return res.status(201).json({
@@ -170,6 +157,14 @@ router.post('/login', [
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
+    if (user.role === 'admin') {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    if (user.accountStatus && user.accountStatus !== 'active') {
+      return res.status(403).json({ error: 'Account is not active' });
+    }
+
     if (isTemporarilyLocked(user.lockUntil)) {
       return res.status(423).json({ error: 'Account temporarily locked due to failed login attempts' });
     }
@@ -187,101 +182,6 @@ router.post('/login', [
       await user.save();
       return res.status(403).json({ error: 'Please verify your email address first' });
     }
-
-    if (user.role === 'admin') {
-      if (!isAjayAdmin(user.email, user.role)) {
-        await user.save();
-        return res.status(403).json({ error: 'Only Ajay is allowed to use the admin role' });
-      }
-
-      const mfaCode = generateMfaCode();
-      const mfaChallengeToken = crypto.randomBytes(32).toString('hex');
-      user.mfaEnabled = true;
-      user.mfaCodeHash = hashToken(mfaCode);
-      user.mfaCodeExpires = new Date(Date.now() + MFA_EXPIRY_MS);
-      user.mfaChallengeHash = hashToken(mfaChallengeToken);
-      user.mfaChallengeExpires = new Date(Date.now() + MFA_EXPIRY_MS);
-      user.mfaAttemptCount = 0;
-      await user.save();
-
-      try {
-        await sendAdminMfaCodeEmail(user, mfaCode);
-      } catch (emailError) {
-        console.warn('Failed to send admin MFA code:', emailError.message);
-      }
-
-      return res.status(202).json({
-        mfaRequired: true,
-        mfaChallengeToken,
-        email: user.email,
-        expiresInSeconds: Math.floor(MFA_EXPIRY_MS / 1000),
-      });
-    }
-
-    const { accessToken, refreshToken } = issueTokensForUser(user);
-    await user.save();
-
-    return res.json({
-      token: accessToken,
-      refreshToken,
-      user: {
-        id: user._id,
-        email: user.email,
-        name: user.name,
-        role: user.role,
-        isEmailVerified: user.isEmailVerified,
-      },
-    });
-  } catch (error) {
-    console.error('Login error:', error.message);
-    return res.status(500).json({ error: 'Login failed' });
-  }
-});
-
-router.post('/login/mfa-verify', [
-  body('email').isEmail().normalizeEmail(),
-  body('mfaChallengeToken').isString().isLength({ min: 32, max: 128 }),
-  body('mfaCode').matches(/^\d{6}$/),
-], async (req, res) => {
-  try {
-    if (!ensureValidRequest(req, res)) return;
-    const email = normalizeEmail(req.body.email);
-    const { mfaChallengeToken, mfaCode } = req.body;
-
-    const user = await User.findOne({ email, role: 'admin' });
-    if (!user || !isAjayAdmin(user.email, user.role)) {
-      return res.status(403).json({ error: 'Admin identity is not allowed' });
-    }
-
-    if (isTemporarilyLocked(user.lockUntil)) {
-      return res.status(423).json({ error: 'Account temporarily locked due to failed login attempts' });
-    }
-
-    const isChallengeValid = user.mfaChallengeHash
-      && user.mfaChallengeExpires
-      && user.mfaChallengeExpires.getTime() > Date.now()
-      && user.mfaChallengeHash === hashToken(mfaChallengeToken);
-
-    const isCodeValid = user.mfaCodeHash
-      && user.mfaCodeExpires
-      && user.mfaCodeExpires.getTime() > Date.now()
-      && user.mfaCodeHash === hashToken(mfaCode);
-
-    if (!isChallengeValid || !isCodeValid) {
-      const next = incrementFailedAttempts(user.mfaAttemptCount, LOGIN_MAX_FAILED_ATTEMPTS);
-      user.mfaAttemptCount = next.nextCount;
-      if (next.shouldLock) {
-        user.lockUntil = calculateLockUntil(LOGIN_LOCK_WINDOW_MS);
-      }
-      await user.save();
-      return res.status(401).json({ error: 'Invalid MFA code or challenge token' });
-    }
-
-    user.mfaAttemptCount = 0;
-    user.mfaCodeHash = undefined;
-    user.mfaCodeExpires = undefined;
-    user.mfaChallengeHash = undefined;
-    user.mfaChallengeExpires = undefined;
 
     const { accessToken, refreshToken } = issueTokensForUser(user);
     await user.save();
@@ -402,10 +302,6 @@ router.post('/reset-password', async (req, res) => {
       return res.status(400).json({ error: 'Invalid or expired reset token' });
     }
 
-    if (isAjayAdmin(user.email, user.role) && password !== getAdminBootstrapPassword()) {
-      return res.status(403).json({ error: 'Admin password must match the configured security policy' });
-    }
-
     user.password = password;
     user.resetToken = undefined;
     user.resetTokenExpires = undefined;
@@ -444,6 +340,9 @@ router.get('/verify-email/:token', async (req, res) => {
 
 router.get('/me', verifyJWT, async (req, res) => {
   try {
+    if (req.user.role === 'admin') {
+      return res.status(404).json({ error: 'User not found' });
+    }
     const user = await User.findById(req.user.id).select('-password -refreshTokens');
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
@@ -452,53 +351,6 @@ router.get('/me', verifyJWT, async (req, res) => {
   } catch (error) {
     console.error('Auth check error:', error.message);
     return res.status(500).json({ error: 'Authentication check failed' });
-  }
-});
-
-router.get('/admin/audit-logs', verifyJWT, requireAjayAdmin, async (req, res) => {
-  try {
-    const limit = Math.min(parseInt(req.query.limit || '100', 10), 200);
-    const logs = await AuditLog.find({}).sort({ createdAt: -1 }).limit(limit);
-    return res.json({ logs });
-  } catch (error) {
-    console.error('Audit log fetch error:', error.message);
-    return res.status(500).json({ error: 'Unable to fetch audit logs' });
-  }
-});
-
-router.get('/admin/security-events', verifyJWT, requireAjayAdmin, async (req, res) => {
-  try {
-    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
-
-    const [failedLogins, failedMfa, lockouts] = await Promise.all([
-      AuditLog.countDocuments({ path: '/login', statusCode: { $in: [401, 403, 423] }, createdAt: { $gte: since } }),
-      AuditLog.countDocuments({ path: '/login/mfa-verify', statusCode: { $in: [401, 423] }, createdAt: { $gte: since } }),
-      AuditLog.countDocuments({ statusCode: 423, createdAt: { $gte: since } }),
-    ]);
-
-    const topSourceIps = await AuditLog.aggregate([
-      {
-        $match: {
-          statusCode: { $in: [401, 403, 423] },
-          path: { $in: ['/login', '/login/mfa-verify'] },
-          createdAt: { $gte: since },
-        },
-      },
-      { $group: { _id: '$ipAddress', attempts: { $sum: 1 } } },
-      { $sort: { attempts: -1 } },
-      { $limit: 10 },
-    ]);
-
-    return res.json({
-      window: '24h',
-      failedLogins,
-      failedMfa,
-      lockouts,
-      topSourceIps,
-    });
-  } catch (error) {
-    console.error('Security events fetch error:', error.message);
-    return res.status(500).json({ error: 'Unable to fetch security events' });
   }
 });
 

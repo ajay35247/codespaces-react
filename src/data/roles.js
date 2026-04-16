@@ -23,10 +23,4 @@ export const ROLE_CARDS = [
     description: 'Match loads with trucks, negotiate rates and manage commissions.',
     color: 'from-emerald-600 to-lime-500',
   },
-  {
-    key: 'admin',
-    label: 'Admin',
-    description: 'Control center, analytics, permissions and operational KPIs.',
-    color: 'from-slate-700 to-slate-500',
-  },
 ];

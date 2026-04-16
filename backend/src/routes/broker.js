@@ -16,7 +16,7 @@ const loads = [
   { id: 'L-103', origin: 'Ahmedabad', destination: 'Rajkot', status: 'Pending', freight: '₹12,700' },
 ];
 
-router.use(verifyJWT, requireRole(['broker', 'admin']));
+router.use(verifyJWT, requireRole(['broker']));
 
 router.get('/summary', (req, res) => {
   res.json({ brokerSummary });

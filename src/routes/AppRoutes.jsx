@@ -16,7 +16,10 @@ import { VerifyEmail } from '../pages/VerifyEmail';
 import { Payment } from '../pages/Payment';
 import { Subscription } from '../pages/Subscription';
 import { FAQ } from '../pages/FAQ';
+import { AdminControlPanel } from '../pages/AdminControlPanel';
 import { ProtectedRoute } from '../components/ProtectedRoute';
+
+const ADMIN_PANEL_PATH = (import.meta.env.VITE_ADMIN_PANEL_PATH || '/ops-bridge-93a1').replace(/^\//, '');
 
 export function AppRoutes() {
   return (
@@ -38,7 +41,7 @@ export function AppRoutes() {
       <Route
         path="/broker"
         element={
-          <ProtectedRoute allowedRoles={['broker', 'admin']}>
+          <ProtectedRoute allowedRoles={['broker']}>
             <BrokerWorkflow />
           </ProtectedRoute>
         }
@@ -46,7 +49,7 @@ export function AppRoutes() {
       <Route
         path="/fleet"
         element={
-          <ProtectedRoute allowedRoles={['fleet-manager', 'admin']}>
+          <ProtectedRoute allowedRoles={['fleet-manager']}>
             <FleetWorkflow />
           </ProtectedRoute>
         }
@@ -54,11 +57,12 @@ export function AppRoutes() {
       <Route
         path="/dashboard/:role"
         element={
-          <ProtectedRoute allowedRoles={['shipper', 'driver', 'fleet-manager', 'broker', 'admin']}>
+          <ProtectedRoute allowedRoles={['shipper', 'driver', 'fleet-manager', 'broker']}>
             <RoleDashboard />
           </ProtectedRoute>
         }
       />
+      <Route path={`/${ADMIN_PANEL_PATH}`} element={<AdminControlPanel />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

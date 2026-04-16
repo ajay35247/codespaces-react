@@ -21,6 +21,7 @@ import { globalErrorHandler } from './middleware/errorHandler.js';
 import { auditLogger } from './middleware/auditLogger.js';
 import { verifyAccessToken } from './middleware/authorize.js';
 import { ensureAdminAccount } from './services/securityBootstrap.js';
+import { getAdminPathHash, getAdminPathSegment } from './middleware/adminSecurity.js';
 
 promClient.collectDefaultMetrics({ timeout: 5000 });
 import authRoutes from './routes/auth.js';
@@ -32,6 +33,7 @@ import gstRoutes from './routes/gst.js';
 import brokerRoutes from './routes/broker.js';
 import fleetRoutes from './routes/fleet.js';
 import supportRoutes from './routes/support.js';
+import adminRoutes from './routes/admin.js';
 
 dotenv.config();
 
@@ -203,7 +205,8 @@ const createApp = async () => {
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
       mongoState: mongoose.connection.readyState,
-      redisConnected: redisClient?.isOpen ? 'connected' : 'disconnected'
+      redisConnected: redisClient?.isOpen ? 'connected' : 'disconnected',
+      adminPathHash: getAdminPathHash(),
     });
   });
 
@@ -217,6 +220,7 @@ const createApp = async () => {
   });
 
   app.use('/api/auth', authLimiter, authRoutes);
+  app.use(`/api/${getAdminPathSegment()}`, adminRoutes);
   app.use('/api/payments', paymentLimiter, paymentRoutes);
   app.use('/api/loads', loadsRoutes);
   app.use('/api/match', matchingRoutes);

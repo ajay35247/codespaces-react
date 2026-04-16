@@ -17,20 +17,20 @@ function getJwtConfig() {
 }
 
 /** Sign a short-lived access token (15 min default) */
-export function signToken(user) {
+export function signToken(user, additionalClaims = {}) {
   const { jwtSecret, jwtExpire } = getJwtConfig();
   return jwt.sign(
-    { id: user._id, email: user.email, role: user.role, name: user.name },
+    { id: user._id, email: user.email, role: user.role, name: user.name, ...additionalClaims },
     jwtSecret,
     { expiresIn: jwtExpire }
   );
 }
 
 /** Sign a long-lived refresh token (7 days default) */
-export function signRefreshToken(user) {
+export function signRefreshToken(user, additionalClaims = {}) {
   const { jwtRefreshSecret, jwtRefreshExpire } = getJwtConfig();
   return jwt.sign(
-    { id: user._id },
+    { id: user._id, ...additionalClaims },
     jwtRefreshSecret,
     { expiresIn: jwtRefreshExpire }
   );

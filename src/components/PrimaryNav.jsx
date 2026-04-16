@@ -23,7 +23,7 @@ export function PrimaryNav() {
 
   const authItems = token
     ? [
-        { label: 'Dashboard', to: `/dashboard/${user?.role || 'shipper'}` },
+        { label: 'Dashboard', to: `/dashboard/${user?.role && user?.role !== 'admin' ? user.role : 'shipper'}` },
         { label: 'Logout', action: handleLogout },
       ]
     : [

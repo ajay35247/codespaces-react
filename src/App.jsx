@@ -11,6 +11,9 @@ import { trackPageView } from './utils/analytics';
 
 function AppWrapper() {
   const location = useLocation();
+  const adminPanelPath = (import.meta.env.VITE_ADMIN_PANEL_PATH || '/ops-bridge-93a1');
+  const normalizedAdminPath = adminPanelPath.startsWith('/') ? adminPanelPath : `/${adminPanelPath}`;
+  const isAdminPanelRoute = location.pathname === normalizedAdminPath;
 
   useEffect(() => {
     trackPageView(location.pathname);
@@ -18,11 +21,11 @@ function AppWrapper() {
 
   return (
     <>
-      <BrandHeader />
-      <PrimaryNav />
+      {!isAdminPanelRoute && <BrandHeader />}
+      {!isAdminPanelRoute && <PrimaryNav />}
       <AppRoutes />
-      <Footer />
-      <CookieConsentBanner />
+      {!isAdminPanelRoute && <Footer />}
+      {!isAdminPanelRoute && <CookieConsentBanner />}
     </>
   );
 }

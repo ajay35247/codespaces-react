@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { requireBookingsEnabled } from '../middleware/platformControl.js';
 
 const router = Router();
 
@@ -11,7 +12,7 @@ router.get('/', (req, res) => {
   });
 });
 
-router.post('/bid', (req, res) => {
+router.post('/bid', requireBookingsEnabled(), (req, res) => {
   const { loadId, amount, brokerId } = req.body;
   if (!loadId || !amount) {
     return res.status(400).json({ error: 'loadId and amount are required' });
