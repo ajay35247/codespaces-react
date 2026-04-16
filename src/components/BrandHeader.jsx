@@ -2,9 +2,17 @@ export function BrandHeader() {
   return (
     <header className="bg-[#0B3D91] text-white px-6 py-5 shadow-lg">
       <div className="max-w-7xl mx-auto flex flex-col sm:flex-row justify-between gap-3 items-center">
-        <div>
+        <div className="flex items-center gap-4">
+          <img
+            src="/aptrucking-logo.png"
+            alt="APTrucking logo"
+            className="h-16 w-auto max-w-[220px] rounded-md border border-white/20 bg-white/5 p-1 sm:h-20 sm:max-w-[300px]"
+            loading="eager"
+          />
+          <div>
           <p className="text-xs uppercase tracking-[0.3em] text-orange-300">Speedy Trucks</p>
           <h1 className="text-3xl font-semibold tracking-tight">Aptrucking Logistics Command Center</h1>
+          </div>
         </div>
         <div className="space-y-1 text-right">
           <p className="text-sm text-slate-200">Modern enterprise logistics for shippers, drivers, brokers, and fleet owners.</p>
