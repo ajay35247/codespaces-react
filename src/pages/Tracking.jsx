@@ -3,7 +3,7 @@ import { useSelector } from 'react-redux';
 import { GoogleMap, Marker, Polyline, useJsApiLoader } from '@react-google-maps/api';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
+const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAP_API_KEY || import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
 const mapContainerStyle = { width: '100%', height: '100%' };
 const defaultCenter = { lat: 19.076, lng: 72.8777 };
 
@@ -81,7 +81,7 @@ export function Tracking() {
                 <div className="flex h-full items-center justify-center rounded-[1.75rem] bg-slate-950/90 text-center text-sm text-slate-400">
                   <div>
                     <p>Map loading…</p>
-                    <p className="mt-2 text-xs text-slate-500">Set VITE_GOOGLE_MAPS_API_KEY in your env to render maps.</p>
+                    <p className="mt-2 text-xs text-slate-500">Set VITE_GOOGLE_MAP_API_KEY in your env to render maps.</p>
                   </div>
                 </div>
               )}
