@@ -51,7 +51,15 @@ export function getApiErrorMessage(payload, fallbackMessage = 'Request failed') 
   }
 
   if (typeof payload === 'string') {
+    if (payload.includes('DEPLOYMENT_NOT_FOUND')) {
+      return 'Backend API is not deployed or the API domain is misconfigured.';
+    }
     return payload;
+  }
+
+  const rawText = payload.rawText || '';
+  if (rawText.includes('DEPLOYMENT_NOT_FOUND')) {
+    return 'Backend API is not deployed or the API domain is misconfigured.';
   }
 
   return payload.error || payload.message || fallbackMessage;
