@@ -1,5 +1,5 @@
 [build]
-command = "cd backend && npm ci"
+command = "cd backend && npm install --legacy-peer-deps"
 
 [deploy]
 startCommand = "cd backend && npm start"
