@@ -100,6 +100,7 @@ router.post('/register', [
       return res.status(409).json({ error: 'Email already registered' });
     }
 
+    const isDev = process.env.NODE_ENV === 'development';
     const verificationToken = crypto.randomBytes(32).toString('hex');
     const user = new User({
       email,
@@ -110,10 +111,23 @@ router.post('/register', [
       gstin,
       mfaEnabled: false,
       verificationToken,
-      isEmailVerified: false,
+      isEmailVerified: isDev,
     });
 
     await user.save();
+
+    if (isDev) {
+      return res.status(201).json({
+        message: 'Registration successful. You can now login.',
+        user: {
+          id: user._id,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          isEmailVerified: true,
+        },
+      });
+    }
 
     const clientUrl = process.env.CLIENT_URL || 'http://localhost:3000';
     const verificationUrl = `${clientUrl}/verify-email/${verificationToken}`;
