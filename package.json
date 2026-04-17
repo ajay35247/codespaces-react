@@ -3,9 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "packageManager": "npm@10.8.2",
   "engines": {
-    "node": "20.x",
-    "npm": "9.x"
+    "node": "22.x",
+    "npm": "10.x"
   },
   "dependencies": {
     "@capacitor/android": "^8.3.0",
