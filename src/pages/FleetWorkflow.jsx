@@ -1,31 +1,15 @@
 import { useEffect, useState } from 'react';
-import { useSelector } from 'react-redux';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+import { apiRequest } from '../utils/api';
 
 export function FleetWorkflow() {
-  const token = useSelector((state) => state.auth.token);
-  const role = useSelector((state) => state.auth.role);
   const [overview, setOverview] = useState(null);
   const [trucks, setTrucks] = useState([]);
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    if (!token) return;
-
     Promise.all([
-      fetch(`${API_URL}/api/fleet/overview`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'x-user-role': role,
-        },
-      }).then((res) => res.json()),
-      fetch(`${API_URL}/api/fleet/trucks`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'x-user-role': role,
-        },
-      }).then((res) => res.json()),
+      apiRequest('/fleet/overview'),
+      apiRequest('/fleet/trucks'),
     ])
       .then(([overviewData, trucksData]) => {
         if (overviewData.error) throw new Error(overviewData.error);
@@ -34,7 +18,7 @@ export function FleetWorkflow() {
         setTrucks(trucksData.trucks || []);
       })
       .catch((err) => setError(err.message));
-  }, [token, role]);
+  }, []);
 
   return (
     <main className="mx-auto max-w-7xl px-6 py-10 sm:px-10">

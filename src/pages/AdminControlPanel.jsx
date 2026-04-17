@@ -1,35 +1,13 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { buildApiUrl, getApiErrorMessage, parseApiBody } from '../utils/api';
 
 const ADMIN_API_SEGMENT = import.meta.env.VITE_ADMIN_API_SEGMENT || '_ops_console_f91b7c';
-const STORAGE_KEY = 'speedy-trucks-admin-auth';
-
-function getStoredAuth() {
-  if (typeof window === 'undefined') return null;
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-}
-
-function setStoredAuth(value) {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(value));
-}
-
-function clearStoredAuth() {
-  if (typeof window === 'undefined') return;
-  localStorage.removeItem(STORAGE_KEY);
-}
-
-async function api(path, method = 'GET', body, token) {
+async function api(path, method = 'GET', body) {
   const response = await fetch(buildApiUrl(`/${ADMIN_API_SEGMENT}${path}`), {
     method,
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       'x-device-id': 'web-control-panel',
     },
     body: body ? JSON.stringify(body) : undefined,
@@ -43,10 +21,7 @@ async function api(path, method = 'GET', body, token) {
 }
 
 export function AdminControlPanel() {
-  const existingAuth = getStoredAuth();
-  const [token, setToken] = useState(existingAuth?.token || null);
-  const [refreshToken, setRefreshToken] = useState(existingAuth?.refreshToken || null);
-  const [admin, setAdmin] = useState(existingAuth?.admin || null);
+  const [admin, setAdmin] = useState(null);
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -56,6 +31,7 @@ export function AdminControlPanel() {
 
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [bootstrapping, setBootstrapping] = useState(true);
   const [users, setUsers] = useState([]);
   const [pricingPlans, setPricingPlans] = useState([]);
   const [revenue, setRevenue] = useState(null);
@@ -65,14 +41,32 @@ export function AdminControlPanel() {
     registrationsPaused: false,
   });
 
-  const authenticated = useMemo(() => Boolean(token && admin), [token, admin]);
+  const authenticated = useMemo(() => Boolean(admin), [admin]);
 
-  const persist = (next) => {
-    setStoredAuth(next);
-    setToken(next.token);
-    setRefreshToken(next.refreshToken);
-    setAdmin(next.admin);
-  };
+  useEffect(() => {
+    let cancelled = false;
+
+    async function bootstrapAdminSession() {
+      try {
+        const data = await api('/auth/me');
+        if (cancelled) return;
+        setAdmin(data.admin || null);
+      } catch {
+        if (cancelled) return;
+        setAdmin(null);
+      } finally {
+        if (!cancelled) {
+          setBootstrapping(false);
+        }
+      }
+    }
+
+    bootstrapAdminSession();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleLogin = async (event) => {
     event.preventDefault();
@@ -99,10 +93,10 @@ export function AdminControlPanel() {
         mfaChallengeToken,
         mfaCode,
       });
-      persist({ token: data.token, refreshToken: data.refreshToken, admin: data.admin });
+      setAdmin(data.admin);
       setMfaRequired(false);
       setMfaCode('');
-      await loadDashboard(data.token);
+      await loadDashboard();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -110,16 +104,16 @@ export function AdminControlPanel() {
     }
   };
 
-  const loadDashboard = async (activeToken = token) => {
-    if (!activeToken) return;
+  const loadDashboard = async () => {
+    if (!admin) return;
     setLoading(true);
     setError('');
     try {
       const [usersData, plansData, revenueData, killSwitchData] = await Promise.all([
-        api('/control/users?limit=50', 'GET', undefined, activeToken),
-        api('/pricing/plans', 'GET', undefined, activeToken),
-        api('/revenue/summary', 'GET', undefined, activeToken),
-        api('/control/kill-switch', 'GET', undefined, activeToken),
+        api('/control/users?limit=50'),
+        api('/pricing/plans'),
+        api('/revenue/summary'),
+        api('/control/kill-switch'),
       ]);
       setUsers(usersData.users || []);
       setPricingPlans(plansData.plans || []);
@@ -132,13 +126,17 @@ export function AdminControlPanel() {
     }
   };
 
+  useEffect(() => {
+    if (!admin) return;
+    loadDashboard();
+  }, [admin]);
+
   const handleRefresh = async () => {
     setLoading(true);
     setError('');
     try {
-      const data = await api('/auth/refresh-token', 'POST', { refreshToken });
-      persist({ token: data.token, refreshToken: data.refreshToken, admin });
-      await loadDashboard(data.token);
+      await api('/auth/refresh-token', 'POST');
+      await loadDashboard();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -147,14 +145,11 @@ export function AdminControlPanel() {
   };
 
   const handleLogoutAll = async () => {
-    if (!token) return;
+    if (!admin) return;
     setLoading(true);
     setError('');
     try {
-      await api('/auth/logout-all', 'POST', {}, token);
-      clearStoredAuth();
-      setToken(null);
-      setRefreshToken(null);
+      await api('/auth/logout-all', 'POST', {});
       setAdmin(null);
       setUsers([]);
       setPricingPlans([]);
@@ -171,7 +166,7 @@ export function AdminControlPanel() {
     setLoading(true);
     setError('');
     try {
-      const data = await api('/control/kill-switch', 'POST', killSwitch, token);
+      const data = await api('/control/kill-switch', 'POST', killSwitch);
       setKillSwitch(data.value);
     } catch (err) {
       setError(err.message);
@@ -179,6 +174,10 @@ export function AdminControlPanel() {
       setLoading(false);
     }
   };
+
+  if (bootstrapping) {
+    return null;
+  }
 
   if (!authenticated) {
     return (

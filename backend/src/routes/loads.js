@@ -1,7 +1,15 @@
 import { Router } from 'express';
+import { requireRole, verifyJWT } from '../middleware/authorize.js';
 import { requireBookingsEnabled } from '../middleware/platformControl.js';
+import { Joi, validateBody } from '../middleware/validation.js';
 
 const router = Router();
+
+const bidSchema = Joi.object({
+  loadId: Joi.string().trim().min(1).max(128).required(),
+  amount: Joi.number().positive().required(),
+  brokerId: Joi.string().trim().max(128).optional(),
+});
 
 router.get('/', (req, res) => {
   res.json({
@@ -12,11 +20,8 @@ router.get('/', (req, res) => {
   });
 });
 
-router.post('/bid', requireBookingsEnabled(), (req, res) => {
+router.post('/bid', verifyJWT, requireRole(['broker']), requireBookingsEnabled(), validateBody(bidSchema), (req, res) => {
   const { loadId, amount, brokerId } = req.body;
-  if (!loadId || !amount) {
-    return res.status(400).json({ error: 'loadId and amount are required' });
-  }
   return res.status(201).json({ message: 'Bid submitted', loadId, amount, brokerId });
 });
 

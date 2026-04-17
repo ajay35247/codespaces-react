@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+import { buildApiUrl } from '../utils/api';
 
 export function Subscription() {
   const [status, setStatus] = useState(null);
@@ -14,8 +13,9 @@ export function Subscription() {
   const updatePlan = async (action) => {
     setStatus('processing');
     try {
-      const response = await fetch(`${API_URL}/api/payments/subscription/${action}`, {
+      const response = await fetch(buildApiUrl(`/payments/subscription/${action}`), {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action }),
       });

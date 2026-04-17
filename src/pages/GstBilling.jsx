@@ -1,19 +1,14 @@
 import { useEffect, useState } from 'react';
-import { useSelector } from 'react-redux';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+import { buildApiUrl } from '../utils/api';
 
 export function GstBilling() {
-  const token = useSelector((state) => state.auth.token);
   const [invoices, setInvoices] = useState([]);
   const [error, setError] = useState(null);
   const [downloading, setDownloading] = useState(null);
 
   useEffect(() => {
-    fetch(`${API_URL}/api/gst/invoices`, {
-      headers: {
-        Authorization: `Bearer ${token || 'demo-token'}`,
-      },
+    fetch(buildApiUrl('/gst/invoices'), {
+      credentials: 'include',
     })
       .then((response) => {
         if (!response.ok) {
@@ -23,15 +18,13 @@ export function GstBilling() {
       })
       .then((data) => setInvoices(data.invoices || []))
       .catch((err) => setError(err.message));
-  }, [token]);
+  }, []);
 
   const handleDownloadPDF = async (invoiceId) => {
     try {
       setDownloading(invoiceId);
-      const response = await fetch(`${API_URL}/api/gst/download/${invoiceId}`, {
-        headers: {
-          Authorization: `Bearer ${token || 'demo-token'}`,
-        },
+      const response = await fetch(buildApiUrl(`/gst/download/${invoiceId}`), {
+        credentials: 'include',
       });
 
       if (!response.ok) {
@@ -63,7 +56,7 @@ export function GstBilling() {
         <p className="mt-4 text-slate-300">Generate and download compliant invoices with CGST, SGST, IGST and HSN support.</p>
 
         <div className="mt-4 rounded-3xl border border-white/10 bg-slate-900/80 p-5 text-slate-300">
-          <p className="text-sm">{token ? 'Authenticated invoice view enabled.' : 'Viewing demo GST invoices in public preview mode.'}</p>
+          <p className="text-sm">Authenticated invoice view enabled.</p>
         </div>
 
         <div className="mt-10 overflow-hidden rounded-[2rem] border border-white/10 bg-slate-900/80 shadow-xl shadow-slate-950/20">

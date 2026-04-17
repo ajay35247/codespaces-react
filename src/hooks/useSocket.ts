@@ -3,29 +3,17 @@ import io, { Socket } from 'socket.io-client';
 
 const SOCKET_URL = import.meta.env.VITE_API_URL?.replace('/api', '') || 'http://localhost:5000';
 
-function getAuthToken(): string | null {
-  try {
-    const raw = localStorage.getItem('speedy-trucks-auth');
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    return parsed?.token ?? null;
-  } catch {
-    return null;
-  }
-}
-
 export const useSocket = (userId?: string) => {
   const [socket, setSocket] = useState<Socket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
 
   useEffect(() => {
-    const token = getAuthToken();
     const newSocket = io(SOCKET_URL, {
       transports: ['websocket', 'polling'],
       timeout: 20000,
       forceNew: true,
-      auth: { token },
+      withCredentials: true,
     });
 
     newSocket.on('connect', () => {
@@ -52,7 +40,7 @@ export const useSocket = (userId?: string) => {
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
       newSocket.disconnect();
     };
-  }, []);  // token is read once on mount; reconnect triggers re-auth via auth.token
+  }, [userId]);
 
   const emit = (event: string, data?: any) => {
     if (socket && isConnected) {

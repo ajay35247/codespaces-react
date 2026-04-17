@@ -1,6 +1,5 @@
 import { useState } from 'react';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+import { buildApiUrl } from '../utils/api';
 
 export function ForgotPassword() {
   const [email, setEmail] = useState('');
@@ -10,8 +9,9 @@ export function ForgotPassword() {
     event.preventDefault();
     setStatus('sending');
     try {
-      const response = await fetch(`${API_URL}/api/auth/request-password-reset`, {
+      const response = await fetch(buildApiUrl('/auth/request-password-reset'), {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),
       });

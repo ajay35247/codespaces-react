@@ -1,6 +1,5 @@
 import { useState } from 'react';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+import { buildApiUrl } from '../utils/api';
 
 export function Contact() {
   const [form, setForm] = useState({ name: '', email: '', message: '' });
@@ -14,8 +13,9 @@ export function Contact() {
     event.preventDefault();
     setStatus('sending');
     try {
-      const response = await fetch(`${API_URL}/api/support/contact`, {
+      const response = await fetch(buildApiUrl('/support/contact'), {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
       });

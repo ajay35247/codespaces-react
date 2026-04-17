@@ -4,6 +4,9 @@ import { Router } from 'express';
 import { body, validationResult } from 'express-validator';
 import User from '../schemas/UserSchema.js';
 import {
+  clearAuthCookies,
+  getRefreshTokenFromRequest,
+  setAuthCookies,
   verifyJWT,
   signToken,
   signRefreshToken,
@@ -36,7 +39,7 @@ const authLimiter = rateLimit({
   message: { error: 'Too many auth requests, please try again later.' },
 });
 
-router.use(['/login', '/request-password-reset', '/refresh-token'], authLimiter);
+router.use(['/login', '/register', '/request-password-reset', '/refresh-token', '/reset-password'], authLimiter);
 
 function ensureValidRequest(req, res) {
   const errors = validationResult(req);
@@ -110,7 +113,6 @@ router.post('/register', [
     });
 
     await user.save();
-    const { accessToken, refreshToken } = issueTokensForUser(user);
     await user.save();
 
     const clientUrl = process.env.CLIENT_URL || 'http://localhost:3000';
@@ -123,8 +125,7 @@ router.post('/register', [
     }
 
     return res.status(201).json({
-      token: accessToken,
-      refreshToken,
+      message: 'Registration successful. Verify your email address before signing in.',
       user: {
         id: user._id,
         email: user.email,
@@ -186,9 +187,9 @@ router.post('/login', [
     const { accessToken, refreshToken } = issueTokensForUser(user);
     await user.save();
 
+    setAuthCookies(res, { accessToken, refreshToken });
+
     return res.json({
-      token: accessToken,
-      refreshToken,
       user: {
         id: user._id,
         email: user.email,
@@ -206,7 +207,7 @@ router.post('/login', [
 /** Rotate access token using a valid refresh token */
 router.post('/refresh-token', async (req, res) => {
   try {
-    const { refreshToken } = req.body;
+    const refreshToken = getRefreshTokenFromRequest(req);
     if (!refreshToken) {
       return res.status(400).json({ error: 'Refresh token is required' });
     }
@@ -234,7 +235,9 @@ router.post('/refresh-token', async (req, res) => {
     }
     await user.save();
 
-    return res.json({ token: newAccessToken, refreshToken: newRefreshToken });
+    setAuthCookies(res, { accessToken: newAccessToken, refreshToken: newRefreshToken });
+
+    return res.json({ success: true });
   } catch (error) {
     console.error('Refresh token error:', error.message);
     return res.status(500).json({ error: 'Token refresh failed' });
@@ -244,11 +247,12 @@ router.post('/refresh-token', async (req, res) => {
 /** Logout – revoke the presented refresh token */
 router.post('/logout', verifyJWT, async (req, res) => {
   try {
-    const { refreshToken } = req.body;
+    const refreshToken = getRefreshTokenFromRequest(req);
     if (refreshToken) {
       const hashed = hashToken(refreshToken);
       await User.updateOne({ _id: req.user.id }, { $pull: { refreshTokens: hashed } });
     }
+    clearAuthCookies(res);
     return res.json({ message: 'Logged out successfully' });
   } catch (error) {
     console.error('Logout error:', error.message);

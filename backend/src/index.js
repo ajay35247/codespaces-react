@@ -2,6 +2,7 @@ import cluster from 'cluster';
 import os from 'os';
 import express from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import compression from 'compression';
@@ -19,7 +20,8 @@ import dotenv from 'dotenv';
 import connectDatabase from './config/db.js';
 import { globalErrorHandler } from './middleware/errorHandler.js';
 import { auditLogger } from './middleware/auditLogger.js';
-import { verifyAccessToken } from './middleware/authorize.js';
+import { enforceTrustedOriginForCookieAuth } from './middleware/csrfProtection.js';
+import { getSocketAccessToken, verifyAccessToken } from './middleware/authorize.js';
 import { ensureAdminAccount } from './services/securityBootstrap.js';
 import { getAdminPathHash, getAdminPathSegment } from './middleware/adminSecurity.js';
 
@@ -64,6 +66,10 @@ const USE_CLUSTER = process.env.USE_CLUSTER === 'true';
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://www.speedy-trucks.example.com';
 const CLIENT_URL = process.env.CLIENT_URL || 'https://www.speedy-trucks.example.com';
+
+function getAllowedOrigins() {
+  return Array.from(new Set([FRONTEND_URL, CLIENT_URL].filter(Boolean)));
+}
 
 async function connectRedisClient(url) {
   const client = createClient({ url });
@@ -122,7 +128,13 @@ const createApp = async () => {
   }));
 
   app.use(cors({
-    origin: [FRONTEND_URL, CLIENT_URL],
+    origin(origin, callback) {
+      if (!origin || getAllowedOrigins().includes(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error('Not allowed by CORS'));
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   }));
@@ -131,6 +143,7 @@ const createApp = async () => {
   app.use(hpp());
   app.use(mongoSanitize());
   app.disable('x-powered-by');
+  app.use(cookieParser());
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
   app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'tiny'));
@@ -184,6 +197,8 @@ const createApp = async () => {
 
   await connectDatabase();
   await ensureAdminAccount();
+
+  app.use('/api', enforceTrustedOriginForCookieAuth);
 
   app.use((req, res, next) => {
     if (req.path === '/api/health') {
@@ -247,7 +262,7 @@ const startWorker = async () => {
   const io = new Server(server, {
     path: '/socket.io',
     cors: {
-      origin: FRONTEND_URL,
+      origin: getAllowedOrigins(),
       methods: ['GET', 'POST', 'PUT', 'DELETE'],
       credentials: true,
     },
@@ -267,7 +282,7 @@ const startWorker = async () => {
 
   // Socket.IO JWT authentication middleware
   io.use((socket, next) => {
-    const token = socket.handshake.auth?.token || socket.handshake.headers?.authorization?.slice(7);
+    const token = getSocketAccessToken(socket);
     if (!token) {
       return next(new Error('Authentication required'));
     }

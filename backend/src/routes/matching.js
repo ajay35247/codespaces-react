@@ -1,13 +1,19 @@
 import { Router } from 'express';
 import { MatchingEngine } from '../services/matchingEngine.js';
+import { requireRole, verifyJWT } from '../middleware/authorize.js';
+import { Joi, validateBody } from '../middleware/validation.js';
 
 const router = Router();
 
-router.post('/load', async (req, res) => {
+const matchingSchema = Joi.object({
+  loadId: Joi.string().trim().min(1).max(128),
+  vehicleId: Joi.string().trim().min(1).max(128),
+}).xor('loadId', 'vehicleId');
+
+router.use(verifyJWT, requireRole(['broker', 'fleet-manager', 'admin']));
+
+router.post('/load', validateBody(matchingSchema), async (req, res) => {
   const { loadId } = req.body;
-  if (!loadId) {
-    return res.status(400).json({ error: 'loadId is required' });
-  }
 
   try {
     await MatchingEngine.scheduleLoadMatching(loadId);
@@ -18,11 +24,8 @@ router.post('/load', async (req, res) => {
   }
 });
 
-router.post('/vehicle', async (req, res) => {
+router.post('/vehicle', validateBody(matchingSchema), async (req, res) => {
   const { vehicleId } = req.body;
-  if (!vehicleId) {
-    return res.status(400).json({ error: 'vehicleId is required' });
-  }
 
   try {
     await MatchingEngine.scheduleVehicleMatching(vehicleId);

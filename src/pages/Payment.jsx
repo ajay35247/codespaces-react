@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useSelector } from 'react-redux';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+import { buildApiUrl } from '../utils/api';
 
 const plans = [
   { id: 'basic', name: 'Starter', price: 999, benefits: ['Up to 50 loads/month', 'GST-ready invoices', 'Driver tracking'] },
@@ -34,8 +33,9 @@ export function Payment() {
   const handlePayment = async (planId) => {
     setStatus('processing');
     try {
-      const response = await fetch(`${API_URL}/api/payments/subscribe`, {
+      const response = await fetch(buildApiUrl('/payments/subscribe'), {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ planId, currency: 'INR' }),
       });

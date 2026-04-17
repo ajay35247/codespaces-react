@@ -36,7 +36,10 @@ export function Register() {
 
     const { passwordConfirm, ...payload } = formData;
     const result = await dispatch(registerUser(payload));
-    if (result.payload && result.payload.verificationUrl) {
+    if (result.meta.requestStatus !== 'fulfilled') {
+      return;
+    }
+    if (result.payload && result.payload.message) {
       setMessage('Registration successful. Check your inbox for a verification link before logging in.');
       return;
     }

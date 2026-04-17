@@ -14,6 +14,9 @@ import FraudEvent from '../schemas/FraudEventSchema.js';
 import AutomationRule from '../schemas/AutomationRuleSchema.js';
 import AiDecisionLog from '../schemas/AiDecisionLogSchema.js';
 import {
+  clearAuthCookies,
+  getRefreshTokenFromRequest,
+  setAuthCookies,
   verifyJWT,
   signToken,
   signRefreshToken,
@@ -201,9 +204,9 @@ router.post('/auth/login/mfa-verify', adminAuthLimiter, requireAdminIpWhitelist,
 
     await logAdminAuthEvent(req, user, 'ADMIN_LOGIN_SUCCESS', 200, { sessionId });
 
+    setAuthCookies(res, { accessToken, refreshToken, admin: true });
+
     return res.json({
-      token: accessToken,
-      refreshToken,
       admin: {
         id: user._id,
         email: user.email,
@@ -218,7 +221,7 @@ router.post('/auth/login/mfa-verify', adminAuthLimiter, requireAdminIpWhitelist,
 
 router.post('/auth/refresh-token', requireAdminIpWhitelist, async (req, res) => {
   try {
-    const { refreshToken } = req.body;
+    const refreshToken = getRefreshTokenFromRequest(req, true);
     if (!refreshToken) {
       return res.status(400).json({ error: 'Refresh token is required' });
     }
@@ -259,7 +262,9 @@ router.post('/auth/refresh-token', requireAdminIpWhitelist, async (req, res) => 
     session.lastSeenAt = new Date();
     await session.save();
 
-    return res.json({ token: newAccessToken, refreshToken: newRefreshToken });
+    setAuthCookies(res, { accessToken: newAccessToken, refreshToken: newRefreshToken, admin: true });
+
+    return res.json({ success: true });
   } catch (error) {
     console.error('Admin refresh error:', error.message);
     return res.status(500).json({ error: 'Refresh failed' });
@@ -268,13 +273,28 @@ router.post('/auth/refresh-token', requireAdminIpWhitelist, async (req, res) => 
 
 router.use(verifyJWT, requireAjayAdmin, requireAdminIpWhitelist);
 
+router.get('/auth/me', async (req, res) => {
+  const user = await User.findById(req.user.id).select('_id email name role');
+  if (!user || user.role !== 'admin') {
+    return res.status(404).json({ error: 'Admin session not found' });
+  }
+
+  return res.json({
+    admin: {
+      id: user._id,
+      email: user.email,
+      name: user.name,
+    },
+  });
+});
+
 router.get('/auth/sessions', async (req, res) => {
   const sessions = await AdminSession.find({ adminUserId: req.user.id }).sort({ lastSeenAt: -1 }).limit(50);
   return res.json({ sessions });
 });
 
 router.post('/auth/logout', async (req, res) => {
-  const { refreshToken } = req.body;
+  const refreshToken = getRefreshTokenFromRequest(req, true);
   if (refreshToken) {
     const refreshTokenHash = hashToken(refreshToken);
     await User.updateOne({ _id: req.user.id }, { $pull: { refreshTokens: refreshTokenHash } });
@@ -283,6 +303,7 @@ router.post('/auth/logout', async (req, res) => {
       { $set: { revokedAt: new Date(), revokeReason: 'manual-logout' } }
     );
   }
+  clearAuthCookies(res, true);
   await logAdminAuthEvent(req, { _id: req.user.id, email: req.user.email, role: 'admin' }, 'ADMIN_LOGOUT', 200);
   return res.json({ message: 'Logged out' });
 });
@@ -293,6 +314,7 @@ router.post('/auth/logout-all', async (req, res) => {
     { adminUserId: req.user.id, revokedAt: { $exists: false } },
     { $set: { revokedAt: new Date(), revokeReason: 'logout-all' } }
   );
+  clearAuthCookies(res, true);
   await logAdminAuthEvent(req, { _id: req.user.id, email: req.user.email, role: 'admin' }, 'ADMIN_LOGOUT_ALL', 200);
   return res.json({ message: 'All sessions revoked' });
 });

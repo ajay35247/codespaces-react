@@ -22,6 +22,37 @@ export function buildApiUrl(path = '') {
   return `${getApiRootUrl()}${normalizePath(path)}`;
 }
 
+export function createJsonHeaders(headers = {}) {
+  return {
+    'Content-Type': 'application/json',
+    ...headers,
+  };
+}
+
+export async function apiFetch(path, options = {}) {
+  const response = await fetch(buildApiUrl(path), {
+    credentials: 'include',
+    ...options,
+    headers: createJsonHeaders(options.headers),
+  });
+
+  const payload = await parseApiBody(response);
+
+  if (!response.ok) {
+    throw new Error(getApiErrorMessage(payload, 'Request failed'));
+  }
+
+  return payload;
+}
+
+export async function apiRequest(path, { method = 'GET', body, headers } = {}) {
+  return apiFetch(path, {
+    method,
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+}
+
 export async function parseApiBody(response) {
   const contentType = response.headers.get('content-type') || '';
   const rawText = await response.text();

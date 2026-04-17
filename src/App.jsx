@@ -1,15 +1,17 @@
 import React, { useEffect } from 'react';
 import { BrowserRouter, useLocation } from 'react-router-dom';
-import { Provider } from 'react-redux';
+import { Provider, useDispatch } from 'react-redux';
 import { store } from './app/store';
 import { BrandHeader } from './components/BrandHeader';
 import { PrimaryNav } from './components/PrimaryNav';
 import { AppRoutes } from './routes/AppRoutes';
 import { CookieConsentBanner } from './components/CookieConsentBanner';
 import { Footer } from './components/Footer';
+import { bootstrapSession } from './features/auth/authSlice';
 import { trackPageView } from './utils/analytics';
 
 function AppWrapper() {
+  const dispatch = useDispatch();
   const location = useLocation();
   const adminPanelPath = (import.meta.env.VITE_ADMIN_PANEL_PATH || '/ops-bridge-93a1');
   const normalizedAdminPath = adminPanelPath.startsWith('/') ? adminPanelPath : `/${adminPanelPath}`;
@@ -18,6 +20,10 @@ function AppWrapper() {
   useEffect(() => {
     trackPageView(location.pathname);
   }, [location.pathname]);
+
+  useEffect(() => {
+    dispatch(bootstrapSession());
+  }, [dispatch]);
 
   return (
     <>

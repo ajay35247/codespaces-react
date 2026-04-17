@@ -1,6 +1,6 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
-import { logout } from '../features/auth/authSlice';
+import { logoutUser } from '../features/auth/authSlice';
 
 const navItems = [
   { label: 'Home', to: '/' },
@@ -13,15 +13,15 @@ const navItems = [
 export function PrimaryNav() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
-  const token = useSelector((state) => state.auth.token);
   const user = useSelector((state) => state.auth.user);
 
   const handleLogout = () => {
-    dispatch(logout());
-    navigate('/');
+    dispatch(logoutUser()).finally(() => {
+      navigate('/');
+    });
   };
 
-  const authItems = token
+  const authItems = user
     ? [
         { label: 'Dashboard', to: `/dashboard/${user?.role && user?.role !== 'admin' ? user.role : 'shipper'}` },
         { label: 'Logout', action: handleLogout },

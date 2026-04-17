@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useSelector } from 'react-redux';
+import { apiRequest } from '../utils/api';
 
 const brokerTasks = [
   { title: 'Match loads', description: 'Review open bids and assign trucks to high-priority shipments.', status: 'Active' },
@@ -7,31 +7,15 @@ const brokerTasks = [
   { title: 'Review contracts', description: 'Validate logistics agreements and payment terms.', status: 'Completed' },
 ];
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-
 export function BrokerWorkflow() {
-  const token = useSelector((state) => state.auth.token);
-  const role = useSelector((state) => state.auth.role);
   const [summary, setSummary] = useState(null);
   const [loads, setLoads] = useState([]);
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    if (!token) return;
-
     Promise.all([
-      fetch(`${API_URL}/api/broker/summary`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'x-user-role': role,
-        },
-      }).then((res) => res.json()),
-      fetch(`${API_URL}/api/broker/loads`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'x-user-role': role,
-        },
-      }).then((res) => res.json()),
+      apiRequest('/broker/summary'),
+      apiRequest('/broker/loads'),
     ])
       .then(([summaryData, loadsData]) => {
         if (summaryData.error) throw new Error(summaryData.error);
@@ -40,7 +24,7 @@ export function BrokerWorkflow() {
         setLoads(loadsData.loads || []);
       })
       .catch((err) => setError(err.message));
-  }, [token, role]);
+  }, []);
 
   return (
     <main className="mx-auto max-w-7xl px-6 py-10 sm:px-10">

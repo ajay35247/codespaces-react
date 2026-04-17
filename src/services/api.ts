@@ -10,44 +10,24 @@ class ApiError extends Error {
 
 class ApiService {
   private baseURL: string;
-  private token: string | null = null;
-  private refreshToken: string | null = null;
   private refreshPromise: Promise<void> | null = null;
 
   constructor(baseURL: string = `${getApiOrigin()}/api`) {
     this.baseURL = baseURL.endsWith('/api') ? baseURL : `${baseURL.replace(/\/+$/, '')}/api`;
-    this.token = localStorage.getItem('authToken');
-    this.refreshToken = localStorage.getItem('refreshToken');
-  }
-
-  setToken(token: string) {
-    this.token = token;
-    localStorage.setItem('authToken', token);
-  }
-
-  setRefreshToken(token: string) {
-    this.refreshToken = token;
-    localStorage.setItem('refreshToken', token);
   }
 
   clearToken() {
-    this.token = null;
-    this.refreshToken = null;
-    localStorage.removeItem('authToken');
-    localStorage.removeItem('refreshToken');
+    return undefined;
   }
 
   private async tryRefresh(): Promise<void> {
-    if (!this.refreshToken) throw new Error('No refresh token');
     const res = await fetch(`${this.baseURL}/auth/refresh-token`, {
       method: 'POST',
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken: this.refreshToken }),
     });
     if (!res.ok) throw new Error('Refresh failed');
-    const data = await parseApiBody(res);
-    this.setToken(data.token);
-    this.setRefreshToken(data.refreshToken);
+    await parseApiBody(res);
   }
 
   private async request<T>(
@@ -64,12 +44,7 @@ class ApiService {
       ...options,
     };
 
-    if (this.token) {
-      config.headers = {
-        ...config.headers,
-        Authorization: `Bearer ${this.token}`,
-      };
-    }
+    config.credentials = 'include';
 
     try {
       const response = await fetch(url, config);
@@ -77,7 +52,7 @@ class ApiService {
 
       if (response.status === 401) {
         // Token expired – try silent refresh once
-        if (responseBody?.code === 'TOKEN_EXPIRED' && retryCount === 0 && this.refreshToken) {
+        if (responseBody?.code === 'TOKEN_EXPIRED' && retryCount === 0) {
           if (!this.refreshPromise) {
             this.refreshPromise = this.tryRefresh().finally(() => { this.refreshPromise = null; });
           }
@@ -116,20 +91,11 @@ class ApiService {
   }
 
   // Auth methods
-  async login(email: string, password: string): Promise<{ user: any; token: string; refreshToken: string }> {
-    const response = await this.request<{ user: any; token: string; refreshToken: string }>('/auth/login', {
+  async login(email: string, password: string): Promise<{ user: any }> {
+    return this.request<{ user: any }>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     });
-
-    if (response?.token) {
-      this.setToken(response.token);
-    }
-    if (response?.refreshToken) {
-      this.setRefreshToken(response.refreshToken);
-    }
-
-    return response;
   }
 
   async register(userData: {
@@ -138,26 +104,16 @@ class ApiService {
     role: string;
     name: string;
     phone: string;
-  }): Promise<{ user: any; token: string; refreshToken: string }> {
-    const response = await this.request<{ user: any; token: string; refreshToken: string }>('/auth/register', {
+  }): Promise<{ user: any; message?: string }> {
+    return this.request<{ user: any; message?: string }>('/auth/register', {
       method: 'POST',
       body: JSON.stringify(userData),
     });
-
-    if (response?.token) {
-      this.setToken(response.token);
-    }
-    if (response?.refreshToken) {
-      this.setRefreshToken(response.refreshToken);
-    }
-
-    return response;
   }
 
   async logout(): Promise<void> {
     await this.request('/auth/logout', {
       method: 'POST',
-      body: JSON.stringify({ refreshToken: this.refreshToken }),
     }).catch(() => {});
     this.clearToken();
   }

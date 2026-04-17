@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+import { buildApiUrl } from '../utils/api';
 
 export function VerifyEmail() {
   const { token } = useParams();
@@ -11,7 +10,9 @@ export function VerifyEmail() {
   useEffect(() => {
     async function verify() {
       try {
-        const response = await fetch(`${API_URL}/api/auth/verify-email/${token}`);
+        const response = await fetch(buildApiUrl(`/auth/verify-email/${token}`), {
+          credentials: 'include',
+        });
         if (!response.ok) throw new Error('Verification failed');
         setStatus('success');
         setTimeout(() => navigate('/login'), 2000);

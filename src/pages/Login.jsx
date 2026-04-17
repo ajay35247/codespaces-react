@@ -15,7 +15,7 @@ export function Login() {
   const handleSubmit = async (event) => {
     event.preventDefault();
     const result = await dispatch(loginUser({ email, password }));
-    if (result.payload && result.payload.user) {
+    if (result.meta.requestStatus === 'fulfilled' && result.payload && result.payload.user) {
       navigate(`/dashboard/${result.payload.user.role}`);
     }
   };

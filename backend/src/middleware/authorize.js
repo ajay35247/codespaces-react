@@ -2,6 +2,11 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { getAdminEmail, normalizeEmail } from '../utils/securityPolicy.js';
 
+export const USER_ACCESS_COOKIE = 'st_access';
+export const USER_REFRESH_COOKIE = 'st_refresh';
+export const ADMIN_ACCESS_COOKIE = 'st_admin_access';
+export const ADMIN_REFRESH_COOKIE = 'st_admin_refresh';
+
 function getJwtConfig() {
   const jwtSecret = process.env.JWT_SECRET || 'speedy-trucks-ephemeral-jwt-secret';
   const jwtRefreshSecret = process.env.JWT_REFRESH_SECRET || `${jwtSecret}-refresh`;
@@ -14,6 +19,109 @@ function getJwtConfig() {
     jwtExpire,
     jwtRefreshExpire,
   };
+}
+
+function isSecureCookieRequest() {
+  return process.env.NODE_ENV === 'production' || process.env.COOKIE_SECURE === 'true';
+}
+
+function getCookieDomain() {
+  return process.env.AUTH_COOKIE_DOMAIN || undefined;
+}
+
+function getCookieOptions(maxAgeMs, httpOnly = true) {
+  return {
+    httpOnly,
+    secure: isSecureCookieRequest(),
+    sameSite: 'strict',
+    domain: getCookieDomain(),
+    path: '/',
+    maxAge: maxAgeMs,
+  };
+}
+
+export function parseCookieHeader(cookieHeader = '') {
+  return String(cookieHeader)
+    .split(';')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .reduce((cookies, part) => {
+      const separator = part.indexOf('=');
+      if (separator <= 0) {
+        return cookies;
+      }
+
+      const key = decodeURIComponent(part.slice(0, separator).trim());
+      const value = decodeURIComponent(part.slice(separator + 1).trim());
+      cookies[key] = value;
+      return cookies;
+    }, {});
+}
+
+function getRequestCookies(req) {
+  if (req.cookies && typeof req.cookies === 'object') {
+    return req.cookies;
+  }
+
+  return parseCookieHeader(req.headers?.cookie);
+}
+
+export function setAuthCookies(res, { accessToken, refreshToken, admin = false }) {
+  const accessCookieName = admin ? ADMIN_ACCESS_COOKIE : USER_ACCESS_COOKIE;
+  const refreshCookieName = admin ? ADMIN_REFRESH_COOKIE : USER_REFRESH_COOKIE;
+  const { jwtExpire, jwtRefreshExpire } = getJwtConfig();
+
+  const accessMaxAge = ms(jwtExpire);
+  const refreshMaxAge = ms(jwtRefreshExpire);
+
+  res.cookie(accessCookieName, accessToken, getCookieOptions(accessMaxAge));
+  res.cookie(refreshCookieName, refreshToken, getCookieOptions(refreshMaxAge));
+}
+
+export function clearAuthCookies(res, admin = false) {
+  const accessCookieName = admin ? ADMIN_ACCESS_COOKIE : USER_ACCESS_COOKIE;
+  const refreshCookieName = admin ? ADMIN_REFRESH_COOKIE : USER_REFRESH_COOKIE;
+  const expiredOptions = { ...getCookieOptions(0), maxAge: 0 };
+
+  res.clearCookie(accessCookieName, expiredOptions);
+  res.clearCookie(refreshCookieName, expiredOptions);
+}
+
+export function getAccessTokenFromRequest(req, adminOnly = false) {
+  const authorization = req.header('authorization');
+  if (authorization && authorization.startsWith('Bearer ')) {
+    return authorization.slice(7);
+  }
+
+  const cookies = getRequestCookies(req);
+  if (adminOnly) {
+    return cookies[ADMIN_ACCESS_COOKIE] || null;
+  }
+
+  return cookies[USER_ACCESS_COOKIE] || cookies[ADMIN_ACCESS_COOKIE] || null;
+}
+
+export function getRefreshTokenFromRequest(req, adminOnly = false) {
+  if (req.body?.refreshToken) {
+    return req.body.refreshToken;
+  }
+
+  const cookies = getRequestCookies(req);
+  if (adminOnly) {
+    return cookies[ADMIN_REFRESH_COOKIE] || null;
+  }
+
+  return cookies[USER_REFRESH_COOKIE] || cookies[ADMIN_REFRESH_COOKIE] || null;
+}
+
+export function getSocketAccessToken(socket) {
+  const bearerToken = socket.handshake.auth?.token || socket.handshake.headers?.authorization?.slice(7);
+  if (bearerToken) {
+    return bearerToken;
+  }
+
+  const cookies = parseCookieHeader(socket.handshake.headers?.cookie);
+  return cookies[USER_ACCESS_COOKIE] || cookies[ADMIN_ACCESS_COOKIE] || null;
 }
 
 /** Sign a short-lived access token (15 min default) */
@@ -55,13 +163,16 @@ export function hashToken(token) {
 
 /** Express middleware – validates the Bearer access token */
 export function verifyJWT(req, res, next) {
-  const authorization = req.header('authorization');
+  const requestPath = req.path || '';
+  const token = getAccessTokenFromRequest(
+    req,
+    requestPath.includes('/control/') || requestPath.includes('/pricing/') || requestPath.includes('/revenue/') || requestPath.includes('/auth/sessions')
+  );
 
-  if (!authorization || !authorization.startsWith('Bearer ')) {
+  if (!token) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  const token = authorization.slice(7);
   try {
     req.user = verifyAccessToken(token);
     if (req.user.role === 'admin' && normalizeEmail(req.user.email) !== getAdminEmail()) {
@@ -100,5 +211,26 @@ export function requireAjayAdmin(req, res, next) {
     return res.status(403).json({ error: 'Forbidden: admin access denied' });
   }
   return next();
+}
+
+function ms(value) {
+  const normalized = String(value || '').trim();
+  const match = normalized.match(/^(\d+)(ms|s|m|h|d)?$/i);
+
+  if (!match) {
+    return 15 * 60 * 1000;
+  }
+
+  const amount = Number.parseInt(match[1], 10);
+  const unit = (match[2] || 'ms').toLowerCase();
+  const multipliers = {
+    ms: 1,
+    s: 1000,
+    m: 60 * 1000,
+    h: 60 * 60 * 1000,
+    d: 24 * 60 * 60 * 1000,
+  };
+
+  return amount * multipliers[unit];
 }
 

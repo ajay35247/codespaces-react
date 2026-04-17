@@ -25,7 +25,9 @@ process.env.JWT_REFRESH_SECRET = 'test-jwt-refresh-secret';
 
 const authorize = await import('../../src/middleware/authorize.js');
 const {
+  getAccessTokenFromRequest,
   hashToken,
+  parseCookieHeader,
   requireAjayAdmin,
   requireRole,
   signToken,
@@ -34,6 +36,7 @@ const {
   verifyJWT,
   verifyRefreshToken,
 } = authorize;
+const { enforceTrustedOriginForCookieAuth } = await import('../../src/middleware/csrfProtection.js');
 
 function createRes() {
   return {
@@ -351,4 +354,76 @@ test('L10.5 sanitizeBody preserves non-sensitive fields', () => {
   const safe = sanitizeBody({ action: 'UPDATE_SETTINGS', path: '/api/auth/me' });
   assert.equal(safe.action, 'UPDATE_SETTINGS');
   assert.equal(safe.path, '/api/auth/me');
+});
+
+// Layer 11: Cookie-backed auth and CSRF-style origin enforcement
+
+test('L11.1 parseCookieHeader reads auth cookies', () => {
+  const cookies = parseCookieHeader('st_access=abc123; st_refresh=ref456');
+  assert.equal(cookies.st_access, 'abc123');
+  assert.equal(cookies.st_refresh, 'ref456');
+});
+
+test('L11.2 getAccessTokenFromRequest falls back to auth cookie', () => {
+  const req = {
+    header: () => null,
+    headers: { cookie: 'st_access=cookie-token' },
+  };
+  assert.equal(getAccessTokenFromRequest(req), 'cookie-token');
+});
+
+test('L11.3 cookie-authenticated mutation rejects invalid origin', () => {
+  process.env.FRONTEND_URL = 'https://www.aptrucking.in';
+  process.env.CLIENT_URL = 'https://www.aptrucking.in';
+
+  const req = {
+    method: 'POST',
+    cookies: { st_access: 'cookie-token' },
+    get(header) {
+      if (header === 'origin') return 'https://evil.example';
+      if (header === 'authorization') return undefined;
+      return undefined;
+    },
+    headers: {},
+  };
+  const res = createRes();
+
+  enforceTrustedOriginForCookieAuth(req, res, () => {});
+  assert.equal(res.statusCode, 403);
+});
+
+test('L11.4 cookie-authenticated mutation accepts trusted origin', () => {
+  process.env.FRONTEND_URL = 'https://www.aptrucking.in';
+  process.env.CLIENT_URL = 'https://www.aptrucking.in';
+
+  const req = {
+    method: 'POST',
+    cookies: { st_access: 'cookie-token' },
+    get(header) {
+      if (header === 'origin') return 'https://www.aptrucking.in';
+      if (header === 'authorization') return undefined;
+      return undefined;
+    },
+    headers: {},
+  };
+  let nextCalled = false;
+
+  enforceTrustedOriginForCookieAuth(req, createRes(), () => { nextCalled = true; });
+  assert.equal(nextCalled, true);
+});
+
+test('L11.5 bearer-authenticated mutation is not blocked by origin middleware', () => {
+  const req = {
+    method: 'POST',
+    cookies: { st_access: 'cookie-token' },
+    get(header) {
+      if (header === 'authorization') return 'Bearer abc';
+      return undefined;
+    },
+    headers: {},
+  };
+  let nextCalled = false;
+
+  enforceTrustedOriginForCookieAuth(req, createRes(), () => { nextCalled = true; });
+  assert.equal(nextCalled, true);
 });

@@ -1,14 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useSelector } from 'react-redux';
 import { GoogleMap, Marker, Polyline, useJsApiLoader } from '@react-google-maps/api';
+import { apiRequest } from '../utils/api';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAP_API_KEY || import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
 const mapContainerStyle = { width: '100%', height: '100%' };
 const defaultCenter = { lat: 19.076, lng: 72.8777 };
 
 export function Tracking() {
-  const token = useSelector((state) => state.auth.token);
   const [shipments, setShipments] = useState([]);
   const [routePath, setRoutePath] = useState([]);
   const [error, setError] = useState(null);
@@ -18,31 +16,15 @@ export function Tracking() {
   });
 
   useEffect(() => {
-    fetch(`${API_URL}/api/tracking/locations`, {
-      headers: { Authorization: `Bearer ${token || 'demo-token'}` },
-    })
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error('Unable to load tracking data');
-        }
-        return response.json();
-      })
+    apiRequest('/tracking/locations')
       .then((data) => setShipments(data.shipments || []))
       .catch((error) => setError(error.message));
-  }, [token]);
+  }, []);
 
   useEffect(() => {
     if (!shipments.length) return;
     const shipment = shipments[0];
-    fetch(`${API_URL}/api/tracking/route/${shipment.id}`, {
-      headers: { Authorization: `Bearer ${token || 'demo-token'}` },
-    })
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error('Unable to load route path');
-        }
-        return response.json();
-      })
+    apiRequest(`/tracking/route/${shipment.id}`)
       .then((data) => setRoutePath(data.route?.path || []))
       .catch(() => {});
   }, [shipments]);

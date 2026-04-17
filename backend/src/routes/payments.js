@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import express from 'express';
 import { verifyJWT, requireRole } from '../middleware/authorize.js';
 import { requirePaymentsEnabled } from '../middleware/platformControl.js';
+import { Joi, validateBody } from '../middleware/validation.js';
 
 const router = Router();
 const razorpayKeyId = process.env.RAZORPAY_KEY_ID || '';
@@ -18,6 +19,30 @@ const plans = [
   { id: 'growth', title: 'Growth', price: 2499, currency: 'INR', description: 'Up to 200 loads / month' },
   { id: 'enterprise', title: 'Enterprise', price: 4999, currency: 'INR', description: 'Unlimited loads + premium support' },
 ];
+
+const subscribeSchema = Joi.object({
+  planId: Joi.string().valid(...plans.map((plan) => plan.id)).required(),
+});
+
+const verifySchema = Joi.object({
+  razorpay_order_id: Joi.string().trim().required(),
+  razorpay_payment_id: Joi.string().trim().required(),
+  razorpay_signature: Joi.string().trim().required(),
+});
+
+const payoutSchema = Joi.object({
+  driverId: Joi.string().trim().min(1).max(128).required(),
+  amount: Joi.number().positive().required(),
+});
+
+function secureCompareHex(expected, actual) {
+  const left = Buffer.from(String(expected || ''), 'utf8');
+  const right = Buffer.from(String(actual || ''), 'utf8');
+  if (left.length !== right.length) {
+    return false;
+  }
+  return crypto.timingSafeEqual(left, right);
+}
 
 // ── Fraud detection ─ in-memory sliding window per IP ──────────────────────
 const paymentAttempts = new Map();
@@ -99,7 +124,7 @@ router.get('/plans', (req, res) => {
   res.json({ plans });
 });
 
-router.post('/subscribe', verifyJWT, requirePaymentsEnabled(), flagFraud, async (req, res) => {
+router.post('/subscribe', verifyJWT, requirePaymentsEnabled(), flagFraud, validateBody(subscribeSchema), async (req, res) => {
   if (!razorpay) {
     return res.status(500).json({ error: 'Payment gateway is not configured' });
   }
@@ -132,18 +157,15 @@ router.post('/subscribe', verifyJWT, requirePaymentsEnabled(), flagFraud, async 
   }
 });
 
-router.post('/verify', verifyJWT, (req, res) => {
+router.post('/verify', verifyJWT, validateBody(verifySchema), (req, res) => {
   const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
-  if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
-    return res.status(400).json({ error: 'Missing payment verification fields' });
-  }
 
   const expected = crypto
     .createHmac('sha256', razorpayKeySecret)
     .update(`${razorpay_order_id}|${razorpay_payment_id}`)
     .digest('hex');
 
-  if (!crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(razorpay_signature))) {
+  if (!secureCompareHex(expected, razorpay_signature)) {
     return res.status(400).json({ error: 'Invalid payment signature' });
   }
 
@@ -171,11 +193,8 @@ router.get('/wallets', verifyJWT, requireRole(['fleet-manager']), (req, res) => 
   });
 });
 
-router.post('/payout', verifyJWT, requireRole(['fleet-manager']), (req, res) => {
+router.post('/payout', verifyJWT, requireRole(['fleet-manager']), validateBody(payoutSchema), (req, res) => {
   const { driverId, amount } = req.body;
-  if (!driverId || !amount || typeof amount !== 'number' || amount <= 0) {
-    return res.status(400).json({ error: 'Valid driverId and positive amount are required' });
-  }
   return res.status(200).json({ message: 'Payout scheduled', driverId, amount });
 });
 
