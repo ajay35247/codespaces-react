@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 import bcrypt from 'bcrypt';
 
 const TruckSchema = new mongoose.Schema({
-  truckId: { type: String, required: true, unique: true },
+  truckId: { type: String, required: true },
   licensePlate: { type: String, required: true },
   capacity: { type: Number },
   type: { type: String },

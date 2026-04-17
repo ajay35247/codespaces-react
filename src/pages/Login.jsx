@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { Link, useNavigate } from 'react-router-dom';
-import { loginUser } from '../features/auth/authSlice';
+import { clearAuthError, loginUser } from '../features/auth/authSlice';
 
 export function Login() {
   const dispatch = useDispatch();
@@ -11,6 +11,10 @@ export function Login() {
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+
+  useEffect(() => {
+    dispatch(clearAuthError());
+  }, [dispatch]);
 
   const handleSubmit = async (event) => {
     event.preventDefault();

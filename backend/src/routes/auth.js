@@ -33,7 +33,8 @@ const PUBLIC_ROLES = ['shipper', 'driver', 'fleet-manager', 'broker'];
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 8,
+  max: parseInt(process.env.AUTH_ROUTE_RATE_LIMIT_MAX || '30', 10),
+  skipSuccessfulRequests: true,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many auth requests, please try again later.' },

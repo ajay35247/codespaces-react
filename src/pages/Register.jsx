@@ -1,8 +1,21 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
-import { registerUser } from '../features/auth/authSlice';
+import { clearAuthError, registerUser } from '../features/auth/authSlice';
 import { ROLE_CARDS } from '../data/roles';
+
+function getPasswordErrors(password = '') {
+  const value = String(password);
+  const errors = [];
+
+  if (value.length < 12) errors.push('At least 12 characters');
+  if (!/[A-Z]/.test(value)) errors.push('At least one uppercase letter');
+  if (!/[a-z]/.test(value)) errors.push('At least one lowercase letter');
+  if (!/[0-9]/.test(value)) errors.push('At least one number');
+  if (!/[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(value)) errors.push('At least one special character');
+
+  return errors;
+}
 
 export function Register() {
   const dispatch = useDispatch();
@@ -20,6 +33,11 @@ export function Register() {
     gstin: '',
   });
   const [message, setMessage] = useState('');
+  const [localError, setLocalError] = useState('');
+
+  useEffect(() => {
+    dispatch(clearAuthError());
+  }, [dispatch]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -28,9 +46,17 @@ export function Register() {
 
   const handleSubmit = async (event) => {
     event.preventDefault();
+    setLocalError('');
+    setMessage('');
 
     if (formData.password !== formData.passwordConfirm) {
-      alert('Passwords do not match');
+      setLocalError('Passwords do not match.');
+      return;
+    }
+
+    const passwordErrors = getPasswordErrors(formData.password);
+    if (passwordErrors.length > 0) {
+      setLocalError(`Password requirements: ${passwordErrors.join(', ')}`);
       return;
     }
 
@@ -55,6 +81,7 @@ export function Register() {
         <h1 className="mt-4 text-4xl font-semibold text-white">Join Speedy Trucks</h1>
         <p className="mt-3 text-slate-300">Register as a shipper, driver, broker, or fleet manager.</p>
 
+        {localError && <div className="mt-6 rounded-3xl bg-rose-500/10 p-4 text-sm text-rose-300">{localError}</div>}
         {error && <div className="mt-6 rounded-3xl bg-orange-500/10 p-4 text-sm text-orange-300">{error}</div>}
 
         <form className="mt-10 space-y-6" onSubmit={handleSubmit}>
@@ -98,6 +125,9 @@ export function Register() {
               required
               disabled={loading}
             />
+            <p className="mt-2 text-xs text-slate-400">
+              Must be at least 12 characters and include uppercase, lowercase, number, and special character.
+            </p>
           </label>
 
           <label className="block text-sm font-medium text-slate-200">
