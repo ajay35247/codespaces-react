@@ -10,7 +10,8 @@ services:
       - backend
     environment:
       - VITE_API_URL=https://api.speedy-trucks.example.com/api
-      - VITE_GOOGLE_MAPS_API_KEY=${VITE_GOOGLE_MAPS_API_KEY}
+      - VITE_GOOGLE_MAP_API_KEY=${VITE_GOOGLE_MAP_API_KEY}
+      - VITE_GOOGLE_MAPS_API_KEY=${VITE_GOOGLE_MAP_API_KEY}
     restart: unless-stopped
 
   backend:
@@ -27,7 +28,21 @@ services:
       - CLIENT_URL=https://www.speedy-trucks.example.com
       - FRONTEND_URL=https://www.speedy-trucks.example.com
       - JWT_SECRET=${JWT_SECRET}
-      - USE_CLUSTER=true
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
+      - JWT_EXPIRE=${JWT_EXPIRE:-15m}
+      - JWT_REFRESH_EXPIRE=${JWT_REFRESH_EXPIRE:-7d}
+      - EMAIL_HOST=${EMAIL_HOST:-smtp.resend.com}
+      - EMAIL_PORT=${EMAIL_PORT:-587}
+      - EMAIL_USER=${EMAIL_USER:-resend}
+      - EMAIL_PASS=${EMAIL_PASS}
+      - EMAIL_FROM=${EMAIL_FROM:-Speedy Trucks <noreply@aptrucking.in>}
+      - RAZORPAY_KEY_ID=${RAZORPAY_KEY_ID}
+      - RAZORPAY_KEY_SECRET=${RAZORPAY_KEY_SECRET}
+      - RAZORPAY_WEBHOOK_SECRET=${RAZORPAY_WEBHOOK_SECRET}
+      - ADMIN_EMAIL=${ADMIN_EMAIL}
+      - ADMIN_BOOTSTRAP_PASSWORD=${ADMIN_BOOTSTRAP_PASSWORD}
+      - ADMIN_PRIVATE_PATH_SEGMENT=${ADMIN_PRIVATE_PATH_SEGMENT}
+      - USE_CLUSTER=false
     depends_on:
       - mongo
       - redis
