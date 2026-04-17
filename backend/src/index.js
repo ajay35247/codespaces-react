@@ -117,7 +117,7 @@ const createApp = async () => {
         frameSrc: ["'self'"],
       },
     },
-    crossOriginResourcePolicy: { policy: 'same-site' },
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
     crossOriginEmbedderPolicy: false,
   }));
 
