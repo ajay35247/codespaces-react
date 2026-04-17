@@ -1,19 +1,20 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+import { buildApiUrl, getApiErrorMessage, parseApiBody } from '../../utils/api';
 
 export const loginUser = createAsyncThunk('auth/loginUser', async (credentials, { rejectWithValue }) => {
   try {
-    const response = await fetch(`${API_URL}/api/auth/login`, {
+    const response = await fetch(buildApiUrl('/auth/login'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(credentials),
     });
+    const payload = await parseApiBody(response);
+
     if (!response.ok) {
-      const error = await response.json();
-      return rejectWithValue(error.error);
+      return rejectWithValue(getApiErrorMessage(payload, 'Login failed'));
     }
-    return await response.json();
+
+    return payload;
   } catch (error) {
     return rejectWithValue(error.message);
   }
@@ -21,16 +22,18 @@ export const loginUser = createAsyncThunk('auth/loginUser', async (credentials, 
 
 export const registerUser = createAsyncThunk('auth/registerUser', async (userData, { rejectWithValue }) => {
   try {
-    const response = await fetch(`${API_URL}/api/auth/register`, {
+    const response = await fetch(buildApiUrl('/auth/register'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(userData),
     });
+    const payload = await parseApiBody(response);
+
     if (!response.ok) {
-      const error = await response.json();
-      return rejectWithValue(error.error);
+      return rejectWithValue(getApiErrorMessage(payload, 'Registration failed'));
     }
-    return await response.json();
+
+    return payload;
   } catch (error) {
     return rejectWithValue(error.message);
   }

@@ -1,4 +1,5 @@
 import { ApiResponse } from '../../../shared/types';
+import { getApiErrorMessage, getApiOrigin, parseApiBody } from '../utils/api';
 
 class ApiError extends Error {
   constructor(public status: number, message: string, public data?: any) {
@@ -13,8 +14,8 @@ class ApiService {
   private refreshToken: string | null = null;
   private refreshPromise: Promise<void> | null = null;
 
-  constructor(baseURL: string = import.meta.env.VITE_API_URL || 'http://localhost:5000/api') {
-    this.baseURL = baseURL;
+  constructor(baseURL: string = `${getApiOrigin()}/api`) {
+    this.baseURL = baseURL.endsWith('/api') ? baseURL : `${baseURL.replace(/\/+$/, '')}/api`;
     this.token = localStorage.getItem('authToken');
     this.refreshToken = localStorage.getItem('refreshToken');
   }
@@ -44,7 +45,7 @@ class ApiService {
       body: JSON.stringify({ refreshToken: this.refreshToken }),
     });
     if (!res.ok) throw new Error('Refresh failed');
-    const data = await res.json();
+    const data = await parseApiBody(res);
     this.setToken(data.token);
     this.setRefreshToken(data.refreshToken);
   }
@@ -72,11 +73,11 @@ class ApiService {
 
     try {
       const response = await fetch(url, config);
+      const responseBody = await parseApiBody(response);
 
       if (response.status === 401) {
-        const body = await response.json().catch(() => ({}));
         // Token expired – try silent refresh once
-        if (body?.code === 'TOKEN_EXPIRED' && retryCount === 0 && this.refreshToken) {
+        if (responseBody?.code === 'TOKEN_EXPIRED' && retryCount === 0 && this.refreshToken) {
           if (!this.refreshPromise) {
             this.refreshPromise = this.tryRefresh().finally(() => { this.refreshPromise = null; });
           }
@@ -91,16 +92,14 @@ class ApiService {
         }
         this.clearToken();
         window.location.href = '/login';
-        throw new ApiError(401, 'Unauthorized');
+        throw new ApiError(401, getApiErrorMessage(responseBody, 'Unauthorized'), responseBody);
       }
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new ApiError(response.status, errorData.error || errorData.message || 'Request failed', errorData);
+        throw new ApiError(response.status, getApiErrorMessage(responseBody, 'Request failed'), responseBody);
       }
 
-      const data = await response.json();
-      return data;
+      return responseBody as T;
     } catch (error) {
       if (error instanceof ApiError) {
         throw error;

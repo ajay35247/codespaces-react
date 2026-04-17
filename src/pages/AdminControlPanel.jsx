@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
+import { buildApiUrl, getApiErrorMessage, parseApiBody } from '../utils/api';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 const ADMIN_API_SEGMENT = import.meta.env.VITE_ADMIN_API_SEGMENT || '_ops_console_f91b7c';
 const STORAGE_KEY = 'speedy-trucks-admin-auth';
 
@@ -25,7 +25,7 @@ function clearStoredAuth() {
 }
 
 async function api(path, method = 'GET', body, token) {
-  const response = await fetch(`${API_URL}/api/${ADMIN_API_SEGMENT}${path}`, {
+  const response = await fetch(buildApiUrl(`/${ADMIN_API_SEGMENT}${path}`), {
     method,
     headers: {
       'Content-Type': 'application/json',
@@ -35,9 +35,9 @@ async function api(path, method = 'GET', body, token) {
     body: body ? JSON.stringify(body) : undefined,
   });
 
-  const data = await response.json();
+  const data = await parseApiBody(response);
   if (!response.ok) {
-    throw new Error(data.error || 'Request failed');
+    throw new Error(getApiErrorMessage(data, 'Request failed'));
   }
   return data;
 }
