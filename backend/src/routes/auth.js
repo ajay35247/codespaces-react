@@ -113,7 +113,6 @@ router.post('/register', [
     });
 
     await user.save();
-    await user.save();
 
     const clientUrl = process.env.CLIENT_URL || 'http://localhost:3000';
     const verificationUrl = `${clientUrl}/verify-email/${verificationToken}`;
