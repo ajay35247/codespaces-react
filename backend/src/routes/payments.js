@@ -235,29 +235,29 @@ router.post('/verify', verifyJWT, validateBody(verifySchema), async (req, res) =
 });
 
 router.post('/subscription/upgrade', verifyJWT, (req, res) => {
-  return res.status(200).json({ message: 'Subscription upgraded successfully', action: 'upgrade' });
+  // Subscription management is not yet implemented.  Returning a fake 200 success
+  // would mislead users into believing their plan changed when it did not.
+  return res.status(501).json({ error: 'Subscription upgrade is not yet implemented' });
 });
 
 router.post('/subscription/downgrade', verifyJWT, (req, res) => {
-  return res.status(200).json({ message: 'Subscription downgraded successfully', action: 'downgrade' });
+  return res.status(501).json({ error: 'Subscription downgrade is not yet implemented' });
 });
 
 router.post('/subscription/cancel', verifyJWT, (req, res) => {
-  return res.status(200).json({ message: 'Subscription canceled successfully', action: 'cancel' });
+  return res.status(501).json({ error: 'Subscription cancellation is not yet implemented' });
 });
 
 router.get('/wallets', verifyJWT, requireRole(['fleet-manager']), (req, res) => {
-  res.json({
-    wallets: [
-      { owner: 'Driver A', balance: 42000, currency: 'INR' },
-      { owner: 'Broker X', balance: 18500, currency: 'INR' },
-    ],
-  });
+  // Wallet balances are not yet stored in the database.  Returning hardcoded fake
+  // figures would expose fabricated financial data to the fleet manager.
+  return res.status(501).json({ error: 'Wallet feature is not yet implemented' });
 });
 
 router.post('/payout', verifyJWT, requireRole(['fleet-manager']), validateBody(payoutSchema), (req, res) => {
-  const { driverId, amount } = req.body;
-  return res.status(200).json({ message: 'Payout scheduled', driverId, amount });
+  // Payout disbursement logic is not yet implemented.  A fake success response
+  // here would imply a financial transfer occurred when none did.
+  return res.status(501).json({ error: 'Payout feature is not yet implemented' });
 });
 
 export default router;
