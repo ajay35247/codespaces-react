@@ -294,19 +294,41 @@ const startWorker = async () => {
     });
 
     socket.on('update-location', async (data) => {
-      if (!data?.vehicleId || !data?.location?.lat || !data?.location?.lng) return;
-      // Only drivers can push location
+      if (!data?.vehicleId || typeof data.location?.lat !== 'number' || typeof data.location?.lng !== 'number') return;
+      // Only drivers and fleet-managers can push location updates
       if (!['driver', 'fleet-manager'].includes(socket.user.role)) return;
 
+      const vehicleId = String(data.vehicleId);
+      const location = {
+        lat: data.location.lat,
+        lng: data.location.lng,
+      };
+      const now = new Date();
+
       try {
+        // Use vehicleId (string) as the natural key, consistent with REST reads.
+        // Push to routeHistory and cap at 200 recent points for route replay.
         await mongoose.connection.db.collection('vehicles').updateOne(
-          { _id: new mongoose.Types.ObjectId(data.vehicleId) },
-          { $set: { currentLocation: data.location, updatedAt: new Date() } }
+          { vehicleId },
+          {
+            $set: {
+              currentLocation: location,
+              updatedAt: now,
+              ownerId: socket.user.id,
+            },
+            $push: {
+              routeHistory: {
+                $each: [{ ...location, timestamp: now }],
+                $slice: -200,
+              },
+            },
+          },
+          { upsert: true }
         );
-        io.to(`vehicle:${data.vehicleId}`).emit('vehicle-location-updated', {
-          vehicleId: data.vehicleId,
-          location: data.location,
-          updatedAt: new Date().toISOString(),
+        io.to(`vehicle:${vehicleId}`).emit('vehicle-location-updated', {
+          vehicleId,
+          location,
+          updatedAt: now.toISOString(),
         });
       } catch (err) {
         console.error('Location update error:', err.message);
