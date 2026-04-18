@@ -729,6 +729,8 @@ router.patch('/pricing/plans/:id', async (req, res) => {
             effectiveFrom: new Date(),
             changedBy: req.user.id,
             changeType: 'manual-update',
+            // Record the version this change creates so rollback can replay history.
+            pricingVersionAtChange: plan.pricingVersion + 1,
           });
         }
       }
@@ -767,25 +769,47 @@ router.post('/pricing/plans/:id/rollback', [
       return res.status(400).json({ error: 'Target version must be older than current version' });
     }
 
-    // Fix: only match on rollbackFromVersion, removing the always-truthy `|| entry.newPrice`
-    const targetChange = [...plan.priceHistory].reverse().find((entry) => entry.rollbackFromVersion === targetVersion);
-    if (!targetChange) {
-      return res.status(404).json({ error: 'No rollback source found for target version' });
+    // Reconstruct the pricing state at targetVersion by replaying history.
+    // Each entry records oldPrice (state before the change) and newPrice (state after).
+    // Entries with pricingVersionAtChange <= targetVersion were applied at or before
+    // the version we want to restore, so their newPrice is the price at targetVersion.
+    // Entries without pricingVersionAtChange (legacy) are not replayed.
+    const rolledBackPricing = { ...plan.pricing.toObject() };
+    let anyChange = false;
+    const newVersion = plan.pricingVersion + 1;
+
+    for (const cycle of ['monthly', 'quarterly', 'yearly']) {
+      // Find the latest history entry for this cycle at or before targetVersion.
+      const entriesForCycle = plan.priceHistory
+        .filter((e) => e.billingCycle === cycle && e.pricingVersionAtChange != null && e.pricingVersionAtChange <= targetVersion);
+      if (entriesForCycle.length === 0) continue;
+      // Sort ascending by version and take the last one — that's the price in effect at targetVersion.
+      entriesForCycle.sort((a, b) => a.pricingVersionAtChange - b.pricingVersionAtChange);
+      const lastEntry = entriesForCycle[entriesForCycle.length - 1];
+      const restoredPrice = Number(lastEntry.newPrice);
+      const currentPrice = Number(plan.pricing[cycle]);
+      if (restoredPrice !== currentPrice) {
+        plan.priceHistory.push({
+          billingCycle: cycle,
+          oldPrice: currentPrice,
+          newPrice: restoredPrice,
+          effectiveFrom: new Date(),
+          changedBy: req.user.id,
+          changeType: 'rollback',
+          rollbackFromVersion: targetVersion,
+          pricingVersionAtChange: newVersion,
+        });
+        rolledBackPricing[cycle] = restoredPrice;
+        anyChange = true;
+      }
     }
 
-    const cycle = targetChange.billingCycle;
-    const currentPrice = Number(plan.pricing[cycle]);
-    plan.pricing[cycle] = targetChange.oldPrice;
-    plan.pricingVersion += 1;
-    plan.priceHistory.push({
-      billingCycle: cycle,
-      oldPrice: currentPrice,
-      newPrice: targetChange.oldPrice,
-      effectiveFrom: new Date(),
-      changedBy: req.user.id,
-      changeType: 'rollback',
-      rollbackFromVersion: targetVersion,
-    });
+    if (!anyChange) {
+      return res.status(400).json({ error: 'No price differences found between current version and target version, or target version has no tracked history entries' });
+    }
+
+    plan.pricing = rolledBackPricing;
+    plan.pricingVersion = newVersion;
 
     await plan.save();
     return res.json({ plan });

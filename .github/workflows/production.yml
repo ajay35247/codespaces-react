@@ -26,18 +26,37 @@ jobs:
       - name: Build frontend
         run: npm run build
 
+      - name: Check registry secrets
+        id: registry_check
+        run: |
+          if [ -n "${{ secrets.REGISTRY_HOST }}" ]; then
+            echo "has_registry=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_registry=false" >> $GITHUB_OUTPUT
+          fi
+          if [ -n "${{ secrets.REGISTRY_HOST }}" ] && [ -n "${{ secrets.REGISTRY_USERNAME }}" ] && [ -n "${{ secrets.REGISTRY_PASSWORD }}" ]; then
+            echo "has_registry_auth=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_registry_auth=false" >> $GITHUB_OUTPUT
+          fi
+          if [ -n "${{ secrets.KUBECONFIG }}" ]; then
+            echo "has_kubeconfig=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_kubeconfig=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Build backend image
-        if: ${{ secrets.REGISTRY_HOST != '' }}
+        if: steps.registry_check.outputs.has_registry == 'true'
         run: |
           docker build -f Dockerfile.backend -t ${{ secrets.REGISTRY_HOST }}/speedy-trucks-backend:${{ github.sha }} ./backend
 
       - name: Build frontend image
-        if: ${{ secrets.REGISTRY_HOST != '' }}
+        if: steps.registry_check.outputs.has_registry == 'true'
         run: |
           docker build -f Dockerfile.frontend -t ${{ secrets.REGISTRY_HOST }}/speedy-trucks-frontend:${{ github.sha }} .
 
       - name: Log in to container registry
-        if: ${{ secrets.REGISTRY_HOST != '' && secrets.REGISTRY_USERNAME != '' && secrets.REGISTRY_PASSWORD != '' }}
+        if: steps.registry_check.outputs.has_registry_auth == 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ secrets.REGISTRY_HOST }}
@@ -45,15 +64,15 @@ jobs:
           password: ${{ secrets.REGISTRY_PASSWORD }}
 
       - name: Push backend image
-        if: ${{ secrets.REGISTRY_HOST != '' }}
+        if: steps.registry_check.outputs.has_registry == 'true'
         run: docker push ${{ secrets.REGISTRY_HOST }}/speedy-trucks-backend:${{ github.sha }}
 
       - name: Push frontend image
-        if: ${{ secrets.REGISTRY_HOST != '' }}
+        if: steps.registry_check.outputs.has_registry == 'true'
         run: docker push ${{ secrets.REGISTRY_HOST }}/speedy-trucks-frontend:${{ github.sha }}
 
       - name: Deploy to Kubernetes
-        if: github.ref == 'refs/heads/main' && secrets.KUBECONFIG != ''
+        if: github.ref == 'refs/heads/main' && steps.registry_check.outputs.has_kubeconfig == 'true'
         env:
           KUBECONFIG: ${{ secrets.KUBECONFIG }}
         run: |
