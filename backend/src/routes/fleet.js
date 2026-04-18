@@ -51,7 +51,7 @@ router.post('/vehicles', validateBody(registerVehicleSchema), async (req, res) =
       return res.status(409).json({ error: 'A vehicle with this license plate is already registered' });
     }
 
-    const vehicleId = `VH-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+    const vehicleId = `VH-${crypto.randomBytes(8).toString('hex').toUpperCase()}`;
     const now = new Date();
     const doc = {
       vehicleId,

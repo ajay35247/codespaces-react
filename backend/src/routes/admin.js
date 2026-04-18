@@ -832,6 +832,16 @@ router.get('/audit/actions', async (req, res) => {
 
 // ── Admin GST Invoice Visibility ──────────────────────────────────────────────
 
+/** Parse a user-supplied date string safely. Returns a valid Date or null. */
+function parseSafeDate(value) {
+  if (!value) return null;
+  // Accept only ISO-8601 / YYYY-MM-DD / YYYY-MM-DDTHH:MM:SSZ shapes
+  const clean = String(value).trim();
+  if (!/^\d{4}-\d{2}-\d{2}(T[\d:.Z+-]{0,30})?$/.test(clean)) return null;
+  const d = new Date(clean);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 router.get('/control/gst/invoices', async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page || '1', 10));
@@ -855,10 +865,12 @@ router.get('/control/gst/invoices', async (req, res) => {
       filter.shipper = new RegExp(String(req.query.shipper).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
     }
 
-    if (req.query.from || req.query.to) {
+    const fromDate = parseSafeDate(req.query.from);
+    const toDate = parseSafeDate(req.query.to);
+    if (fromDate || toDate) {
       filter.date = {};
-      if (req.query.from) filter.date.$gte = new Date(String(req.query.from));
-      if (req.query.to) filter.date.$lte = new Date(String(req.query.to));
+      if (fromDate) filter.date.$gte = fromDate;
+      if (toDate) filter.date.$lte = toDate;
     }
 
     const [invoices, total] = await Promise.all([
@@ -918,10 +930,12 @@ router.get('/control/support/tickets', async (req, res) => {
       filter.email = String(req.query.email).toLowerCase().trim();
     }
 
-    if (req.query.from || req.query.to) {
+    const fromDate = parseSafeDate(req.query.from);
+    const toDate = parseSafeDate(req.query.to);
+    if (fromDate || toDate) {
       filter.createdAt = {};
-      if (req.query.from) filter.createdAt.$gte = new Date(String(req.query.from));
-      if (req.query.to) filter.createdAt.$lte = new Date(String(req.query.to));
+      if (fromDate) filter.createdAt.$gte = fromDate;
+      if (toDate) filter.createdAt.$lte = toDate;
     }
 
     const [tickets, total] = await Promise.all([
