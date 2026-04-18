@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import mongoose from 'mongoose';
 import rateLimit from 'express-rate-limit';
 import { Router } from 'express';
 import { body, validationResult } from 'express-validator';
@@ -858,7 +859,12 @@ router.get('/control/gst/invoices', async (req, res) => {
     }
 
     if (req.query.userId) {
-      filter.userId = req.query.userId;
+      // Validate as a MongoDB ObjectId before using in the filter to prevent
+      // operator injection (e.g. { $gt: '' }) via the query string.
+      if (!mongoose.Types.ObjectId.isValid(String(req.query.userId))) {
+        return res.status(400).json({ error: 'Invalid userId filter' });
+      }
+      filter.userId = new mongoose.Types.ObjectId(String(req.query.userId));
     }
 
     if (req.query.shipper) {
