@@ -25,7 +25,7 @@ const createInvoiceSchema = Joi.object({
 
 function generateInvoiceNumber() {
   const year = new Date().getFullYear();
-  const rand = crypto.randomInt(10000, 99999);
+  const rand = crypto.randomInt(10000, 100000);
   return `GST-${year}-${rand}`;
 }
 

@@ -91,9 +91,10 @@ router.post(
       .update(req.body)
       .digest('hex');
 
-    // Guard against RangeError from timingSafeEqual when buffer lengths differ
-    const expectedBuf = Buffer.from(expected, 'utf8');
-    const signatureBuf = Buffer.from(String(signature), 'utf8');
+    // Use 'hex' encoding since both values are hex strings produced by createHmac().digest('hex').
+    // This guarantees equal-length buffers and correct byte-level comparison.
+    const expectedBuf = Buffer.from(expected, 'hex');
+    const signatureBuf = Buffer.from(String(signature).toLowerCase(), 'hex');
     if (expectedBuf.length !== signatureBuf.length || !crypto.timingSafeEqual(expectedBuf, signatureBuf)) {
       return res.status(400).json({ error: 'Invalid webhook signature' });
     }
