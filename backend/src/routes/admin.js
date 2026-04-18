@@ -13,6 +13,8 @@ import LedgerEntry from '../schemas/LedgerEntrySchema.js';
 import FraudEvent from '../schemas/FraudEventSchema.js';
 import AutomationRule from '../schemas/AutomationRuleSchema.js';
 import AiDecisionLog from '../schemas/AiDecisionLogSchema.js';
+import GstInvoice from '../schemas/GstInvoiceSchema.js';
+import SupportTicket from '../schemas/SupportTicketSchema.js';
 import {
   clearAuthCookies,
   getRefreshTokenFromRequest,
@@ -826,6 +828,168 @@ router.get('/audit/actions', async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit || '150', 10), 400);
   const logs = await AuditLog.find({ userRole: 'admin' }).sort({ createdAt: -1 }).limit(limit);
   return res.json({ logs });
+});
+
+// ── Admin GST Invoice Visibility ──────────────────────────────────────────────
+
+router.get('/control/gst/invoices', async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page || '1', 10));
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || '20', 10)));
+    const skip = (page - 1) * limit;
+
+    const filter = {};
+
+    if (req.query.status) {
+      const allowed = new Set(['draft', 'issued', 'paid', 'cancelled']);
+      if (allowed.has(String(req.query.status))) {
+        filter.status = String(req.query.status);
+      }
+    }
+
+    if (req.query.userId) {
+      filter.userId = req.query.userId;
+    }
+
+    if (req.query.shipper) {
+      filter.shipper = new RegExp(String(req.query.shipper).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    }
+
+    if (req.query.from || req.query.to) {
+      filter.date = {};
+      if (req.query.from) filter.date.$gte = new Date(String(req.query.from));
+      if (req.query.to) filter.date.$lte = new Date(String(req.query.to));
+    }
+
+    const [invoices, total] = await Promise.all([
+      GstInvoice.find(filter)
+        .sort({ date: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      GstInvoice.countDocuments(filter),
+    ]);
+
+    return res.json({
+      invoices,
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+    });
+  } catch (error) {
+    console.error('Admin GST invoice list error:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch invoices' });
+  }
+});
+
+router.get('/control/gst/invoices/:id', async (req, res) => {
+  try {
+    const invoice = await GstInvoice.findById(req.params.id).lean();
+    if (!invoice) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+    return res.json({ invoice });
+  } catch (error) {
+    console.error('Admin GST invoice fetch error:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch invoice' });
+  }
+});
+
+// ── Admin Support Ticket Management ──────────────────────────────────────────
+
+const ALLOWED_TICKET_STATUSES = new Set(['open', 'in-progress', 'resolved', 'closed']);
+const ALLOWED_TICKET_PRIORITIES = new Set(['low', 'medium', 'high', 'critical']);
+
+router.get('/control/support/tickets', async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page || '1', 10));
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || '20', 10)));
+    const skip = (page - 1) * limit;
+
+    const filter = {};
+
+    if (req.query.status && ALLOWED_TICKET_STATUSES.has(String(req.query.status))) {
+      filter.status = String(req.query.status);
+    }
+
+    if (req.query.priority && ALLOWED_TICKET_PRIORITIES.has(String(req.query.priority))) {
+      filter.priority = String(req.query.priority);
+    }
+
+    if (req.query.email) {
+      filter.email = String(req.query.email).toLowerCase().trim();
+    }
+
+    if (req.query.from || req.query.to) {
+      filter.createdAt = {};
+      if (req.query.from) filter.createdAt.$gte = new Date(String(req.query.from));
+      if (req.query.to) filter.createdAt.$lte = new Date(String(req.query.to));
+    }
+
+    const [tickets, total] = await Promise.all([
+      SupportTicket.find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      SupportTicket.countDocuments(filter),
+    ]);
+
+    return res.json({
+      tickets,
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+    });
+  } catch (error) {
+    console.error('Admin support tickets error:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch tickets' });
+  }
+});
+
+router.get('/control/support/tickets/:id', async (req, res) => {
+  try {
+    const ticket = await SupportTicket.findById(req.params.id).lean();
+    if (!ticket) {
+      return res.status(404).json({ error: 'Ticket not found' });
+    }
+    return res.json({ ticket });
+  } catch (error) {
+    console.error('Admin support ticket fetch error:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch ticket' });
+  }
+});
+
+router.patch('/control/support/tickets/:id/status', [
+  body('status').isIn([...ALLOWED_TICKET_STATUSES]).withMessage('Invalid status value'),
+], async (req, res) => {
+  if (!ensureValidRequest(req, res)) return;
+  try {
+    const ticket = await SupportTicket.findById(req.params.id);
+    if (!ticket) {
+      return res.status(404).json({ error: 'Ticket not found' });
+    }
+
+    const oldStatus = ticket.status;
+    ticket.status = req.body.status;
+    await ticket.save();
+
+    await AuditLog.create({
+      userId: req.user.id,
+      userEmail: req.user.email,
+      userRole: req.user.role,
+      action: 'ADMIN_SUPPORT_TICKET_STATUS_UPDATE',
+      resource: 'support-ticket',
+      resourceId: ticket._id.toString(),
+      ipAddress: getRequestIp(req),
+      userAgent: req.get('user-agent'),
+      method: req.method,
+      path: req.path,
+      statusCode: 200,
+      metadata: { oldValue: oldStatus, newValue: req.body.status },
+    });
+
+    return res.json({ ticketId: ticket._id, ticketNumber: ticket.ticketNumber, status: ticket.status });
+  } catch (error) {
+    console.error('Admin support ticket status update error:', error.message);
+    return res.status(500).json({ error: 'Failed to update ticket status' });
+  }
 });
 
 export default router;

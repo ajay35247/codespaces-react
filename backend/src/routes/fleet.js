@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import mongoose from 'mongoose';
 import { Router } from 'express';
 import { verifyJWT, requireRole } from '../middleware/authorize.js';
@@ -8,12 +9,118 @@ const router = Router();
 
 const STALE_LOCATION_MS = 10 * 60 * 1000; // 10 minutes
 
+const ALLOWED_VEHICLE_TYPES = ['truck', 'mini-truck', 'trailer', 'container', 'tanker', 'flatbed', 'reefer'];
+
+const registerVehicleSchema = Joi.object({
+  licensePlate: Joi.string().trim().min(4).max(20).uppercase().required(),
+  type: Joi.string().valid(...ALLOWED_VEHICLE_TYPES).required(),
+  capacity: Joi.number().positive().max(100000).optional(),
+  make: Joi.string().trim().max(80).optional(),
+  model: Joi.string().trim().max(80).optional(),
+  year: Joi.number().integer().min(1980).max(new Date().getFullYear() + 1).optional(),
+});
+
+const updateVehicleSchema = Joi.object({
+  type: Joi.string().valid(...ALLOWED_VEHICLE_TYPES).optional(),
+  capacity: Joi.number().positive().max(100000).optional(),
+  make: Joi.string().trim().max(80).optional(),
+  model: Joi.string().trim().max(80).optional(),
+  year: Joi.number().integer().min(1980).max(new Date().getFullYear() + 1).optional(),
+  status: Joi.string().valid('active', 'inactive', 'maintenance').optional(),
+}).min(1);
+
 const maintenanceSchema = Joi.object({
   vehicleId: Joi.string().trim().min(1).max(128).required(),
   issue: Joi.string().trim().min(4).max(1000).required(),
 });
 
 router.use(verifyJWT, requireRole(['fleet-manager']));
+
+// ── Vehicle Registration ──────────────────────────────────────────────────────
+
+router.post('/vehicles', validateBody(registerVehicleSchema), async (req, res) => {
+  try {
+    const managerId = req.user.id;
+    const { licensePlate, type, capacity, make, model, year } = req.body;
+
+    const db = mongoose.connection.db;
+    const existing = await db.collection('vehicles').findOne({
+      licensePlate: licensePlate.toUpperCase(),
+    });
+    if (existing) {
+      return res.status(409).json({ error: 'A vehicle with this license plate is already registered' });
+    }
+
+    const vehicleId = `VH-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+    const now = new Date();
+    const doc = {
+      vehicleId,
+      licensePlate: licensePlate.toUpperCase(),
+      type,
+      capacity: capacity || null,
+      make: make || null,
+      model: model || null,
+      year: year || null,
+      ownerId: managerId,
+      status: 'active',
+      currentLocation: null,
+      routeHistory: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await db.collection('vehicles').insertOne(doc);
+
+    return res.status(201).json({
+      vehicle: {
+        vehicleId: doc.vehicleId,
+        licensePlate: doc.licensePlate,
+        type: doc.type,
+        capacity: doc.capacity,
+        make: doc.make,
+        model: doc.model,
+        year: doc.year,
+        status: doc.status,
+        ownerId: doc.ownerId,
+        createdAt: doc.createdAt,
+      },
+    });
+  } catch (error) {
+    console.error('Vehicle registration error:', error.message);
+    return res.status(500).json({ error: 'Failed to register vehicle' });
+  }
+});
+
+router.patch('/vehicles/:vehicleId', validateBody(updateVehicleSchema), async (req, res) => {
+  try {
+    const managerId = req.user.id;
+    const vehicleId = String(req.params.vehicleId);
+
+    const db = mongoose.connection.db;
+    const vehicle = await db.collection('vehicles').findOne({ vehicleId, ownerId: managerId });
+    if (!vehicle) {
+      return res.status(404).json({ error: 'Vehicle not found or not owned by you' });
+    }
+
+    const allowed = ['type', 'capacity', 'make', 'model', 'year', 'status'];
+    const updates = {};
+    for (const key of allowed) {
+      if (req.body[key] !== undefined) {
+        updates[key] = req.body[key];
+      }
+    }
+    updates.updatedAt = new Date();
+
+    await db.collection('vehicles').updateOne({ vehicleId, ownerId: managerId }, { $set: updates });
+
+    return res.json({ message: 'Vehicle updated', vehicleId, updates });
+  } catch (error) {
+    console.error('Vehicle update error:', error.message);
+    return res.status(500).json({ error: 'Failed to update vehicle' });
+  }
+});
+
+// ── Fleet Overview ────────────────────────────────────────────────────────────
 
 router.get('/overview', async (req, res) => {
   try {
@@ -108,7 +215,6 @@ router.post('/maintenance', validateBody(maintenanceSchema), async (req, res) =>
     const { vehicleId, issue } = req.body;
     const managerId = req.user.id;
 
-    // Verify vehicle belongs to this fleet manager
     const vehicle = await mongoose.connection.db
       .collection('vehicles')
       .findOne({ vehicleId: String(vehicleId), ownerId: managerId });
