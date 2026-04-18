@@ -109,24 +109,26 @@ router.post(
     switch (event.event) {
       case 'payment.captured': {
         const entity = event.payload?.payment?.entity;
-        if (entity?.id) {
+        const paymentId = entity?.id ? String(entity.id) : null;
+        if (paymentId) {
           Payment.findOneAndUpdate(
-            { razorpayPaymentId: entity.id },
+            { razorpayPaymentId: paymentId },
             { $set: { status: 'captured', webhookEvent: 'payment.captured' } }
           ).catch((err) => console.warn('Webhook DB update failed:', err.message));
         }
-        console.log('Payment captured:', entity?.id);
+        console.log('Payment captured:', paymentId);
         break;
       }
       case 'payment.failed': {
         const entity = event.payload?.payment?.entity;
-        if (entity?.id) {
+        const paymentId = entity?.id ? String(entity.id) : null;
+        if (paymentId) {
           Payment.findOneAndUpdate(
-            { razorpayPaymentId: entity.id },
+            { razorpayPaymentId: paymentId },
             { $set: { status: 'failed', webhookEvent: 'payment.failed' } }
           ).catch((err) => console.warn('Webhook DB update failed:', err.message));
         }
-        console.warn('Payment failed:', entity?.id);
+        console.warn('Payment failed:', paymentId);
         break;
       }
       case 'subscription.activated':
@@ -206,12 +208,13 @@ router.post('/verify', verifyJWT, validateBody(verifySchema), async (req, res) =
   }
 
   // Mark payment as verified in DB
+  // razorpay_order_id and razorpay_payment_id are Joi-validated strings; cast to String for safety.
   try {
     await Payment.findOneAndUpdate(
-      { razorpayOrderId: razorpay_order_id },
+      { razorpayOrderId: String(razorpay_order_id) },
       {
         $set: {
-          razorpayPaymentId: razorpay_payment_id,
+          razorpayPaymentId: String(razorpay_payment_id),
           status: 'captured',
         },
       }

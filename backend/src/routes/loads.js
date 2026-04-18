@@ -22,6 +22,13 @@ const bidSchema = Joi.object({
   amount: Joi.number().positive().required(),
 });
 
+const ALLOWED_LOAD_STATUSES = new Set(['posted', 'in-transit', 'delivered', 'cancelled']);
+
+/** Escape special regex characters to prevent regex injection. */
+function escapeRegex(str) {
+  return String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 router.get('/', async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page || '1', 10));
@@ -29,9 +36,11 @@ router.get('/', async (req, res) => {
     const skip = (page - 1) * limit;
 
     const filter = {};
-    if (req.query.status) filter.status = req.query.status;
-    if (req.query.origin) filter.origin = new RegExp(req.query.origin, 'i');
-    if (req.query.destination) filter.destination = new RegExp(req.query.destination, 'i');
+    if (req.query.status && ALLOWED_LOAD_STATUSES.has(String(req.query.status))) {
+      filter.status = String(req.query.status);
+    }
+    if (req.query.origin) filter.origin = new RegExp(escapeRegex(req.query.origin), 'i');
+    if (req.query.destination) filter.destination = new RegExp(escapeRegex(req.query.destination), 'i');
 
     const [loads, total] = await Promise.all([
       Load.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
@@ -101,7 +110,8 @@ router.post(
   async (req, res) => {
     try {
       const { loadId, amount } = req.body;
-      const load = await Load.findOne({ loadId });
+      // loadId is Joi-validated as string with max 128 chars; safe for direct field match.
+      const load = await Load.findOne({ loadId: String(loadId) });
       if (!load) {
         return res.status(404).json({ error: 'Load not found' });
       }
