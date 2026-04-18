@@ -46,12 +46,12 @@ const UserSchema = new mongoose.Schema({
   verificationToken: { type: String },
   resetToken: { type: String },
   resetTokenExpires: { type: Date },
-  refreshTokens: [{ type: String }],  // stored hashed
+  refreshTokens: [{ type: String }],
   trucks: [TruckSchema],
   createdAt: { type: Date, default: Date.now },
 });
 
-// Enforce exactly one admin role document at database level.
+// Only one admin allowed — partial unique index so it only applies to admin docs
 UserSchema.index(
   { role: 1 },
   {
@@ -60,6 +60,13 @@ UserSchema.index(
   }
 );
 
+// Sparse index on verificationToken — null values are skipped, no duplicate null errors
+UserSchema.index({ verificationToken: 1 }, { sparse: true });
+
+// Sparse index on resetToken — same reason
+UserSchema.index({ resetToken: 1 }, { sparse: true });
+
+// Hash password before saving
 UserSchema.pre('save', async function (next) {
   if (!this.isModified('password')) {
     return next();
