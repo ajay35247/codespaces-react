@@ -37,12 +37,19 @@ const payoutSchema = Joi.object({
 });
 
 function secureCompareHex(expected, actual) {
-  const left = Buffer.from(String(expected || ''), 'utf8');
-  const right = Buffer.from(String(actual || ''), 'utf8');
-  if (left.length !== right.length) {
+  // Both values are SHA-256 hex strings (64 chars each).  Use 'hex' decoding
+  // so the comparison operates on the raw digest bytes, consistent with the
+  // webhook signature check above.
+  try {
+    const left = Buffer.from(String(expected || ''), 'hex');
+    const right = Buffer.from(String(actual || ''), 'hex');
+    if (left.length === 0 || left.length !== right.length) {
+      return false;
+    }
+    return crypto.timingSafeEqual(left, right);
+  } catch {
     return false;
   }
-  return crypto.timingSafeEqual(left, right);
 }
 
 // ── Fraud detection ─ in-memory sliding window per IP ──────────────────────

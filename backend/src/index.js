@@ -295,7 +295,7 @@ const startWorker = async () => {
 
     socket.on('update-location', async (data) => {
       if (!data?.vehicleId || typeof data.location?.lat !== 'number' || typeof data.location?.lng !== 'number') return;
-      // Only drivers and fleet-managers can push location updates
+      // Only drivers and fleet-managers can push location updates.
       if (!['driver', 'fleet-manager'].includes(socket.user.role)) return;
 
       const vehicleId = String(data.vehicleId);
@@ -306,15 +306,16 @@ const startWorker = async () => {
       const now = new Date();
 
       try {
-        // Use vehicleId (string) as the natural key, consistent with REST reads.
-        // Push to routeHistory and cap at 200 recent points for route replay.
-        await mongoose.connection.db.collection('vehicles').updateOne(
-          { vehicleId },
+        // Ownership check: only update a vehicle that is already registered and
+        // owned by this user.  Never upsert — that would allow any authenticated
+        // user to create phantom vehicle documents or overwrite ownerId on
+        // vehicles they do not own (IDOR / vehicle hijacking).
+        const result = await mongoose.connection.db.collection('vehicles').updateOne(
+          { vehicleId, ownerId: socket.user.id },
           {
             $set: {
               currentLocation: location,
               updatedAt: now,
-              ownerId: socket.user.id,
             },
             $push: {
               routeHistory: {
@@ -322,9 +323,12 @@ const startWorker = async () => {
                 $slice: -200,
               },
             },
-          },
-          { upsert: true }
+          }
         );
+
+        // Only broadcast if the vehicle actually existed and belonged to this user.
+        if (result.matchedCount === 0) return;
+
         io.to(`vehicle:${vehicleId}`).emit('vehicle-location-updated', {
           vehicleId,
           location,
