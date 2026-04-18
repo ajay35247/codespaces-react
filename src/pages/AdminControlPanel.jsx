@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { buildApiUrl, getApiErrorMessage, parseApiBody } from '../utils/api';
 
-const ADMIN_API_SEGMENT = import.meta.env.VITE_ADMIN_API_SEGMENT || '_ops_console_f91b7c';
+const ADMIN_API_SEGMENT = import.meta.env.VITE_ADMIN_API_SEGMENT || import.meta.env.VITE_ADMIN_PRIVATE_PATH_SEGMENT || '_ops_console_f91b7c';
 async function api(path, method = 'GET', body) {
   const response = await fetch(buildApiUrl(`/${ADMIN_API_SEGMENT}${path}`), {
     method,
@@ -28,9 +28,11 @@ export function AdminControlPanel() {
   const [mfaCode, setMfaCode] = useState('');
   const [mfaChallengeToken, setMfaChallengeToken] = useState('');
   const [mfaRequired, setMfaRequired] = useState(false);
+  const [mfaExpiresInSeconds, setMfaExpiresInSeconds] = useState(0);
 
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [resendingMfa, setResendingMfa] = useState(false);
   const [bootstrapping, setBootstrapping] = useState(true);
   const [users, setUsers] = useState([]);
   const [pricingPlans, setPricingPlans] = useState([]);
@@ -73,9 +75,10 @@ export function AdminControlPanel() {
     setLoading(true);
     setError('');
     try {
-      const data = await api('/auth/login', 'POST', { email, password });
+      const data = await api('/auth/login', 'POST', { email: email.trim().toLowerCase(), password });
       setMfaRequired(true);
       setMfaChallengeToken(data.mfaChallengeToken);
+      setMfaExpiresInSeconds(data.expiresInSeconds || 0);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -89,7 +92,7 @@ export function AdminControlPanel() {
     setError('');
     try {
       const data = await api('/auth/login/mfa-verify', 'POST', {
-        email,
+        email: email.trim().toLowerCase(),
         mfaChallengeToken,
         mfaCode,
       });
@@ -101,6 +104,22 @@ export function AdminControlPanel() {
       setError(err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleMfaResend = async () => {
+    setResendingMfa(true);
+    setError('');
+    try {
+      const data = await api('/auth/login/mfa-resend', 'POST', {
+        email: email.trim().toLowerCase(),
+        mfaChallengeToken,
+      });
+      setMfaExpiresInSeconds(data.expiresInSeconds || 0);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setResendingMfa(false);
     }
   };
 
@@ -200,6 +219,8 @@ export function AdminControlPanel() {
             <form className="mt-8 space-y-4" onSubmit={handleMfaVerify}>
               <input className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-4 py-3" type="text" value={mfaCode} onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="6-digit MFA code" required />
               <button className="w-full rounded-2xl bg-cyan-500 px-4 py-3 font-semibold text-slate-950 disabled:opacity-50" disabled={loading || mfaCode.length !== 6} type="submit">{loading ? 'Authorizing…' : 'Complete Login'}</button>
+              <button className="w-full rounded-2xl border border-cyan-400/50 px-4 py-3 text-sm text-cyan-200 disabled:opacity-50" disabled={loading || resendingMfa} type="button" onClick={handleMfaResend}>{resendingMfa ? 'Resending…' : 'Resend MFA Code'}</button>
+              {mfaExpiresInSeconds > 0 && <p className="text-center text-xs text-slate-400">Code expires in about {Math.max(1, Math.floor(mfaExpiresInSeconds / 60))} minute(s).</p>}
             </form>
           )}
         </section>

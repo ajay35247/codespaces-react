@@ -53,7 +53,10 @@ export const registerUser = createAsyncThunk('auth/registerUser', async (userDat
     const payload = await parseApiBody(response);
 
     if (!response.ok) {
-      return rejectWithValue(getApiErrorMessage(payload, 'Registration failed'));
+      return rejectWithValue({
+        message: getApiErrorMessage(payload, 'Registration failed'),
+        details: Array.isArray(payload?.details) ? payload.details : [],
+      });
     }
 
     return payload;
@@ -144,7 +147,7 @@ const authSlice = createSlice({
       })
       .addCase(registerUser.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload;
+        state.error = action.payload?.message || action.payload;
       })
       .addCase(logoutUser.fulfilled, (state) => {
         state.user = null;

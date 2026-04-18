@@ -39,6 +39,8 @@ const UserSchema = new mongoose.Schema({
   mfaChallengeHash: { type: String },
   mfaChallengeExpires: { type: Date },
   mfaAttemptCount: { type: Number, default: 0 },
+  mfaResendCount: { type: Number, default: 0 },
+  mfaLastSentAt: { type: Date },
   failedLoginCount: { type: Number, default: 0 },
   lockUntil: { type: Date },
   verificationToken: { type: String },

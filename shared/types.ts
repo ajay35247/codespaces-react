@@ -1,7 +1,7 @@
 export interface User {
   _id: string;
   email: string;
-  role: 'shipper' | 'truck_owner' | 'driver' | 'broker' | 'admin';
+  role: 'shipper' | 'driver' | 'fleet-manager' | 'broker' | 'admin';
   name: string;
   phone: string;
   isVerified: boolean;
@@ -69,7 +69,8 @@ export interface RegisterRequest {
   password: string;
   role: User['role'];
   name: string;
-  phone: string;
+  phone?: string;
+  gstin?: string;
 }
 
 export interface PostLoadRequest {

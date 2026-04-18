@@ -103,7 +103,8 @@ class ApiService {
     password: string;
     role: string;
     name: string;
-    phone: string;
+    phone?: string;
+    gstin?: string;
   }): Promise<{ user: any; message?: string }> {
     return this.request<{ user: any; message?: string }>('/auth/register', {
       method: 'POST',

@@ -5,21 +5,10 @@ import {
   USER_REFRESH_COOKIE,
   parseCookieHeader,
 } from './authorize.js';
+import { getAllowedOriginsSet } from '../config/origins.js';
 
 function normalizeOrigin(value) {
   return String(value || '').replace(/\/$/, '');
-}
-
-function getAllowedOrigins() {
-  return new Set(
-    [
-      process.env.FRONTEND_URL,
-      process.env.CLIENT_URL,
-      process.env.ADDITIONAL_ALLOWED_ORIGIN,
-    ]
-      .map(normalizeOrigin)
-      .filter(Boolean)
-  );
 }
 
 function requestHasAuthCookie(req) {
@@ -59,8 +48,8 @@ export function enforceTrustedOriginForCookieAuth(req, res, next) {
     return next();
   }
 
-  const allowedOrigins = getAllowedOrigins();
   const requestOrigin = getRequestOrigin(req);
+  const allowedOrigins = getAllowedOriginsSet();
 
   if (!requestOrigin || !allowedOrigins.has(requestOrigin)) {
     return res.status(403).json({ error: 'Forbidden: invalid request origin' });

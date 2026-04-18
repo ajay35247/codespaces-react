@@ -29,11 +29,22 @@ function getCookieDomain() {
   return process.env.AUTH_COOKIE_DOMAIN || undefined;
 }
 
+function getCookieSameSite() {
+  const value = String(process.env.AUTH_COOKIE_SAME_SITE || 'lax').trim().toLowerCase();
+  if (!['lax', 'strict', 'none'].includes(value)) {
+    return 'lax';
+  }
+  if (value === 'none' && !isSecureCookieRequest()) {
+    return 'lax';
+  }
+  return value;
+}
+
 function getCookieOptions(maxAgeMs, httpOnly = true) {
   return {
     httpOnly,
     secure: isSecureCookieRequest(),
-    sameSite: 'strict',
+    sameSite: getCookieSameSite(),
     domain: getCookieDomain(),
     path: '/',
     maxAge: maxAgeMs,

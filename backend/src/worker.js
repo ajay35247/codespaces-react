@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { matchingQueue, notificationQueue } from './queues/queueConfig.js';
 import { MatchingEngine } from './services/matchingEngine.js';
 import { NotificationService } from './services/notificationService.js';

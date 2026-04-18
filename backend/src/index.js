@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import cluster from 'cluster';
 import os from 'os';
 import express from 'express';
@@ -16,8 +17,9 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import { createAdapter } from '@socket.io/redis-adapter';
 import promClient from 'prom-client';
-import dotenv from 'dotenv';
 import connectDatabase from './config/db.js';
+import { validateStartupEnv } from './config/envValidation.js';
+import { getAllowedOriginsFromEnv } from './config/origins.js';
 import { globalErrorHandler } from './middleware/errorHandler.js';
 import { auditLogger } from './middleware/auditLogger.js';
 import { enforceTrustedOriginForCookieAuth } from './middleware/csrfProtection.js';
@@ -37,8 +39,6 @@ import fleetRoutes from './routes/fleet.js';
 import supportRoutes from './routes/support.js';
 import adminRoutes from './routes/admin.js';
 
-dotenv.config();
-
 const httpRequestsTotal = new promClient.Counter({
   name: 'speedy_trucks_http_requests_total',
   help: 'Total HTTP requests handled by the backend',
@@ -51,25 +51,12 @@ const authFailuresTotal = new promClient.Counter({
   labelNames: ['path', 'status_code'],
 });
 
-// ── Startup env validation ─────────────────────────────────────────────────
-if (!process.env.JWT_SECRET) {
-  console.warn('JWT_SECRET is not set. Using an ephemeral fallback secret for this process.');
-}
-if (!process.env.JWT_REFRESH_SECRET) {
-  console.warn('JWT_REFRESH_SECRET is not set. Falling back to JWT_SECRET-derived value.');
-}
-if (!process.env.MONGODB_URI) {
-  console.warn('MONGODB_URI is not set. Falling back to local MongoDB default.');
-}
+validateStartupEnv();
+
 const PORT = process.env.PORT || 5000;
 const USE_CLUSTER = process.env.USE_CLUSTER === 'true';
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
-const FRONTEND_URL = process.env.FRONTEND_URL || 'https://www.speedy-trucks.example.com';
-const CLIENT_URL = process.env.CLIENT_URL || 'https://www.speedy-trucks.example.com';
-
-function getAllowedOrigins() {
-  return Array.from(new Set([FRONTEND_URL, CLIENT_URL].filter(Boolean)));
-}
+const allowedOrigins = getAllowedOriginsFromEnv();
 
 async function connectRedisClient(url) {
   const client = createClient({ url });
@@ -112,7 +99,7 @@ const createApp = async () => {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        connectSrc: ["'self'", FRONTEND_URL, CLIENT_URL, 'https:', 'wss:'],
+        connectSrc: ["'self'", ...allowedOrigins, 'https:', 'wss:'],
         scriptSrc: ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", 'data:', 'https:'],
@@ -129,7 +116,7 @@ const createApp = async () => {
 
   app.use(cors({
     origin(origin, callback) {
-      if (!origin || getAllowedOrigins().includes(origin)) {
+      if (!origin || allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
 
@@ -262,7 +249,7 @@ const startWorker = async () => {
   const io = new Server(server, {
     path: '/socket.io',
     cors: {
-      origin: getAllowedOrigins(),
+      origin: allowedOrigins,
       methods: ['GET', 'POST', 'PUT', 'DELETE'],
       credentials: true,
     },

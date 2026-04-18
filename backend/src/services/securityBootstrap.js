@@ -21,9 +21,10 @@ export async function ensureAdminAccount() {
 
   const existing = await User.findOne({ email: adminEmail });
   if (existing) {
-    if (existing.role !== 'admin' || !existing.mfaEnabled) {
+    if (existing.role !== 'admin' || !existing.mfaEnabled || existing.accountStatus !== 'active' || !existing.isEmailVerified) {
       existing.role = 'admin';
       existing.mfaEnabled = true;
+      existing.accountStatus = 'active';
       existing.isEmailVerified = true;
       await existing.save();
     }

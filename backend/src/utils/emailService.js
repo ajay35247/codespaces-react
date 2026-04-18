@@ -15,12 +15,29 @@ const transporter = host && port && user && pass
     })
   : null;
 
-async function sendMail(mailOptions) {
+export function isEmailTransportConfigured() {
+  return Boolean(transporter);
+}
+
+async function sendMail(mailOptions, { required = false, context = 'email' } = {}) {
   if (!transporter) {
-    console.warn('Email transporter is not configured. Skipping email delivery.');
-    return;
+    const error = new Error(`Email transporter is not configured for ${context}.`);
+    if (required) {
+      throw error;
+    }
+    console.warn(error.message);
+    return { skipped: true };
   }
-  return transporter.sendMail(mailOptions);
+
+  try {
+    return await transporter.sendMail(mailOptions);
+  } catch (error) {
+    if (required) {
+      throw error;
+    }
+    console.warn(`Email delivery failed for ${context}: ${error.message}`);
+    return { failed: true };
+  }
 }
 
 export async function sendVerificationEmail(user, verificationUrl) {
@@ -36,7 +53,7 @@ export async function sendVerificationEmail(user, verificationUrl) {
       <p>If you did not sign up, please ignore this email.</p>
       <p>Regards,<br/>Speedy Trucks Team</p>
     `,
-  });
+  }, { context: 'verification-email' });
 }
 
 export async function sendPasswordResetEmail(user, resetUrl) {
@@ -52,7 +69,7 @@ export async function sendPasswordResetEmail(user, resetUrl) {
       <p>If you did not request a reset, please ignore this email.</p>
       <p>Regards,<br/>Speedy Trucks Team</p>
     `,
-  });
+  }, { context: 'password-reset' });
 }
 
 export async function sendAdminMfaCodeEmail(user, code) {
@@ -67,5 +84,8 @@ export async function sendAdminMfaCodeEmail(user, code) {
       <p>This code expires in 5 minutes.</p>
       <p>If you did not attempt this login, immediately reset your password and review account activity.</p>
     `,
+  }, {
+    required: process.env.REQUIRE_ADMIN_MFA_EMAIL === 'true' || process.env.NODE_ENV === 'production',
+    context: 'admin-mfa',
   });
 }

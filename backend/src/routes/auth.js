@@ -29,7 +29,7 @@ import { requireRegistrationsEnabled } from '../middleware/platformControl.js';
 const router = Router();
 const LOGIN_MAX_FAILED_ATTEMPTS = 5;
 const LOGIN_LOCK_WINDOW_MS = 15 * 60 * 1000;
-const PUBLIC_ROLES = ['shipper', 'driver', 'fleet-manager', 'broker'];
+export const PUBLIC_ROLES = ['shipper', 'driver', 'fleet-manager', 'broker'];
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -47,9 +47,29 @@ function ensureValidRequest(req, res) {
   if (errors.isEmpty()) {
     return true;
   }
-  res.status(400).json({ error: 'Invalid request payload', details: errors.array() });
+
+  const details = errors.array().map((entry) => entry.msg).filter(Boolean);
+  const firstError = details[0] || 'Invalid request payload';
+  res.status(400).json({ error: firstError, details });
   return false;
 }
+
+export const registerValidationRules = [
+  body('email').isEmail().withMessage('Please enter a valid email address.').normalizeEmail(),
+  body('password')
+    .isString().withMessage('Password is required.')
+    .isLength({ min: 12 }).withMessage('Password must be at least 12 characters long.'),
+  body('name')
+    .isString().withMessage('Name is required.')
+    .trim()
+    .isLength({ min: 2, max: 120 }).withMessage('Name must be between 2 and 120 characters.'),
+  body('role')
+    .isString().withMessage('Role is required.')
+    .trim()
+    .isIn(PUBLIC_ROLES).withMessage(`Role must be one of: ${PUBLIC_ROLES.join(', ')}.`),
+  body('phone').optional({ values: 'falsy' }).isString().withMessage('Phone must be a string.').trim().isLength({ max: 30 }).withMessage('Phone must be 30 characters or fewer.'),
+  body('gstin').optional({ values: 'falsy' }).isString().withMessage('GST ID must be a string.').trim().isLength({ max: 30 }).withMessage('GST ID must be 30 characters or fewer.'),
+];
 
 async function recordFailedLogin(user) {
   if (!user) return;
@@ -72,18 +92,12 @@ function issueTokensForUser(user) {
   return { accessToken, refreshToken };
 }
 
-router.post('/register', [
-  requireRegistrationsEnabled(),
-  body('email').isEmail().normalizeEmail(),
-  body('password').isString().isLength({ min: 12 }),
-  body('name').isString().trim().isLength({ min: 2, max: 120 }),
-  body('role').isString().isIn(PUBLIC_ROLES),
-  body('phone').optional().isString().trim().isLength({ max: 30 }),
-  body('gstin').optional().isString().trim().isLength({ max: 30 }),
-], async (req, res) => {
+router.post('/register', [requireRegistrationsEnabled(), ...registerValidationRules], async (req, res) => {
   try {
     if (!ensureValidRequest(req, res)) return;
-    const { password, name, role, phone, gstin } = req.body;
+    const { password, name, role } = req.body;
+    const phone = String(req.body.phone || '').trim() || undefined;
+    const gstin = String(req.body.gstin || '').trim() || undefined;
     const email = normalizeEmail(req.body.email);
 
     if (isBlockedAccountEmail(email)) {

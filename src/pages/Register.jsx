@@ -4,6 +4,26 @@ import { useNavigate } from 'react-router-dom';
 import { clearAuthError, registerUser } from '../features/auth/authSlice';
 import { ROLE_CARDS } from '../data/roles';
 
+const PUBLIC_ROLE_KEYS = ROLE_CARDS.map((roleOption) => roleOption.key);
+
+function sanitizeRegisterPayload(formData) {
+  const role = PUBLIC_ROLE_KEYS.includes(formData.role) ? formData.role : 'shipper';
+  const payload = {
+    name: String(formData.name || '').trim(),
+    email: String(formData.email || '').trim().toLowerCase(),
+    password: formData.password,
+    role,
+  };
+
+  const phone = String(formData.phone || '').trim();
+  const gstin = String(formData.gstin || '').trim().toUpperCase();
+
+  if (phone) payload.phone = phone;
+  if (gstin) payload.gstin = gstin;
+
+  return payload;
+}
+
 function getPasswordErrors(password = '') {
   const value = String(password);
   const errors = [];
@@ -60,9 +80,15 @@ export function Register() {
       return;
     }
 
-    const { passwordConfirm, ...payload } = formData;
+    const payload = sanitizeRegisterPayload(formData);
     const result = await dispatch(registerUser(payload));
     if (result.meta.requestStatus !== 'fulfilled') {
+      const details = Array.isArray(result.payload?.details) ? result.payload.details : [];
+      if (details.length > 0) {
+        setLocalError(details.join(' '));
+      } else if (result.payload?.message) {
+        setLocalError(result.payload.message);
+      }
       return;
     }
     if (result.payload && result.payload.message) {
@@ -107,7 +133,7 @@ export function Register() {
               name="email"
               value={formData.email}
               onChange={handleChange}
-              placeholder="name@company.com"
+              placeholder="name@gmail.com or name@company.com"
               required
               disabled={loading}
             />

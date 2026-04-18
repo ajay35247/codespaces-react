@@ -39,6 +39,8 @@ const router = Router();
 const LOGIN_MAX_FAILED_ATTEMPTS = 5;
 const LOGIN_LOCK_WINDOW_MS = 15 * 60 * 1000;
 const MFA_EXPIRY_MS = 5 * 60 * 1000;
+const MFA_RESEND_MIN_INTERVAL_MS = 30 * 1000;
+const MAX_MFA_RESEND_ATTEMPTS = 3;
 
 const adminAuthLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -51,29 +53,36 @@ const adminAuthLimiter = rateLimit({
 function ensureValidRequest(req, res) {
   const errors = validationResult(req);
   if (errors.isEmpty()) return true;
-  res.status(400).json({ error: 'Invalid request payload', details: errors.array() });
+
+  const details = errors.array().map((entry) => entry.msg).filter(Boolean);
+  const firstError = details[0] || 'Invalid request payload';
+  res.status(400).json({ error: firstError, details });
   return false;
 }
 
 async function logAdminAuthEvent(req, user, action, statusCode, metadata = {}) {
-  await AuditLog.create({
-    userId: user?._id,
-    userEmail: user?.email,
-    userRole: user?.role,
-    action,
-    resource: 'admin-auth',
-    ipAddress: getRequestIp(req),
-    userAgent: req.get('user-agent'),
-    method: req.method,
-    path: req.path,
-    statusCode,
-    metadata,
-  });
+  try {
+    await AuditLog.create({
+      userId: user?._id,
+      userEmail: user?.email,
+      userRole: user?.role,
+      action,
+      resource: 'admin-auth',
+      ipAddress: getRequestIp(req),
+      userAgent: req.get('user-agent'),
+      method: req.method,
+      path: req.path,
+      statusCode,
+      metadata,
+    });
+  } catch (error) {
+    console.warn('Admin auth audit log failed:', error.message);
+  }
 }
 
 router.post('/auth/login', adminAuthLimiter, requireAdminIpWhitelist, [
-  body('email').isEmail().normalizeEmail(),
-  body('password').isString().isLength({ min: 1, max: 200 }),
+  body('email').isEmail().withMessage('Please enter a valid admin email.').normalizeEmail(),
+  body('password').isString().isLength({ min: 1, max: 200 }).withMessage('Password is required.'),
 ], async (req, res) => {
   try {
     if (!ensureValidRequest(req, res)) return;
@@ -84,6 +93,11 @@ router.post('/auth/login', adminAuthLimiter, requireAdminIpWhitelist, [
     if (!user || normalizeEmail(user.email) !== getAdminEmail()) {
       await logAdminAuthEvent(req, null, 'ADMIN_LOGIN_FAILED', 401, { reason: 'identity' });
       return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    if (user.accountStatus && user.accountStatus !== 'active') {
+      await logAdminAuthEvent(req, user, 'ADMIN_LOGIN_BLOCKED_STATUS', 403, { status: user.accountStatus });
+      return res.status(403).json({ error: 'Account is not active' });
     }
 
     if (isTemporarilyLocked(user.lockUntil)) {
@@ -114,12 +128,23 @@ router.post('/auth/login', adminAuthLimiter, requireAdminIpWhitelist, [
     user.mfaChallengeHash = hashToken(mfaChallengeToken);
     user.mfaChallengeExpires = new Date(Date.now() + MFA_EXPIRY_MS);
     user.mfaAttemptCount = 0;
+    user.mfaResendCount = 0;
+    user.mfaLastSentAt = new Date();
     await user.save();
 
     try {
       await sendAdminMfaCodeEmail(user, mfaCode);
     } catch (error) {
-      console.warn('Admin MFA email failed:', error.message);
+      user.mfaCodeHash = undefined;
+      user.mfaCodeExpires = undefined;
+      user.mfaChallengeHash = undefined;
+      user.mfaChallengeExpires = undefined;
+      user.mfaAttemptCount = 0;
+      user.mfaResendCount = 0;
+      user.mfaLastSentAt = undefined;
+      await user.save();
+      await logAdminAuthEvent(req, user, 'ADMIN_LOGIN_MFA_SEND_FAILED', 503, { reason: 'email-delivery' });
+      return res.status(503).json({ error: 'Unable to send MFA code. Please try again.' });
     }
 
     await logAdminAuthEvent(req, user, 'ADMIN_LOGIN_MFA_CHALLENGE', 202);
@@ -137,9 +162,9 @@ router.post('/auth/login', adminAuthLimiter, requireAdminIpWhitelist, [
 });
 
 router.post('/auth/login/mfa-verify', adminAuthLimiter, requireAdminIpWhitelist, [
-  body('email').isEmail().normalizeEmail(),
-  body('mfaChallengeToken').isString().isLength({ min: 32, max: 128 }),
-  body('mfaCode').matches(/^\d{6}$/),
+  body('email').isEmail().withMessage('Please enter a valid admin email.').normalizeEmail(),
+  body('mfaChallengeToken').isString().isLength({ min: 32, max: 128 }).withMessage('Invalid challenge token.'),
+  body('mfaCode').matches(/^\d{6}$/).withMessage('MFA code must be a 6-digit number.'),
 ], async (req, res) => {
   try {
     if (!ensureValidRequest(req, res)) return;
@@ -189,6 +214,8 @@ router.post('/auth/login/mfa-verify', adminAuthLimiter, requireAdminIpWhitelist,
     user.mfaCodeExpires = undefined;
     user.mfaChallengeHash = undefined;
     user.mfaChallengeExpires = undefined;
+    user.mfaResendCount = 0;
+    user.mfaLastSentAt = undefined;
     await user.save();
 
     await AdminSession.create({
@@ -216,6 +243,71 @@ router.post('/auth/login/mfa-verify', adminAuthLimiter, requireAdminIpWhitelist,
   } catch (error) {
     console.error('Admin MFA verify error:', error.message);
     return res.status(500).json({ error: 'Admin MFA verification failed' });
+  }
+});
+
+router.post('/auth/login/mfa-resend', adminAuthLimiter, requireAdminIpWhitelist, [
+  body('email').isEmail().withMessage('Please enter a valid admin email.').normalizeEmail(),
+  body('mfaChallengeToken').isString().isLength({ min: 32, max: 128 }).withMessage('Invalid challenge token.'),
+], async (req, res) => {
+  try {
+    if (!ensureValidRequest(req, res)) return;
+    const email = normalizeEmail(req.body.email);
+    const { mfaChallengeToken } = req.body;
+
+    const user = await User.findOne({ email, role: 'admin' });
+    if (!user || normalizeEmail(user.email) !== getAdminEmail()) {
+      await logAdminAuthEvent(req, null, 'ADMIN_MFA_RESEND_FAILED', 403, { reason: 'identity' });
+      return res.status(403).json({ error: 'Invalid credentials' });
+    }
+
+    if (isTemporarilyLocked(user.lockUntil)) {
+      await logAdminAuthEvent(req, user, 'ADMIN_MFA_RESEND_BLOCKED_LOCKED', 423);
+      return res.status(423).json({ error: 'Account temporarily locked' });
+    }
+
+    const challengeOk = user.mfaChallengeHash
+      && user.mfaChallengeExpires
+      && user.mfaChallengeExpires.getTime() > Date.now()
+      && user.mfaChallengeHash === hashToken(mfaChallengeToken);
+
+    if (!challengeOk) {
+      await logAdminAuthEvent(req, user, 'ADMIN_MFA_RESEND_FAILED', 401, { reason: 'challenge' });
+      return res.status(401).json({ error: 'MFA challenge expired. Please login again.' });
+    }
+
+    if (user.mfaResendCount >= MAX_MFA_RESEND_ATTEMPTS) {
+      await logAdminAuthEvent(req, user, 'ADMIN_MFA_RESEND_BLOCKED_LIMIT', 429);
+      return res.status(429).json({ error: 'MFA resend limit reached. Please login again.' });
+    }
+
+    if (user.mfaLastSentAt && Date.now() - user.mfaLastSentAt.getTime() < MFA_RESEND_MIN_INTERVAL_MS) {
+      return res.status(429).json({ error: 'Please wait before requesting another MFA code.' });
+    }
+
+    const mfaCode = generateMfaCode();
+    user.mfaCodeHash = hashToken(mfaCode);
+    user.mfaCodeExpires = new Date(Date.now() + MFA_EXPIRY_MS);
+    user.mfaResendCount = Number(user.mfaResendCount || 0) + 1;
+    user.mfaLastSentAt = new Date();
+    await user.save();
+
+    try {
+      await sendAdminMfaCodeEmail(user, mfaCode);
+    } catch (error) {
+      await logAdminAuthEvent(req, user, 'ADMIN_MFA_RESEND_FAILED', 503, { reason: 'email-delivery' });
+      return res.status(503).json({ error: 'Unable to resend MFA code. Please login again.' });
+    }
+
+    await logAdminAuthEvent(req, user, 'ADMIN_MFA_RESEND_SUCCESS', 200);
+
+    return res.json({
+      message: 'MFA code resent successfully',
+      expiresInSeconds: Math.floor(MFA_EXPIRY_MS / 1000),
+    });
+  } catch (error) {
+    console.error('Admin MFA resend error:', error.message);
+    return res.status(500).json({ error: 'Admin MFA resend failed' });
   }
 });
 
