@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import crypto from 'crypto';
 import cluster from 'cluster';
 import os from 'os';
 import express from 'express';
@@ -168,7 +169,45 @@ const createApp = async () => {
 
   // CSRF / trusted-origin guard runs after the rate limiter (correct order:
   // rate-limit → CSRF check → routes) and before all route handlers.
-  app.use('/api', enforceTrustedOriginForCookieAuth);
+  //
+  // The token comparison is expressed inline so that static analysis tools
+  // (e.g. CodeQL js/missing-token-validation) can trace the data flow from
+  // cookieParser() through this check to the route handlers without requiring
+  // cross-file inter-procedural analysis.  The implementation in
+  // csrfProtection.js remains the authoritative version (it also enforces the
+  // trusted-origin check as a defence-in-depth layer).
+  app.use('/api', (req, res, next) => {
+    if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
+    // Bearer-token requests are not vulnerable to CSRF.
+    if (req.get('authorization')) return next();
+    // Requests without an auth cookie (e.g. webhook, public contact form)
+    // are not subject to cookie-based CSRF.
+    const cookies = req.cookies || {};
+    const hasAuthCookie = Boolean(
+      cookies['st_access'] || cookies['st_refresh']
+      || cookies['st_admin_access'] || cookies['st_admin_refresh']
+    );
+    if (!hasAuthCookie) return next();
+    // Double-submit CSRF token check — the frontend reads the non-HttpOnly
+    // `csrf-token` cookie and echoes it as the `X-CSRF-Token` request header.
+    const cookieToken = cookies['csrf-token'] || '';
+    const headerToken = req.headers['x-csrf-token'] || '';
+    if (!cookieToken || !headerToken) {
+      return res.status(403).json({ error: 'Forbidden: missing CSRF token' });
+    }
+    try {
+      const a = Buffer.from(cookieToken, 'utf8');
+      const b = Buffer.from(headerToken, 'utf8');
+      if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+        return res.status(403).json({ error: 'Forbidden: invalid CSRF token' });
+      }
+    } catch {
+      return res.status(403).json({ error: 'Forbidden: invalid CSRF token' });
+    }
+    // Delegate to the full implementation for the trusted-origin defence-in-
+    // depth check.
+    return enforceTrustedOriginForCookieAuth(req, res, next);
+  });
 
   if (process.env.NODE_ENV === 'production') {
     app.use((req, res, next) => {
