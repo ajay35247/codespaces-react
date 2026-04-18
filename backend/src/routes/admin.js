@@ -413,7 +413,7 @@ router.post('/auth/logout-all', async (req, res) => {
 
 router.get('/control/users', async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit || '100', 10), 300);
-  const users = await User.find({}).select('-password -refreshTokens -mfaCodeHash -mfaChallengeHash').sort({ createdAt: -1 }).limit(limit);
+  const users = await User.find({}).select('-password -refreshTokens -mfaCodeHash -mfaChallengeHash -verificationToken -resetToken -resetTokenExpires').sort({ createdAt: -1 }).limit(limit);
   return res.json({ users });
 });
 

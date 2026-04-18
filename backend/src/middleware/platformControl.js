@@ -13,9 +13,13 @@ async function getKillSwitchState() {
     return cachedState;
   }
 
-  const item = await AdminControlState.findOne({ key: 'kill-switch' }).lean();
-  cachedState = item?.value || cachedState;
-  lastLoadedAt = now;
+  try {
+    const item = await AdminControlState.findOne({ key: 'kill-switch' }).lean();
+    cachedState = item?.value || cachedState;
+    lastLoadedAt = now;
+  } catch {
+    // DB unavailable – serve last known (or default) state rather than crashing
+  }
   return cachedState;
 }
 

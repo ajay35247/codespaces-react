@@ -1,35 +1,62 @@
+import mongoose from 'mongoose';
 import { Router } from 'express';
 import { verifyJWT } from '../middleware/authorize.js';
 
 const router = Router();
 
-const route = {
-  shipmentId: 'L-001',
-  path: [
-    { lat: 19.076, lon: 72.8777 },
-    { lat: 18.5204, lon: 73.8567 },
-    { lat: 17.3871, lon: 78.4917 },
-  ],
-  eta: '02:20',
-  status: 'in-transit',
-};
-
 router.use(verifyJWT);
 
-router.get('/locations', (req, res) => {
-  res.json({
-    shipments: [
-      { id: 'L-001', lat: 19.076, lon: 72.8777, eta: '02:20', status: 'in-transit' },
-      { id: 'L-002', lat: 12.9716, lon: 77.5946, eta: '04:10', status: 'pickup' },
-    ],
-  });
+router.get('/locations', async (req, res) => {
+  try {
+    const vehicles = await mongoose.connection.db
+      .collection('vehicles')
+      .find(
+        { currentLocation: { $exists: true } },
+        { projection: { _id: 1, vehicleId: 1, currentLocation: 1, status: 1, updatedAt: 1 } }
+      )
+      .limit(100)
+      .toArray();
+
+    const shipments = vehicles.map((v) => ({
+      id: v.vehicleId || String(v._id),
+      lat: v.currentLocation?.lat,
+      lon: v.currentLocation?.lng || v.currentLocation?.lon,
+      status: v.status || 'unknown',
+      updatedAt: v.updatedAt,
+    }));
+
+    return res.json({ shipments });
+  } catch (error) {
+    console.error('Tracking locations error:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch tracking data' });
+  }
 });
 
-router.get('/route/:shipmentId', (req, res) => {
-  if (req.params.shipmentId !== route.shipmentId) {
-    return res.status(404).json({ error: 'Shipment route not found' });
+router.get('/route/:vehicleId', async (req, res) => {
+  try {
+    const vehicle = await mongoose.connection.db
+      .collection('vehicles')
+      .findOne(
+        { vehicleId: req.params.vehicleId },
+        { projection: { vehicleId: 1, currentLocation: 1, routeHistory: 1, status: 1 } }
+      );
+
+    if (!vehicle) {
+      return res.status(404).json({ error: 'Vehicle route not found' });
+    }
+
+    return res.json({
+      route: {
+        vehicleId: vehicle.vehicleId,
+        status: vehicle.status,
+        currentLocation: vehicle.currentLocation,
+        path: vehicle.routeHistory || [],
+      },
+    });
+  } catch (error) {
+    console.error('Tracking route error:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch route' });
   }
-  res.json({ route });
 });
 
 router.get('/geofence', (req, res) => {

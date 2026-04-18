@@ -5,6 +5,7 @@ import express from 'express';
 import { verifyJWT, requireRole } from '../middleware/authorize.js';
 import { requirePaymentsEnabled } from '../middleware/platformControl.js';
 import { Joi, validateBody } from '../middleware/validation.js';
+import Payment from '../schemas/PaymentSchema.js';
 
 const router = Router();
 const razorpayKeyId = process.env.RAZORPAY_KEY_ID || '';
@@ -90,7 +91,10 @@ router.post(
       .update(req.body)
       .digest('hex');
 
-    if (!crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature))) {
+    // Guard against RangeError from timingSafeEqual when buffer lengths differ
+    const expectedBuf = Buffer.from(expected, 'utf8');
+    const signatureBuf = Buffer.from(String(signature), 'utf8');
+    if (expectedBuf.length !== signatureBuf.length || !crypto.timingSafeEqual(expectedBuf, signatureBuf)) {
       return res.status(400).json({ error: 'Invalid webhook signature' });
     }
 
@@ -103,14 +107,30 @@ router.post(
 
     // Handle events
     switch (event.event) {
-      case 'payment.captured':
-        console.log('Payment captured:', event.payload.payment.entity.id);
+      case 'payment.captured': {
+        const entity = event.payload?.payment?.entity;
+        if (entity?.id) {
+          Payment.findOneAndUpdate(
+            { razorpayPaymentId: entity.id },
+            { $set: { status: 'captured', webhookEvent: 'payment.captured' } }
+          ).catch((err) => console.warn('Webhook DB update failed:', err.message));
+        }
+        console.log('Payment captured:', entity?.id);
         break;
-      case 'payment.failed':
-        console.warn('Payment failed:', event.payload.payment.entity.id);
+      }
+      case 'payment.failed': {
+        const entity = event.payload?.payment?.entity;
+        if (entity?.id) {
+          Payment.findOneAndUpdate(
+            { razorpayPaymentId: entity.id },
+            { $set: { status: 'failed', webhookEvent: 'payment.failed' } }
+          ).catch((err) => console.warn('Webhook DB update failed:', err.message));
+        }
+        console.warn('Payment failed:', entity?.id);
         break;
+      }
       case 'subscription.activated':
-        console.log('Subscription activated:', event.payload.subscription.entity.id);
+        console.log('Subscription activated:', event.payload?.subscription?.entity?.id);
         break;
       default:
         console.log('Unhandled Razorpay event:', event.event);
@@ -144,6 +164,22 @@ router.post('/subscribe', verifyJWT, requirePaymentsEnabled(), flagFraud, valida
       payment_capture: 1,
     });
 
+    // Persist order to DB so webhook events can be correlated
+    try {
+      await Payment.create({
+        transactionId: order.id,
+        razorpayOrderId: order.id,
+        planId: plan.id,
+        userId: req.user.id,
+        amount: plan.price,
+        currency: 'INR',
+        sender: req.user.id,
+        status: 'pending',
+      });
+    } catch (dbErr) {
+      console.warn('Payment record creation failed:', dbErr.message);
+    }
+
     return res.status(200).json({
       orderId: order.id,
       amount: order.amount,
@@ -157,7 +193,7 @@ router.post('/subscribe', verifyJWT, requirePaymentsEnabled(), flagFraud, valida
   }
 });
 
-router.post('/verify', verifyJWT, validateBody(verifySchema), (req, res) => {
+router.post('/verify', verifyJWT, validateBody(verifySchema), async (req, res) => {
   const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
 
   const expected = crypto
@@ -167,6 +203,21 @@ router.post('/verify', verifyJWT, validateBody(verifySchema), (req, res) => {
 
   if (!secureCompareHex(expected, razorpay_signature)) {
     return res.status(400).json({ error: 'Invalid payment signature' });
+  }
+
+  // Mark payment as verified in DB
+  try {
+    await Payment.findOneAndUpdate(
+      { razorpayOrderId: razorpay_order_id },
+      {
+        $set: {
+          razorpayPaymentId: razorpay_payment_id,
+          status: 'captured',
+        },
+      }
+    );
+  } catch (dbErr) {
+    console.warn('Payment verification DB update failed:', dbErr.message);
   }
 
   return res.json({ verified: true, paymentId: razorpay_payment_id });

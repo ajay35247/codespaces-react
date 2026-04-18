@@ -30,11 +30,34 @@ export function createJsonHeaders(headers = {}) {
 }
 
 export async function apiFetch(path, options = {}) {
+  const { _isRetry, ...fetchOptions } = options;
+
   const response = await fetch(buildApiUrl(path), {
     credentials: 'include',
-    ...options,
-    headers: createJsonHeaders(options.headers),
+    ...fetchOptions,
+    headers: createJsonHeaders(fetchOptions.headers),
   });
+
+  // Attempt a single silent token refresh when the access token has expired.
+  if (response.status === 401 && !_isRetry) {
+    const payload = await parseApiBody(response);
+    if (payload?.code === 'TOKEN_EXPIRED') {
+      try {
+        const refreshResponse = await fetch(buildApiUrl('/auth/refresh-token'), {
+          method: 'POST',
+          credentials: 'include',
+          headers: createJsonHeaders(),
+        });
+        if (refreshResponse.ok) {
+          // Retry the original request once with fresh cookies.
+          return apiFetch(path, { ...fetchOptions, _isRetry: true });
+        }
+      } catch {
+        // Refresh network error – fall through and throw the original 401.
+      }
+    }
+    throw new Error(getApiErrorMessage(payload, 'Request failed'));
+  }
 
   const payload = await parseApiBody(response);
 
