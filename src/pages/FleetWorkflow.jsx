@@ -14,7 +14,7 @@ export function FleetWorkflow() {
       .then(([overviewData, trucksData]) => {
         if (overviewData.error) throw new Error(overviewData.error);
         if (trucksData.error) throw new Error(trucksData.error);
-        setOverview(overviewData.fleetOverview || null);
+        setOverview(overviewData.overview || null);
         setTrucks(trucksData.trucks || []);
       })
       .catch((err) => setError(err.message));
@@ -32,15 +32,15 @@ export function FleetWorkflow() {
         <div className="mt-10 grid gap-6 lg:grid-cols-3">
           <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-6">
             <p className="text-sm uppercase tracking-[0.28em] text-slate-400">Trucks managed</p>
-            <p className="mt-4 text-3xl font-semibold text-white">{overview?.trucksActive ?? '—'}</p>
+            <p className="mt-4 text-3xl font-semibold text-white">{overview?.totalVehicles ?? '—'}</p>
           </div>
           <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-6">
             <p className="text-sm uppercase tracking-[0.28em] text-slate-400">Utilization</p>
-            <p className="mt-4 text-3xl font-semibold text-white">{overview?.utilization ?? '—'}%</p>
+            <p className="mt-4 text-3xl font-semibold text-white">{overview?.activeVehicles ?? '—'}%</p>
           </div>
           <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-6">
             <p className="text-sm uppercase tracking-[0.28em] text-slate-400">Maintenance alerts</p>
-            <p className="mt-4 text-3xl font-semibold text-orange-400">{overview?.maintenanceAlerts ?? '—'}</p>
+            <p className="mt-4 text-3xl font-semibold text-orange-400">{overview?.inTransitLoads ?? '—'}</p>
           </div>
         </div>
 

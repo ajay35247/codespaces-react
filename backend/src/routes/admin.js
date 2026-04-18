@@ -28,7 +28,7 @@ import {
   requireAjayAdmin,
 } from '../middleware/authorize.js';
 import { sendAdminMfaCodeEmail } from '../utils/emailService.js';
-import { getAdminEmail, normalizeEmail } from '../utils/securityPolicy.js';
+import { getAdminEmail, getStrongPasswordErrors, normalizeEmail } from '../utils/securityPolicy.js';
 import {
   calculateLockUntil,
   generateMfaCode,
@@ -188,12 +188,24 @@ router.post('/auth/login/mfa-verify', adminAuthLimiter, requireAdminIpWhitelist,
     const challengeOk = user.mfaChallengeHash
       && user.mfaChallengeExpires
       && user.mfaChallengeExpires.getTime() > Date.now()
-      && user.mfaChallengeHash === hashToken(mfaChallengeToken);
+      && (() => {
+        try {
+          const a = Buffer.from(user.mfaChallengeHash, 'utf8');
+          const b = Buffer.from(hashToken(mfaChallengeToken), 'utf8');
+          return a.length === b.length && crypto.timingSafeEqual(a, b);
+        } catch { return false; }
+      })();
 
     const codeOk = user.mfaCodeHash
       && user.mfaCodeExpires
       && user.mfaCodeExpires.getTime() > Date.now()
-      && user.mfaCodeHash === hashToken(mfaCode);
+      && (() => {
+        try {
+          const a = Buffer.from(user.mfaCodeHash, 'utf8');
+          const b = Buffer.from(hashToken(mfaCode), 'utf8');
+          return a.length === b.length && crypto.timingSafeEqual(a, b);
+        } catch { return false; }
+      })();
 
     if (!challengeOk || !codeOk) {
       const next = incrementFailedAttempts(user.mfaAttemptCount, LOGIN_MAX_FAILED_ATTEMPTS);
@@ -272,7 +284,13 @@ router.post('/auth/login/mfa-resend', adminAuthLimiter, requireAdminIpWhitelist,
     const challengeOk = user.mfaChallengeHash
       && user.mfaChallengeExpires
       && user.mfaChallengeExpires.getTime() > Date.now()
-      && user.mfaChallengeHash === hashToken(mfaChallengeToken);
+      && (() => {
+        try {
+          const a = Buffer.from(user.mfaChallengeHash, 'utf8');
+          const b = Buffer.from(hashToken(mfaChallengeToken), 'utf8');
+          return a.length === b.length && crypto.timingSafeEqual(a, b);
+        } catch { return false; }
+      })();
 
     if (!challengeOk) {
       await logAdminAuthEvent(req, user, 'ADMIN_MFA_RESEND_FAILED', 401, { reason: 'challenge' });
@@ -369,138 +387,209 @@ router.post('/auth/refresh-token', requireAdminIpWhitelist, async (req, res) => 
 router.use(verifyJWT, requireAjayAdmin, requireAdminIpWhitelist);
 
 router.get('/auth/me', async (req, res) => {
-  const user = await User.findById(req.user.id).select('_id email name role');
-  if (!user || user.role !== 'admin') {
-    return res.status(404).json({ error: 'Admin session not found' });
-  }
+  try {
+    const user = await User.findById(req.user.id).select('_id email name role');
+    if (!user || user.role !== 'admin') {
+      return res.status(404).json({ error: 'Admin session not found' });
+    }
 
-  return res.json({
-    admin: {
-      id: user._id,
-      email: user.email,
-      name: user.name,
-    },
-  });
+    return res.json({
+      admin: {
+        id: user._id,
+        email: user.email,
+        name: user.name,
+      },
+    });
+  } catch (error) {
+    console.error('Admin me error:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch admin session' });
+  }
 });
 
 router.get('/auth/sessions', async (req, res) => {
-  const sessions = await AdminSession.find({ adminUserId: req.user.id }).sort({ lastSeenAt: -1 }).limit(50);
-  return res.json({ sessions });
+  try {
+    const sessions = await AdminSession.find({ adminUserId: req.user.id }).sort({ lastSeenAt: -1 }).limit(50);
+    return res.json({ sessions });
+  } catch (error) {
+    console.error('Admin sessions error:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch sessions' });
+  }
 });
 
 router.post('/auth/logout', async (req, res) => {
-  const refreshToken = getRefreshTokenFromRequest(req, true);
-  if (refreshToken) {
-    const refreshTokenHash = hashToken(refreshToken);
-    await User.updateOne({ _id: req.user.id }, { $pull: { refreshTokens: refreshTokenHash } });
-    await AdminSession.updateOne(
-      { adminUserId: req.user.id, refreshTokenHash, revokedAt: { $exists: false } },
-      { $set: { revokedAt: new Date(), revokeReason: 'manual-logout' } }
-    );
+  try {
+    const refreshToken = getRefreshTokenFromRequest(req, true);
+    if (refreshToken) {
+      const refreshTokenHash = hashToken(refreshToken);
+      await User.updateOne({ _id: req.user.id }, { $pull: { refreshTokens: refreshTokenHash } });
+      await AdminSession.updateOne(
+        { adminUserId: req.user.id, refreshTokenHash, revokedAt: { $exists: false } },
+        { $set: { revokedAt: new Date(), revokeReason: 'manual-logout' } }
+      );
+    }
+    clearAuthCookies(res, true);
+    await logAdminAuthEvent(req, { _id: req.user.id, email: req.user.email, role: 'admin' }, 'ADMIN_LOGOUT', 200);
+    return res.json({ message: 'Logged out' });
+  } catch (error) {
+    console.error('Admin logout error:', error.message);
+    return res.status(500).json({ error: 'Logout failed' });
   }
-  clearAuthCookies(res, true);
-  await logAdminAuthEvent(req, { _id: req.user.id, email: req.user.email, role: 'admin' }, 'ADMIN_LOGOUT', 200);
-  return res.json({ message: 'Logged out' });
 });
 
 router.post('/auth/logout-all', async (req, res) => {
-  await User.updateOne({ _id: req.user.id }, { $set: { refreshTokens: [] } });
-  await AdminSession.updateMany(
-    { adminUserId: req.user.id, revokedAt: { $exists: false } },
-    { $set: { revokedAt: new Date(), revokeReason: 'logout-all' } }
-  );
-  clearAuthCookies(res, true);
-  await logAdminAuthEvent(req, { _id: req.user.id, email: req.user.email, role: 'admin' }, 'ADMIN_LOGOUT_ALL', 200);
-  return res.json({ message: 'All sessions revoked' });
+  try {
+    await User.updateOne({ _id: req.user.id }, { $set: { refreshTokens: [] } });
+    await AdminSession.updateMany(
+      { adminUserId: req.user.id, revokedAt: { $exists: false } },
+      { $set: { revokedAt: new Date(), revokeReason: 'logout-all' } }
+    );
+    clearAuthCookies(res, true);
+    await logAdminAuthEvent(req, { _id: req.user.id, email: req.user.email, role: 'admin' }, 'ADMIN_LOGOUT_ALL', 200);
+    return res.json({ message: 'All sessions revoked' });
+  } catch (error) {
+    console.error('Admin logout-all error:', error.message);
+    return res.status(500).json({ error: 'Logout-all failed' });
+  }
 });
 
 router.get('/control/users', async (req, res) => {
-  const limit = Math.min(parseInt(req.query.limit || '100', 10), 300);
-  const users = await User.find({}).select('-password -refreshTokens -mfaCodeHash -mfaChallengeHash -verificationToken -resetToken -resetTokenExpires').sort({ createdAt: -1 }).limit(limit);
-  return res.json({ users });
+  try {
+    const limit = Math.min(parseInt(req.query.limit || '100', 10), 300);
+    const users = await User.find({}).select('-password -refreshTokens -mfaCodeHash -mfaChallengeHash -verificationToken -resetToken -resetTokenExpires').sort({ createdAt: -1 }).limit(limit);
+    return res.json({ users });
+  } catch (error) {
+    console.error('Admin users list error:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch users' });
+  }
 });
 
 router.patch('/control/users/:id/status', [
   body('status').isIn(['active', 'suspended', 'blocked', 'deleted']),
 ], async (req, res) => {
   if (!ensureValidRequest(req, res)) return;
-  const user = await User.findById(req.params.id);
-  if (!user) return res.status(404).json({ error: 'User not found' });
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid user ID' });
+    }
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
 
-  const oldStatus = user.accountStatus || 'active';
-  user.accountStatus = req.body.status;
-  await user.save();
+    const oldStatus = user.accountStatus || 'active';
+    user.accountStatus = req.body.status;
+    await user.save();
 
-  await AuditLog.create({
-    userId: req.user.id,
-    userEmail: req.user.email,
-    userRole: req.user.role,
-    action: 'ADMIN_USER_STATUS_UPDATE',
-    resource: 'user',
-    resourceId: user._id.toString(),
-    ipAddress: getRequestIp(req),
-    userAgent: req.get('user-agent'),
-    method: req.method,
-    path: req.path,
-    statusCode: 200,
-    metadata: { oldValue: oldStatus, newValue: req.body.status },
-  });
+    await AuditLog.create({
+      userId: req.user.id,
+      userEmail: req.user.email,
+      userRole: req.user.role,
+      action: 'ADMIN_USER_STATUS_UPDATE',
+      resource: 'user',
+      resourceId: user._id.toString(),
+      ipAddress: getRequestIp(req),
+      userAgent: req.get('user-agent'),
+      method: req.method,
+      path: req.path,
+      statusCode: 200,
+      metadata: { oldValue: oldStatus, newValue: req.body.status },
+    });
 
-  return res.json({ userId: user._id, status: user.accountStatus });
+    return res.json({ userId: user._id, status: user.accountStatus });
+  } catch (error) {
+    console.error('Admin user status update error:', error.message);
+    return res.status(500).json({ error: 'Failed to update user status' });
+  }
 });
 
 router.patch('/control/users/:id/kyc', [
   body('kycStatus').isIn(['pending', 'approved', 'rejected']),
 ], async (req, res) => {
   if (!ensureValidRequest(req, res)) return;
-  const user = await User.findByIdAndUpdate(req.params.id, { $set: { kycStatus: req.body.kycStatus } }, { new: true });
-  if (!user) return res.status(404).json({ error: 'User not found' });
-  return res.json({ userId: user._id, kycStatus: user.kycStatus });
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid user ID' });
+    }
+    const user = await User.findByIdAndUpdate(req.params.id, { $set: { kycStatus: req.body.kycStatus } }, { new: true });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    return res.json({ userId: user._id, kycStatus: user.kycStatus });
+  } catch (error) {
+    console.error('Admin KYC update error:', error.message);
+    return res.status(500).json({ error: 'Failed to update KYC status' });
+  }
 });
 
 router.post('/control/users/:id/reset-password', [
   body('newPassword').isString().isLength({ min: 12 }),
 ], async (req, res) => {
   if (!ensureValidRequest(req, res)) return;
-  const user = await User.findById(req.params.id);
-  if (!user) return res.status(404).json({ error: 'User not found' });
-  user.password = req.body.newPassword;
-  user.refreshTokens = [];
-  await user.save();
-  return res.json({ message: 'User credentials reset' });
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid user ID' });
+    }
+    const passwordErrors = getStrongPasswordErrors(req.body.newPassword);
+    if (passwordErrors.length > 0) {
+      return res.status(400).json({ error: 'Password does not meet complexity policy', details: passwordErrors });
+    }
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    user.password = req.body.newPassword;
+    user.refreshTokens = [];
+    await user.save();
+    return res.json({ message: 'User credentials reset' });
+  } catch (error) {
+    console.error('Admin reset-password error:', error.message);
+    return res.status(500).json({ error: 'Failed to reset user password' });
+  }
 });
 
 router.post('/control/users/:id/impersonate', async (req, res) => {
-  const user = await User.findById(req.params.id);
-  if (!user) return res.status(404).json({ error: 'User not found' });
-  const token = signToken({ _id: user._id, email: user.email, role: user.role, name: user.name }, { impersonatedBy: req.user.id });
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid user ID' });
+    }
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const token = signToken({ _id: user._id, email: user.email, role: user.role, name: user.name }, { impersonatedBy: req.user.id });
 
-  await AuditLog.create({
-    userId: req.user.id,
-    userEmail: req.user.email,
-    userRole: req.user.role,
-    action: 'ADMIN_IMPERSONATION_ISSUED',
-    resource: 'user',
-    resourceId: user._id.toString(),
-    ipAddress: getRequestIp(req),
-    userAgent: req.get('user-agent'),
-    method: req.method,
-    path: req.path,
-    statusCode: 200,
-    metadata: { impersonatedUserEmail: user.email },
-  });
+    await AuditLog.create({
+      userId: req.user.id,
+      userEmail: req.user.email,
+      userRole: req.user.role,
+      action: 'ADMIN_IMPERSONATION_ISSUED',
+      resource: 'user',
+      resourceId: user._id.toString(),
+      ipAddress: getRequestIp(req),
+      userAgent: req.get('user-agent'),
+      method: req.method,
+      path: req.path,
+      statusCode: 200,
+      metadata: { impersonatedUserEmail: user.email },
+    });
 
-  return res.json({ token, impersonatedUserId: user._id });
+    return res.json({ token, impersonatedUserId: user._id });
+  } catch (error) {
+    console.error('Admin impersonate error:', error.message);
+    return res.status(500).json({ error: 'Failed to issue impersonation token' });
+  }
 });
 
 router.get('/control/loads', async (req, res) => {
-  const loads = await Load.find({}).sort({ createdAt: -1 }).limit(300);
-  return res.json({ loads });
+  try {
+    const loads = await Load.find({}).sort({ createdAt: -1 }).limit(300);
+    return res.json({ loads });
+  } catch (error) {
+    console.error('Admin loads list error:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch loads' });
+  }
 });
 
 router.get('/control/payments', async (req, res) => {
-  const payments = await Payment.find({}).sort({ createdAt: -1 }).limit(300);
-  return res.json({ payments });
+  try {
+    const payments = await Payment.find({}).sort({ createdAt: -1 }).limit(300);
+    return res.json({ payments });
+  } catch (error) {
+    console.error('Admin payments list error:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch payments' });
+  }
 });
 
 router.patch('/control/override', [
@@ -509,23 +598,27 @@ router.patch('/control/override', [
   body('newState').isObject(),
 ], async (req, res) => {
   if (!ensureValidRequest(req, res)) return;
+  try {
+    await AuditLog.create({
+      userId: req.user.id,
+      userEmail: req.user.email,
+      userRole: req.user.role,
+      action: 'ADMIN_GLOBAL_OVERRIDE',
+      resource: req.body.targetType,
+      resourceId: req.body.targetId,
+      ipAddress: getRequestIp(req),
+      userAgent: req.get('user-agent'),
+      method: req.method,
+      path: req.path,
+      statusCode: 200,
+      metadata: { newValue: req.body.newState },
+    });
 
-  await AuditLog.create({
-    userId: req.user.id,
-    userEmail: req.user.email,
-    userRole: req.user.role,
-    action: 'ADMIN_GLOBAL_OVERRIDE',
-    resource: req.body.targetType,
-    resourceId: req.body.targetId,
-    ipAddress: getRequestIp(req),
-    userAgent: req.get('user-agent'),
-    method: req.method,
-    path: req.path,
-    statusCode: 200,
-    metadata: { newValue: req.body.newState },
-  });
-
-  return res.json({ applied: true });
+    return res.json({ applied: true });
+  } catch (error) {
+    console.error('Admin override error:', error.message);
+    return res.status(500).json({ error: 'Override failed' });
+  }
 });
 
 router.post('/control/kill-switch', [
@@ -534,35 +627,45 @@ router.post('/control/kill-switch', [
   body('registrationsPaused').isBoolean(),
 ], async (req, res) => {
   if (!ensureValidRequest(req, res)) return;
-  const value = {
-    bookingsPaused: req.body.bookingsPaused,
-    paymentsPaused: req.body.paymentsPaused,
-    registrationsPaused: req.body.registrationsPaused,
-  };
+  try {
+    const value = {
+      bookingsPaused: req.body.bookingsPaused,
+      paymentsPaused: req.body.paymentsPaused,
+      registrationsPaused: req.body.registrationsPaused,
+    };
 
-  await AdminControlState.findOneAndUpdate(
-    { key: 'kill-switch' },
-    {
-      $set: {
-        value,
-        updatedBy: req.user.id,
-        updatedFromIp: getRequestIp(req),
+    await AdminControlState.findOneAndUpdate(
+      { key: 'kill-switch' },
+      {
+        $set: {
+          value,
+          updatedBy: req.user.id,
+          updatedFromIp: getRequestIp(req),
+        },
       },
-    },
-    { upsert: true, new: true }
-  );
+      { upsert: true, new: true }
+    );
 
-  return res.json({ value });
+    return res.json({ value });
+  } catch (error) {
+    console.error('Kill-switch update error:', error.message);
+    return res.status(500).json({ error: 'Failed to update kill-switch' });
+  }
 });
 
 router.get('/control/kill-switch', async (req, res) => {
-  const item = await AdminControlState.findOne({ key: 'kill-switch' });
-  const value = item?.value || {
-    bookingsPaused: false,
-    paymentsPaused: false,
-    registrationsPaused: false,
-  };
-  return res.json({ value });
+  try {
+    const item = await AdminControlState.findOne({ key: 'kill-switch' });
+    const value = item?.value || {
+      bookingsPaused: false,
+      paymentsPaused: false,
+      registrationsPaused: false,
+    };
+    return res.json({ value });
+  } catch (error) {
+    console.error('Kill-switch fetch error:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch kill-switch state' });
+  }
 });
 
 router.post('/pricing/plans', [
@@ -573,96 +676,123 @@ router.post('/pricing/plans', [
   body('pricing.yearly').isNumeric(),
 ], async (req, res) => {
   if (!ensureValidRequest(req, res)) return;
-  const plan = await SubscriptionPlan.create({
-    ...req.body,
-    pricingVersion: 1,
-  });
-  return res.status(201).json({ plan });
+  try {
+    const plan = await SubscriptionPlan.create({
+      ...req.body,
+      pricingVersion: 1,
+    });
+    return res.status(201).json({ plan });
+  } catch (error) {
+    console.error('Pricing plan create error:', error.message);
+    return res.status(500).json({ error: 'Failed to create pricing plan' });
+  }
 });
 
 router.get('/pricing/plans', async (req, res) => {
-  const plans = await SubscriptionPlan.find({}).sort({ createdAt: -1 });
-  return res.json({ plans });
+  try {
+    const plans = await SubscriptionPlan.find({}).sort({ createdAt: -1 });
+    return res.json({ plans });
+  } catch (error) {
+    console.error('Pricing plans list error:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch pricing plans' });
+  }
 });
 
 router.patch('/pricing/plans/:id', async (req, res) => {
-  const plan = await SubscriptionPlan.findById(req.params.id);
-  if (!plan) return res.status(404).json({ error: 'Plan not found' });
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid plan ID' });
+    }
+    const plan = await SubscriptionPlan.findById(req.params.id);
+    if (!plan) return res.status(404).json({ error: 'Plan not found' });
 
   const previousPricing = { ...plan.pricing.toObject() };
-  const incomingPricing = req.body.pricing || previousPricing;
-  const applyOnRenewalOnly = req.body.applyOnRenewalOnly !== false;
+    const incomingPricing = req.body.pricing || previousPricing;
+    const applyOnRenewalOnly = req.body.applyOnRenewalOnly !== false;
 
-  if (req.body.scheduleAt) {
-    plan.pendingPriceChange = {
-      pricing: incomingPricing,
-      effectiveFrom: new Date(req.body.scheduleAt),
-      applyOnRenewalOnly,
-    };
-  } else {
-    plan.pricing = incomingPricing;
-    plan.pricingVersion += 1;
-    plan.nextRenewalPriceOnly = applyOnRenewalOnly;
-    for (const cycle of ['monthly', 'quarterly', 'yearly']) {
-      if (Number(previousPricing[cycle]) !== Number(incomingPricing[cycle])) {
-        plan.priceHistory.push({
-          billingCycle: cycle,
-          oldPrice: Number(previousPricing[cycle]),
-          newPrice: Number(incomingPricing[cycle]),
-          effectiveFrom: new Date(),
-          changedBy: req.user.id,
-          changeType: 'manual-update',
-        });
+    if (req.body.scheduleAt) {
+      plan.pendingPriceChange = {
+        pricing: incomingPricing,
+        effectiveFrom: new Date(req.body.scheduleAt),
+        applyOnRenewalOnly,
+      };
+    } else {
+      plan.pricing = incomingPricing;
+      plan.pricingVersion += 1;
+      plan.nextRenewalPriceOnly = applyOnRenewalOnly;
+      for (const cycle of ['monthly', 'quarterly', 'yearly']) {
+        if (Number(previousPricing[cycle]) !== Number(incomingPricing[cycle])) {
+          plan.priceHistory.push({
+            billingCycle: cycle,
+            oldPrice: Number(previousPricing[cycle]),
+            newPrice: Number(incomingPricing[cycle]),
+            effectiveFrom: new Date(),
+            changedBy: req.user.id,
+            changeType: 'manual-update',
+          });
+        }
       }
     }
+
+    if (typeof req.body.taxPercent === 'number') plan.taxPercent = req.body.taxPercent;
+    if (typeof req.body.platformFeePercent === 'number') plan.platformFeePercent = req.body.platformFeePercent;
+    if (typeof req.body.trialDays === 'number') plan.trialDays = req.body.trialDays;
+    if (typeof req.body.active === 'boolean') plan.active = req.body.active;
+    if (Array.isArray(req.body.featureMapping)) plan.featureMapping = req.body.featureMapping;
+    if (Array.isArray(req.body.regionMultipliers)) plan.regionMultipliers = req.body.regionMultipliers;
+    if (Array.isArray(req.body.festivalPricing)) plan.festivalPricing = req.body.festivalPricing;
+    if (Array.isArray(req.body.coupons)) plan.coupons = req.body.coupons;
+
+    await plan.save();
+    return res.json({ plan });
+  } catch (error) {
+    console.error('Pricing plan update error:', error.message);
+    return res.status(500).json({ error: 'Failed to update pricing plan' });
   }
-
-  if (typeof req.body.taxPercent === 'number') plan.taxPercent = req.body.taxPercent;
-  if (typeof req.body.platformFeePercent === 'number') plan.platformFeePercent = req.body.platformFeePercent;
-  if (typeof req.body.trialDays === 'number') plan.trialDays = req.body.trialDays;
-  if (typeof req.body.active === 'boolean') plan.active = req.body.active;
-  if (Array.isArray(req.body.featureMapping)) plan.featureMapping = req.body.featureMapping;
-  if (Array.isArray(req.body.regionMultipliers)) plan.regionMultipliers = req.body.regionMultipliers;
-  if (Array.isArray(req.body.festivalPricing)) plan.festivalPricing = req.body.festivalPricing;
-  if (Array.isArray(req.body.coupons)) plan.coupons = req.body.coupons;
-
-  await plan.save();
-  return res.json({ plan });
 });
 
 router.post('/pricing/plans/:id/rollback', [
   body('targetVersion').isInt({ min: 1 }),
 ], async (req, res) => {
   if (!ensureValidRequest(req, res)) return;
-  const plan = await SubscriptionPlan.findById(req.params.id);
-  if (!plan) return res.status(404).json({ error: 'Plan not found' });
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid plan ID' });
+    }
+    const plan = await SubscriptionPlan.findById(req.params.id);
+    if (!plan) return res.status(404).json({ error: 'Plan not found' });
 
-  const targetVersion = Number(req.body.targetVersion);
-  if (targetVersion >= plan.pricingVersion) {
-    return res.status(400).json({ error: 'Target version must be older than current version' });
+    const targetVersion = Number(req.body.targetVersion);
+    if (targetVersion >= plan.pricingVersion) {
+      return res.status(400).json({ error: 'Target version must be older than current version' });
+    }
+
+    // Fix: only match on rollbackFromVersion, removing the always-truthy `|| entry.newPrice`
+    const targetChange = [...plan.priceHistory].reverse().find((entry) => entry.rollbackFromVersion === targetVersion);
+    if (!targetChange) {
+      return res.status(404).json({ error: 'No rollback source found for target version' });
+    }
+
+    const cycle = targetChange.billingCycle;
+    const currentPrice = Number(plan.pricing[cycle]);
+    plan.pricing[cycle] = targetChange.oldPrice;
+    plan.pricingVersion += 1;
+    plan.priceHistory.push({
+      billingCycle: cycle,
+      oldPrice: currentPrice,
+      newPrice: targetChange.oldPrice,
+      effectiveFrom: new Date(),
+      changedBy: req.user.id,
+      changeType: 'rollback',
+      rollbackFromVersion: targetVersion,
+    });
+
+    await plan.save();
+    return res.json({ plan });
+  } catch (error) {
+    console.error('Pricing plan rollback error:', error.message);
+    return res.status(500).json({ error: 'Failed to rollback pricing plan' });
   }
-
-  const targetChange = [...plan.priceHistory].reverse().find((entry) => entry.rollbackFromVersion === targetVersion || entry.newPrice);
-  if (!targetChange) {
-    return res.status(404).json({ error: 'No rollback source found for target version' });
-  }
-
-  const cycle = targetChange.billingCycle;
-  const currentPrice = Number(plan.pricing[cycle]);
-  plan.pricing[cycle] = targetChange.oldPrice;
-  plan.pricingVersion += 1;
-  plan.priceHistory.push({
-    billingCycle: cycle,
-    oldPrice: currentPrice,
-    newPrice: targetChange.oldPrice,
-    effectiveFrom: new Date(),
-    changedBy: req.user.id,
-    changeType: 'rollback',
-    rollbackFromVersion: targetVersion,
-  });
-
-  await plan.save();
-  return res.json({ plan });
 });
 
 router.post('/revenue/ledger/entry', [
@@ -671,44 +801,60 @@ router.post('/revenue/ledger/entry', [
   body('credit').isNumeric(),
   body('accountCode').isString().isLength({ min: 2, max: 80 }),
   body('counterpartyAccountCode').isString().isLength({ min: 2, max: 80 }),
+  body('notes').optional().isString().isLength({ max: 1000 }),
 ], async (req, res) => {
   if (!ensureValidRequest(req, res)) return;
-  const entry = await LedgerEntry.create({
-    ...req.body,
-    entryId: crypto.randomUUID(),
-    createdBy: req.user.id,
-  });
-  return res.status(201).json({ entry });
+  try {
+    const entry = await LedgerEntry.create({
+      sourceType: req.body.sourceType,
+      debit: req.body.debit,
+      credit: req.body.credit,
+      accountCode: req.body.accountCode,
+      counterpartyAccountCode: req.body.counterpartyAccountCode,
+      notes: req.body.notes,
+      entryId: crypto.randomUUID(),
+      createdBy: req.user.id,
+    });
+    return res.status(201).json({ entry });
+  } catch (error) {
+    console.error('Ledger entry create error:', error.message);
+    return res.status(500).json({ error: 'Failed to create ledger entry' });
+  }
 });
 
 router.get('/revenue/summary', async (req, res) => {
-  const [payments, subscriptionRevenueAgg, ledgerAgg] = await Promise.all([
-    Payment.find({}).select('status amount createdAt').lean(),
-    LedgerEntry.aggregate([
-      { $match: { sourceType: 'subscription' } },
-      { $group: { _id: null, total: { $sum: { $subtract: ['$credit', '$debit'] } } } },
-    ]),
-    LedgerEntry.aggregate([
-      { $group: { _id: null, totalCredit: { $sum: '$credit' }, totalDebit: { $sum: '$debit' } } },
-    ]),
-  ]);
+  try {
+    const [payments, subscriptionRevenueAgg, ledgerAgg] = await Promise.all([
+      Payment.find({}).select('status amount createdAt').lean(),
+      LedgerEntry.aggregate([
+        { $match: { sourceType: 'subscription' } },
+        { $group: { _id: null, total: { $sum: { $subtract: ['$credit', '$debit'] } } } },
+      ]),
+      LedgerEntry.aggregate([
+        { $group: { _id: null, totalCredit: { $sum: '$credit' }, totalDebit: { $sum: '$debit' } } },
+      ]),
+    ]);
 
-  const paymentStats = payments.reduce((acc, item) => {
-    if (item.status === 'success' || item.status === 'captured') acc.success += item.amount;
-    else if (item.status === 'failed') acc.failed += item.amount;
-    else if (item.status === 'refund') acc.refund += item.amount;
-    else acc.pending += item.amount;
-    return acc;
-  }, { success: 0, failed: 0, refund: 0, pending: 0 });
+    const paymentStats = payments.reduce((acc, item) => {
+      if (item.status === 'success' || item.status === 'captured') acc.success += item.amount;
+      else if (item.status === 'failed') acc.failed += item.amount;
+      else if (item.status === 'refund') acc.refund += item.amount;
+      else acc.pending += item.amount;
+      return acc;
+    }, { success: 0, failed: 0, refund: 0, pending: 0 });
 
-  const subscriptionRevenue = subscriptionRevenueAgg[0]?.total || 0;
-  const ledgerTotals = ledgerAgg[0] || { totalCredit: 0, totalDebit: 0 };
+    const subscriptionRevenue = subscriptionRevenueAgg[0]?.total || 0;
+    const ledgerTotals = ledgerAgg[0] || { totalCredit: 0, totalDebit: 0 };
 
-  return res.json({
-    payments: paymentStats,
-    subscriptionRevenue,
-    ledger: ledgerTotals,
-  });
+    return res.json({
+      payments: paymentStats,
+      subscriptionRevenue,
+      ledger: ledgerTotals,
+    });
+  } catch (error) {
+    console.error('Revenue summary error:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch revenue summary' });
+  }
 });
 
 router.post('/fraud/events', [
@@ -719,20 +865,36 @@ router.post('/fraud/events', [
   body('actorUserId').optional().isMongoId(),
 ], async (req, res) => {
   if (!ensureValidRequest(req, res)) return;
-  const event = await FraudEvent.create(req.body);
+  try {
+    const event = await FraudEvent.create({
+      eventType: req.body.eventType,
+      severity: req.body.severity,
+      riskScore: req.body.riskScore,
+      description: req.body.description,
+      actorUserId: req.body.actorUserId,
+    });
 
-  if (event.riskScore >= 85 && event.actorUserId) {
-    await User.updateOne({ _id: event.actorUserId }, { $set: { walletFrozen: true, accountStatus: 'blocked' } });
-    event.autoFrozen = true;
-    await event.save();
+    if (event.riskScore >= 85 && event.actorUserId) {
+      await User.updateOne({ _id: event.actorUserId }, { $set: { walletFrozen: true, accountStatus: 'blocked' } });
+      event.autoFrozen = true;
+      await event.save();
+    }
+
+    return res.status(201).json({ event });
+  } catch (error) {
+    console.error('Fraud event create error:', error.message);
+    return res.status(500).json({ error: 'Failed to create fraud event' });
   }
-
-  return res.status(201).json({ event });
 });
 
 router.get('/fraud/events', async (req, res) => {
-  const events = await FraudEvent.find({}).sort({ createdAt: -1 }).limit(300);
-  return res.json({ events });
+  try {
+    const events = await FraudEvent.find({}).sort({ createdAt: -1 }).limit(300);
+    return res.json({ events });
+  } catch (error) {
+    console.error('Fraud events list error:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch fraud events' });
+  }
 });
 
 router.post('/automation/rules', [
@@ -743,16 +905,28 @@ router.post('/automation/rules', [
   body('action.type').isIn(['send-alert', 'suggest-price-increase', 'increase-commission', 'freeze-account', 'custom']),
 ], async (req, res) => {
   if (!ensureValidRequest(req, res)) return;
-  const rule = await AutomationRule.create({
-    ...req.body,
-    createdBy: req.user.id,
-  });
-  return res.status(201).json({ rule });
+  try {
+    const rule = await AutomationRule.create({
+      name: req.body.name,
+      trigger: req.body.trigger,
+      action: req.body.action,
+      createdBy: req.user.id,
+    });
+    return res.status(201).json({ rule });
+  } catch (error) {
+    console.error('Automation rule create error:', error.message);
+    return res.status(500).json({ error: 'Failed to create automation rule' });
+  }
 });
 
 router.get('/automation/rules', async (req, res) => {
-  const rules = await AutomationRule.find({}).sort({ createdAt: -1 });
-  return res.json({ rules });
+  try {
+    const rules = await AutomationRule.find({}).sort({ createdAt: -1 });
+    return res.json({ rules });
+  } catch (error) {
+    console.error('Automation rules list error:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch automation rules' });
+  }
 });
 
 router.post('/ai/decision-logs', [
@@ -763,72 +937,106 @@ router.post('/ai/decision-logs', [
   body('explanation').isString().isLength({ min: 8, max: 2000 }),
 ], async (req, res) => {
   if (!ensureValidRequest(req, res)) return;
-  const log = await AiDecisionLog.create(req.body);
-  return res.status(201).json({ log });
+  try {
+    const log = await AiDecisionLog.create({
+      modelKey: req.body.modelKey,
+      decisionType: req.body.decisionType,
+      input: req.body.input,
+      output: req.body.output,
+      explanation: req.body.explanation,
+    });
+    return res.status(201).json({ log });
+  } catch (error) {
+    console.error('AI decision log create error:', error.message);
+    return res.status(500).json({ error: 'Failed to create AI decision log' });
+  }
 });
 
 router.patch('/ai/decision-logs/:id/review', [
   body('approvedByAdmin').isBoolean(),
 ], async (req, res) => {
   if (!ensureValidRequest(req, res)) return;
-  const log = await AiDecisionLog.findByIdAndUpdate(req.params.id, {
-    $set: {
-      approvedByAdmin: req.body.approvedByAdmin,
-      reviewedBy: req.user.id,
-      reviewedAt: new Date(),
-    },
-  }, { new: true });
-  if (!log) return res.status(404).json({ error: 'AI decision not found' });
-  return res.json({ log });
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid log ID' });
+    }
+    const log = await AiDecisionLog.findByIdAndUpdate(req.params.id, {
+      $set: {
+        approvedByAdmin: req.body.approvedByAdmin,
+        reviewedBy: req.user.id,
+        reviewedAt: new Date(),
+      },
+    }, { new: true });
+    if (!log) return res.status(404).json({ error: 'AI decision not found' });
+    return res.json({ log });
+  } catch (error) {
+    console.error('AI decision log review error:', error.message);
+    return res.status(500).json({ error: 'Failed to review AI decision log' });
+  }
 });
 
 router.get('/ai/decision-logs', async (req, res) => {
-  const logs = await AiDecisionLog.find({}).sort({ createdAt: -1 }).limit(300);
-  return res.json({ logs });
+  try {
+    const logs = await AiDecisionLog.find({}).sort({ createdAt: -1 }).limit(300);
+    return res.json({ logs });
+  } catch (error) {
+    console.error('AI decision logs list error:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch AI decision logs' });
+  }
 });
 
 router.get('/analytics/control-tower', async (req, res) => {
-  const [
-    users,
-    loads,
-    payments,
-    fraudOpen,
-    routes,
-  ] = await Promise.all([
-    User.aggregate([{ $group: { _id: '$role', count: { $sum: 1 } } }]),
-    Load.aggregate([
-      { $group: { _id: '$status', count: { $sum: 1 } } },
-    ]),
-    Payment.aggregate([
-      { $group: { _id: '$status', amount: { $sum: '$amount' }, count: { $sum: 1 } } },
-    ]),
-    FraudEvent.countDocuments({ resolved: false }),
-    Load.aggregate([
-      {
-        $group: {
-          _id: { origin: '$origin', destination: '$destination' },
-          trips: { $sum: 1 },
-          freight: { $sum: { $ifNull: ['$freightPrice', 0] } },
+  try {
+    const [
+      users,
+      loads,
+      payments,
+      fraudOpen,
+      routes,
+    ] = await Promise.all([
+      User.aggregate([{ $group: { _id: '$role', count: { $sum: 1 } } }]),
+      Load.aggregate([
+        { $group: { _id: '$status', count: { $sum: 1 } } },
+      ]),
+      Payment.aggregate([
+        { $group: { _id: '$status', amount: { $sum: '$amount' }, count: { $sum: 1 } } },
+      ]),
+      FraudEvent.countDocuments({ resolved: false }),
+      Load.aggregate([
+        {
+          $group: {
+            _id: { origin: '$origin', destination: '$destination' },
+            trips: { $sum: 1 },
+            freight: { $sum: { $ifNull: ['$freightPrice', 0] } },
+          },
         },
-      },
-      { $sort: { trips: -1 } },
-      { $limit: 20 },
-    ]),
-  ]);
+        { $sort: { trips: -1 } },
+        { $limit: 20 },
+      ]),
+    ]);
 
-  return res.json({
-    usersByRole: users,
-    loadStatus: loads,
-    paymentStatus: payments,
-    openFraudAlerts: fraudOpen,
-    topRoutes: routes,
-  });
+    return res.json({
+      usersByRole: users,
+      loadStatus: loads,
+      paymentStatus: payments,
+      openFraudAlerts: fraudOpen,
+      topRoutes: routes,
+    });
+  } catch (error) {
+    console.error('Analytics control-tower error:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch analytics' });
+  }
 });
 
 router.get('/audit/actions', async (req, res) => {
-  const limit = Math.min(parseInt(req.query.limit || '150', 10), 400);
-  const logs = await AuditLog.find({ userRole: 'admin' }).sort({ createdAt: -1 }).limit(limit);
-  return res.json({ logs });
+  try {
+    const limit = Math.min(parseInt(req.query.limit || '150', 10), 400);
+    const logs = await AuditLog.find({ userRole: 'admin' }).sort({ createdAt: -1 }).limit(limit);
+    return res.json({ logs });
+  } catch (error) {
+    console.error('Audit actions list error:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch audit actions' });
+  }
 });
 
 // ── Admin GST Invoice Visibility ──────────────────────────────────────────────

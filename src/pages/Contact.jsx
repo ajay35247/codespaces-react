@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { buildApiUrl } from '../utils/api';
 
 export function Contact() {
-  const [form, setForm] = useState({ name: '', email: '', message: '' });
+  const [form, setForm] = useState({ name: '', email: '', subject: '', message: '' });
   const [status, setStatus] = useState(null);
 
   const handleChange = (e) => {
@@ -21,7 +21,7 @@ export function Contact() {
       });
       if (!response.ok) throw new Error('Submission failed');
       setStatus('submitted');
-      setForm({ name: '', email: '', message: '' });
+      setForm({ name: '', email: '', subject: '', message: '' });
     } catch (error) {
       setStatus('error');
     }
@@ -52,6 +52,17 @@ export function Contact() {
               type="email"
               name="email"
               value={form.email}
+              onChange={handleChange}
+              required
+              className="mt-3 w-full rounded-3xl border border-slate-800 bg-slate-900 px-4 py-3 text-white outline-none focus:ring-2 focus:ring-sky-500"
+            />
+          </label>
+          <label className="block text-sm font-medium text-slate-200">
+            Subject
+            <input
+              type="text"
+              name="subject"
+              value={form.subject}
               onChange={handleChange}
               required
               className="mt-3 w-full rounded-3xl border border-slate-800 bg-slate-900 px-4 py-3 text-white outline-none focus:ring-2 focus:ring-sky-500"

@@ -30,10 +30,26 @@ export function AppRoutes() {
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/verify-email/:token" element={<VerifyEmail />} />
-      <Route path="/tracking" element={<Tracking />} />
-      <Route path="/gst" element={<GstBilling />} />
-      <Route path="/payment" element={<Payment />} />
-      <Route path="/subscription" element={<Subscription />} />
+      <Route path="/tracking" element={
+        <ProtectedRoute allowedRoles={['shipper', 'driver', 'fleet-manager', 'broker']}>
+          <Tracking />
+        </ProtectedRoute>
+      } />
+      <Route path="/gst" element={
+        <ProtectedRoute allowedRoles={['shipper', 'fleet-manager', 'broker']}>
+          <GstBilling />
+        </ProtectedRoute>
+      } />
+      <Route path="/payment" element={
+        <ProtectedRoute allowedRoles={['shipper', 'driver', 'fleet-manager', 'broker']}>
+          <Payment />
+        </ProtectedRoute>
+      } />
+      <Route path="/subscription" element={
+        <ProtectedRoute allowedRoles={['shipper', 'driver', 'fleet-manager', 'broker']}>
+          <Subscription />
+        </ProtectedRoute>
+      } />
       <Route path="/contact" element={<Contact />} />
       <Route path="/privacy" element={<PrivacyPolicy />} />
       <Route path="/terms" element={<Terms />} />

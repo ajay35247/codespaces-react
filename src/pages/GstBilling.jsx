@@ -96,19 +96,19 @@ export function GstBilling() {
                 </tr>
               ) : (
                 invoices.map((invoice) => (
-                  <tr key={invoice.id} className="hover:bg-slate-900/80">
-                    <td className="px-6 py-4 text-sm text-white">{invoice.id}</td>
+                  <tr key={invoice._id} className="hover:bg-slate-900/80">
+                    <td className="px-6 py-4 text-sm text-white">{invoice.invoiceNumber || invoice._id}</td>
                     <td className="px-6 py-4 text-sm text-slate-200">{invoice.shipper}</td>
                     <td className="px-6 py-4 text-sm text-slate-200">₹{invoice.value.toLocaleString('en-IN')}</td>
                     <td className="px-6 py-4 text-sm text-slate-200">₹{invoice.cgst.toLocaleString('en-IN')} + ₹{invoice.sgst.toLocaleString('en-IN')} + ₹{invoice.igst.toLocaleString('en-IN')}</td>
                     <td className="px-6 py-4 text-sm text-emerald-300">{invoice.status}</td>
                     <td className="px-6 py-4 text-sm">
                       <button
-                        onClick={() => handleDownloadPDF(invoice.id)}
-                        disabled={downloading === invoice.id}
+                        onClick={() => handleDownloadPDF(invoice._id)}
+                        disabled={downloading === invoice._id}
                         className="rounded-full bg-orange-500 px-4 py-2 text-white transition hover:bg-orange-400 disabled:opacity-50"
                       >
-                        {downloading === invoice.id ? 'Downloading...' : 'Download'}
+                        {downloading === invoice._id ? 'Downloading...' : 'Download'}
                       </button>
                     </td>
                   </tr>

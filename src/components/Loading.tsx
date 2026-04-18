@@ -1,5 +1,5 @@
 import React from 'react';
-import { motion } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
 
 interface LoadingSpinnerProps {
   size?: 'sm' | 'md' | 'lg';
@@ -53,19 +53,21 @@ interface LoadingOverlayProps {
 }
 
 const LoadingOverlay: React.FC<LoadingOverlayProps> = ({ isVisible, message, children }) => {
-  if (!isVisible) return <>{children}</>;
-
   return (
     <div className="relative">
       {children}
-      <motion.div
-        className="absolute inset-0 bg-white bg-opacity-75 flex items-center justify-center z-50"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-      >
-        <LoadingSpinner message={message} />
-      </motion.div>
+      <AnimatePresence>
+        {isVisible && (
+          <motion.div
+            className="absolute inset-0 bg-white bg-opacity-75 flex items-center justify-center z-50"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <LoadingSpinner message={message} />
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

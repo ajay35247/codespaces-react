@@ -100,6 +100,10 @@ router.post(
         attempts += 1;
       } while (attempts < 5);
 
+      if (attempts >= 5) {
+        return res.status(503).json({ error: 'Unable to generate a unique invoice number. Please try again.' });
+      }
+
       const invoice = await GstInvoice.create({
         invoiceNumber,
         userId: req.user.id,

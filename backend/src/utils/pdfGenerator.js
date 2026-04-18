@@ -12,6 +12,7 @@ export function generateGSTInvoice(invoice, outputPath) {
       const doc = new PDFDocument({ size: 'A4', margin: 40 });
       const stream = fs.createWriteStream(outputPath);
 
+      stream.on('error', reject);
       doc.pipe(stream);
 
       doc.fontSize(20).font('Helvetica-Bold').text('GST Invoice', 50, 50);

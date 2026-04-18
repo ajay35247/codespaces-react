@@ -60,6 +60,11 @@ UserSchema.index(
   }
 );
 
+// Sparse indexes so lookups during token flows are fast and don't collide on
+// documents where the field is undefined/null.
+UserSchema.index({ verificationToken: 1 }, { sparse: true });
+UserSchema.index({ resetToken: 1 }, { sparse: true });
+
 UserSchema.pre('save', async function (next) {
   if (!this.isModified('password')) {
     return next();

@@ -26,7 +26,7 @@ import { auditLogger } from './middleware/auditLogger.js';
 import { enforceTrustedOriginForCookieAuth } from './middleware/csrfProtection.js';
 import { getSocketAccessToken, verifyAccessToken } from './middleware/authorize.js';
 import { ensureAdminAccount } from './services/securityBootstrap.js';
-import { getAdminPathHash, getAdminPathSegment } from './middleware/adminSecurity.js';
+import { getAdminPathSegment } from './middleware/adminSecurity.js';
 
 promClient.collectDefaultMetrics({ timeout: 5000 });
 import authRoutes from './routes/auth.js';
@@ -249,11 +249,20 @@ const createApp = async () => {
       uptime: process.uptime(),
       mongoState: mongoose.connection.readyState,
       redisConnected: redisClient?.isOpen ? 'connected' : 'disconnected',
-      adminPathHash: getAdminPathHash(),
     });
   });
 
   app.get('/metrics', async (req, res) => {
+    // Require a bearer token to access metrics — prevents unauthenticated
+    // reconnaissance via Prometheus scrape endpoint.
+    const metricsToken = process.env.METRICS_SECRET_TOKEN;
+    if (metricsToken) {
+      const authHeader = req.headers.authorization || '';
+      const provided = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+      if (!provided || provided !== metricsToken) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+    }
     try {
       res.set('Content-Type', promClient.register.contentType);
       res.end(await promClient.register.metrics());

@@ -1,6 +1,14 @@
 import { ApiResponse } from '../../../shared/types';
 import { getApiErrorMessage, getApiOrigin, parseApiBody } from '../utils/api';
 
+const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+function getCsrfToken(): string {
+  if (typeof document === 'undefined') return '';
+  const match = document.cookie.match(/(?:^|;\s*)csrf-token=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : '';
+}
+
 class ApiError extends Error {
   constructor(public status: number, message: string, public data?: any) {
     super(message);
@@ -24,7 +32,7 @@ class ApiService {
     const res = await fetch(`${this.baseURL}/auth/refresh-token`, {
       method: 'POST',
       credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
     });
     if (!res.ok) throw new Error('Refresh failed');
     await parseApiBody(res);
@@ -36,9 +44,14 @@ class ApiService {
     retryCount = 0
   ): Promise<T> {
     const url = `${this.baseURL}${endpoint}`;
+    const method = (options.method || 'GET').toUpperCase();
+    const csrfHeaders: Record<string, string> = MUTATING_METHODS.has(method)
+      ? { 'X-CSRF-Token': getCsrfToken() }
+      : {};
     const config: RequestInit = {
       headers: {
         'Content-Type': 'application/json',
+        ...csrfHeaders,
         ...options.headers,
       },
       ...options,

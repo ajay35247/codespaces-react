@@ -29,7 +29,7 @@ export function Tracking() {
       .catch(() => {});
   }, [shipments]);
 
-  const routePolyline = useMemo(() => routePath.map((point) => ({ lat: point.lat, lng: point.lon })), [routePath]);
+  const routePolyline = useMemo(() => routePath.map((point) => ({ lat: point.lat, lng: point.lng })), [routePath]);
   const selectedShipment = shipments[0];
   const center = selectedShipment ? { lat: selectedShipment.lat, lng: selectedShipment.lon } : defaultCenter;
 

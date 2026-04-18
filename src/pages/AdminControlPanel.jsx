@@ -2,13 +2,27 @@ import { useEffect, useMemo, useState } from 'react';
 import { buildApiUrl, getApiErrorMessage, parseApiBody } from '../utils/api';
 
 const ADMIN_API_SEGMENT = import.meta.env.VITE_ADMIN_API_SEGMENT || import.meta.env.VITE_ADMIN_PRIVATE_PATH_SEGMENT || '_ops_console_f91b7c';
+
+const CSRF_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+function getAdminCsrfToken() {
+  if (typeof document === 'undefined') return '';
+  const match = document.cookie.match(/(?:^|;\s*)csrf-token=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : '';
+}
+
 async function api(path, method = 'GET', body) {
+  const csrfHeaders = CSRF_METHODS.has(method.toUpperCase())
+    ? { 'X-CSRF-Token': getAdminCsrfToken() }
+    : {};
+
   const response = await fetch(buildApiUrl(`/${ADMIN_API_SEGMENT}${path}`), {
     method,
     credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
       'x-device-id': 'web-control-panel',
+      ...csrfHeaders,
     },
     body: body ? JSON.stringify(body) : undefined,
   });
@@ -99,7 +113,7 @@ export function AdminControlPanel() {
       setAdmin(data.admin);
       setMfaRequired(false);
       setMfaCode('');
-      await loadDashboard();
+      await loadDashboard(data.admin);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -123,8 +137,8 @@ export function AdminControlPanel() {
     }
   };
 
-  const loadDashboard = async () => {
-    if (!admin) return;
+  const loadDashboard = async (adminData) => {
+    if (!(adminData ?? admin)) return;
     setLoading(true);
     setError('');
     try {
