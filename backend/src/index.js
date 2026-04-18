@@ -131,6 +131,11 @@ const createApp = async () => {
   app.use(mongoSanitize());
   app.disable('x-powered-by');
   app.use(cookieParser());
+  // Register the CSRF / trusted-origin guard immediately after cookieParser so
+  // that every downstream route on /api is visibly protected in a single
+  // synchronous block.  This makes the middleware chain provable to static
+  // analysis tools without requiring cross-file data-flow tracing.
+  app.use('/api', enforceTrustedOriginForCookieAuth);
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
   app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'tiny'));
@@ -184,8 +189,6 @@ const createApp = async () => {
 
   await connectDatabase();
   await ensureAdminAccount();
-
-  app.use('/api', enforceTrustedOriginForCookieAuth);
 
   app.use((req, res, next) => {
     if (req.path === '/api/health') {
