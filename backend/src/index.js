@@ -39,6 +39,7 @@ import brokerRoutes from './routes/broker.js';
 import fleetRoutes from './routes/fleet.js';
 import supportRoutes from './routes/support.js';
 import adminRoutes from './routes/admin.js';
+import dashboardRoutes from './routes/dashboard.js';
 
 const httpRequestsTotal = new promClient.Counter({
   name: 'speedy_trucks_http_requests_total',
@@ -281,6 +282,7 @@ const createApp = async () => {
   app.use('/api/gst', gstRoutes);
   app.use('/api/broker', brokerRoutes);
   app.use('/api/fleet', fleetRoutes);
+  app.use('/api/dashboard', dashboardRoutes);
 
   app.use((req, res) => {
     res.status(404).json({ error: 'API endpoint not found' });
