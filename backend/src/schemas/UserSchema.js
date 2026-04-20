@@ -46,12 +46,12 @@ const UserSchema = new mongoose.Schema({
   verificationToken: { type: String },
   resetToken: { type: String },
   resetTokenExpires: { type: Date },
-  refreshTokens: [{ type: String }],  // stored hashed
+  refreshTokens: [{ type: String }],
   trucks: [TruckSchema],
   createdAt: { type: Date, default: Date.now },
 });
 
-// Enforce exactly one admin role document at database level.
+// Only one admin allowed — partial unique index so it only applies to admin docs
 UserSchema.index(
   { role: 1 },
   {

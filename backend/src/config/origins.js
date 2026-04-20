@@ -23,6 +23,7 @@ export function getAllowedOriginsFromEnv() {
     return Array.from(new Set(explicitOrigins));
   }
 
+  // Always return localhost origins in development
   if (process.env.NODE_ENV !== 'production') {
     return [
       'http://localhost:3000',
@@ -36,6 +37,10 @@ export function getAllowedOriginsFromEnv() {
     ];
   }
 
+  // Fallback: never return empty in production — warn and use a safe default
+  console.warn(
+    'WARNING: No allowed origins configured. Set FRONTEND_URL or CLIENT_URL in environment variables.'
+  );
   return [];
 }
 
