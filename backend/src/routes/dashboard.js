@@ -102,7 +102,6 @@ router.get('/stats', async (req, res) => {
       }
 
       case 'fleet-manager': {
-        const staleThreshold = new Date(Date.now() - 10 * 60 * 1000);
         const [vehicleStats, loadStats, maintenanceCount] = await Promise.all([
           mongoose.connection.db.collection('vehicles').aggregate([
             { $match: { ownerId: String(userId) } },

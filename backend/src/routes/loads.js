@@ -160,8 +160,14 @@ router.get(
 
       let filter;
       if (req.user.role === 'driver') {
+        if (!mongoose.Types.ObjectId.isValid(req.user.id)) {
+          return res.status(400).json({ error: 'Invalid user ID' });
+        }
         filter = { assignedDriver: new mongoose.Types.ObjectId(req.user.id) };
       } else {
+        if (!mongoose.Types.ObjectId.isValid(req.user.id)) {
+          return res.status(400).json({ error: 'Invalid user ID' });
+        }
         filter = { postedBy: new mongoose.Types.ObjectId(req.user.id) };
       }
 

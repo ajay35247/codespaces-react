@@ -137,6 +137,12 @@ export function DriverDashboard() {
               {tab === 'assigned' ? 'My Assigned Loads' : 'Available Loads'}
             </button>
           ))}
+          <a
+            href="/tolls"
+            className="ml-auto rounded-full border border-orange-400/50 px-5 py-2 text-sm font-semibold text-orange-300 transition hover:bg-orange-900/30"
+          >
+            ⚡ Toll Tax &amp; FASTag →
+          </a>
         </div>
 
         <div className="mt-6 space-y-4">

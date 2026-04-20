@@ -15,11 +15,13 @@ const ROLE_ACTIONS = {
   driver: [
     { label: 'View My Trips', path: '/driver' },
     { label: 'Available Loads', path: '/driver' },
+    { label: 'Toll Tax & FASTag', path: '/tolls' },
     { label: 'GPS Tracking', path: '/tracking' },
   ],
   'fleet-manager': [
     { label: 'Fleet Operations', path: '/fleet' },
     { label: 'Register Vehicle', path: '/fleet' },
+    { label: 'Toll Tax & FASTag', path: '/tolls' },
     { label: 'GPS Tracking', path: '/tracking' },
     { label: 'GST Billing', path: '/gst' },
   ],
