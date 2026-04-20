@@ -42,19 +42,19 @@ class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundarySta
 
 const DefaultErrorFallback: React.FC<{ error?: Error; resetError: () => void }> = ({ error, resetError }) => (
   <motion.div
-    className="min-h-screen flex items-center justify-center bg-red-50"
+    className="min-h-screen flex items-center justify-center bg-slate-950"
     initial={{ opacity: 0 }}
     animate={{ opacity: 1 }}
   >
-    <div className="text-center p-8 bg-white rounded-lg shadow-lg max-w-md">
+    <div className="text-center p-8 rounded-[2rem] border border-white/10 bg-slate-900/90 shadow-2xl shadow-slate-900/40 max-w-md">
       <div className="text-6xl mb-4">⚠️</div>
-      <h2 className="text-2xl font-bold text-red-600 mb-4">Something went wrong</h2>
-      <p className="text-gray-600 mb-6">
+      <h2 className="text-2xl font-bold text-orange-300 mb-4">Something went wrong</h2>
+      <p className="text-slate-300 mb-6">
         {error?.message || 'An unexpected error occurred. Please try again.'}
       </p>
       <button
         onClick={resetError}
-        className="bg-red-600 text-white px-6 py-2 rounded-lg hover:bg-red-700 transition-colors"
+        className="rounded-full bg-orange-500 text-slate-950 px-6 py-2.5 text-sm font-semibold transition hover:bg-orange-400"
       >
         Try Again
       </button>

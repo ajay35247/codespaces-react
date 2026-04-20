@@ -74,7 +74,8 @@ export function ResetPassword() {
           </label>
           <button
             type="submit"
-            className="rounded-full bg-orange-500 px-5 py-3 text-sm font-semibold uppercase tracking-[0.18em] text-slate-950 transition hover:bg-orange-400"
+            disabled={status === 'sending'}
+            className="rounded-full bg-orange-500 px-5 py-3 text-sm font-semibold uppercase tracking-[0.18em] text-slate-950 transition hover:bg-orange-400 disabled:opacity-50"
           >
             {status === 'sending' ? 'Resetting password...' : 'Reset password'}
           </button>

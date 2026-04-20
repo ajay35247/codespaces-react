@@ -272,11 +272,11 @@ export function GstBilling() {
                   <tr key={invoice._id} className="hover:bg-slate-900/80">
                     <td className="px-6 py-4 text-sm text-white">{invoice.invoiceNumber || invoice._id}</td>
                     <td className="px-6 py-4 text-sm text-slate-200">{invoice.shipper}</td>
-                    <td className="px-6 py-4 text-sm text-slate-200">₹{invoice.value.toLocaleString('en-IN')}</td>
+                    <td className="px-6 py-4 text-sm text-slate-200">₹{(invoice.value ?? 0).toLocaleString('en-IN')}</td>
                     <td className="px-6 py-4 text-sm text-slate-200">
-                      {invoice.igst > 0
-                        ? `IGST: ₹${invoice.igst.toLocaleString('en-IN')}`
-                        : `CGST: ₹${invoice.cgst.toLocaleString('en-IN')} + SGST: ₹${invoice.sgst.toLocaleString('en-IN')}`}
+                      {(invoice.igst ?? 0) > 0
+                        ? `IGST: ₹${(invoice.igst ?? 0).toLocaleString('en-IN')}`
+                        : `CGST: ₹${(invoice.cgst ?? 0).toLocaleString('en-IN')} + SGST: ₹${(invoice.sgst ?? 0).toLocaleString('en-IN')}`}
                     </td>
                     <td className="px-6 py-4 text-sm text-emerald-300">{invoice.status}</td>
                     <td className="px-6 py-4 text-sm">

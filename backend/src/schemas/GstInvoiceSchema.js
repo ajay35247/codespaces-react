@@ -4,7 +4,7 @@ const GstInvoiceSchema = new mongoose.Schema(
   {
     invoiceNumber: { type: String, required: true, unique: true, index: true },
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
-    loadId: { type: mongoose.Schema.Types.ObjectId, ref: 'Load', index: true },
+    loadId: { type: String, index: true },
     shipper: { type: String, required: true, trim: true },
     shipperGstin: { type: String, trim: true },
     date: { type: Date, required: true, default: Date.now },
