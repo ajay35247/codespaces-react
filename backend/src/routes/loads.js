@@ -66,19 +66,6 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.get('/:loadId', async (req, res) => {
-  try {
-    const load = await Load.findOne({ loadId: req.params.loadId }).lean();
-    if (!load) {
-      return res.status(404).json({ error: 'Load not found' });
-    }
-    return res.json({ load });
-  } catch (error) {
-    console.error('Load fetch error:', error.message);
-    return res.status(500).json({ error: 'Failed to fetch load' });
-  }
-});
-
 router.post(
   '/',
   verifyJWT,
@@ -146,7 +133,9 @@ router.post(
   }
 );
 
-// ── Own loads (shipper / fleet-manager) ──────────────────────────────────────
+// ── Own loads (shipper / fleet-manager / driver) ─────────────────────────────
+// NOTE: /mine and /available MUST be declared before /:loadId so Express does
+// not treat the literal string "mine" or "available" as a loadId parameter.
 
 router.get(
   '/mine',
@@ -224,6 +213,21 @@ router.get(
     }
   }
 );
+
+// ── Get single load by ID ─────────────────────────────────────────────────────
+
+router.get('/:loadId', async (req, res) => {
+  try {
+    const load = await Load.findOne({ loadId: req.params.loadId }).lean();
+    if (!load) {
+      return res.status(404).json({ error: 'Load not found' });
+    }
+    return res.json({ load });
+  } catch (error) {
+    console.error('Load fetch error:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch load' });
+  }
+});
 
 // ── Update load status ────────────────────────────────────────────────────────
 

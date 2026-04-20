@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useSelector } from 'react-redux';
-import { apiRequest, buildApiUrl } from '../utils/api';
+import { apiRequest } from '../utils/api';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

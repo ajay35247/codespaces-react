@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import mongoose from 'mongoose';
 import { Router } from 'express';
 import Razorpay from 'razorpay';
 import { verifyJWT, requireRole } from '../middleware/authorize.js';
@@ -312,11 +313,11 @@ router.get('/summary', async (req, res) => {
     const [wallet, monthlyStats, allTimeStats] = await Promise.all([
       FasTagWallet.findOne({ userId: req.user.id }).lean(),
       TollTransaction.aggregate([
-        { $match: { userId: req.user.id, crossedAt: { $gte: startOfMonth }, status: 'success' } },
+        { $match: { userId: new mongoose.Types.ObjectId(req.user.id), crossedAt: { $gte: startOfMonth }, status: 'success' } },
         { $group: { _id: null, totalAmount: { $sum: '$amount' }, count: { $sum: 1 } } },
       ]),
       TollTransaction.aggregate([
-        { $match: { userId: req.user.id, status: 'success' } },
+        { $match: { userId: new mongoose.Types.ObjectId(req.user.id), status: 'success' } },
         { $group: { _id: null, totalAmount: { $sum: '$amount' }, count: { $sum: 1 } } },
       ]),
     ]);
