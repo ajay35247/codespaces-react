@@ -16,6 +16,7 @@ const priceHistorySchema = new mongoose.Schema(
     newPrice: { type: Number, required: true },
     effectiveFrom: { type: Date, required: true },
     rollbackFromVersion: { type: Number },
+    pricingVersionAtChange: { type: Number },
     changedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     changeType: { type: String, enum: ['manual-update', 'scheduled-change', 'rollback'], required: true },
   },

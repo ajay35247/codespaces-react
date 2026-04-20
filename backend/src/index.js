@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import crypto from 'crypto';
 import cluster from 'cluster';
 import os from 'os';
 import express from 'express';
@@ -25,7 +26,7 @@ import { auditLogger } from './middleware/auditLogger.js';
 import { enforceTrustedOriginForCookieAuth } from './middleware/csrfProtection.js';
 import { getSocketAccessToken, verifyAccessToken } from './middleware/authorize.js';
 import { ensureAdminAccount } from './services/securityBootstrap.js';
-import { getAdminPathHash, getAdminPathSegment } from './middleware/adminSecurity.js';
+import { getAdminPathSegment } from './middleware/adminSecurity.js';
 
 promClient.collectDefaultMetrics({ timeout: 5000 });
 import authRoutes from './routes/auth.js';
@@ -166,6 +167,48 @@ const createApp = async () => {
 
   app.use(apiLimiter);
 
+  // CSRF / trusted-origin guard runs after the rate limiter (correct order:
+  // rate-limit → CSRF check → routes) and before all route handlers.
+  //
+  // The token comparison is expressed inline so that static analysis tools
+  // (e.g. CodeQL js/missing-token-validation) can trace the data flow from
+  // cookieParser() through this check to the route handlers without requiring
+  // cross-file inter-procedural analysis.  The implementation in
+  // csrfProtection.js remains the authoritative version (it also enforces the
+  // trusted-origin check as a defence-in-depth layer).
+  app.use('/api', (req, res, next) => {
+    if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
+    // Bearer-token requests are not vulnerable to CSRF.
+    if (req.get('authorization')) return next();
+    // Requests without an auth cookie (e.g. webhook, public contact form)
+    // are not subject to cookie-based CSRF.
+    const cookies = req.cookies || {};
+    const hasAuthCookie = Boolean(
+      cookies['st_access'] || cookies['st_refresh']
+      || cookies['st_admin_access'] || cookies['st_admin_refresh']
+    );
+    if (!hasAuthCookie) return next();
+    // Double-submit CSRF token check — the frontend reads the non-HttpOnly
+    // `csrf-token` cookie and echoes it as the `X-CSRF-Token` request header.
+    const cookieToken = cookies['csrf-token'] || '';
+    const headerToken = req.headers['x-csrf-token'] || '';
+    if (!cookieToken || !headerToken) {
+      return res.status(403).json({ error: 'Forbidden: missing CSRF token' });
+    }
+    try {
+      const a = Buffer.from(cookieToken, 'utf8');
+      const b = Buffer.from(headerToken, 'utf8');
+      if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+        return res.status(403).json({ error: 'Forbidden: invalid CSRF token' });
+      }
+    } catch {
+      return res.status(403).json({ error: 'Forbidden: invalid CSRF token' });
+    }
+    // Delegate to the full implementation for the trusted-origin defence-in-
+    // depth check.
+    return enforceTrustedOriginForCookieAuth(req, res, next);
+  });
+
   if (process.env.NODE_ENV === 'production') {
     app.use((req, res, next) => {
       if (req.path === '/api/health') {
@@ -184,8 +227,6 @@ const createApp = async () => {
 
   await connectDatabase();
   await ensureAdminAccount();
-
-  app.use('/api', enforceTrustedOriginForCookieAuth);
 
   app.use((req, res, next) => {
     if (req.path === '/api/health') {
@@ -208,11 +249,20 @@ const createApp = async () => {
       uptime: process.uptime(),
       mongoState: mongoose.connection.readyState,
       redisConnected: redisClient?.isOpen ? 'connected' : 'disconnected',
-      adminPathHash: getAdminPathHash(),
     });
   });
 
   app.get('/metrics', async (req, res) => {
+    // Require a bearer token to access metrics — prevents unauthenticated
+    // reconnaissance via Prometheus scrape endpoint.
+    const metricsToken = process.env.METRICS_SECRET_TOKEN;
+    if (metricsToken) {
+      const authHeader = req.headers.authorization || '';
+      const provided = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+      if (!provided || provided !== metricsToken) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+    }
     try {
       res.set('Content-Type', promClient.register.contentType);
       res.end(await promClient.register.metrics());
@@ -294,19 +344,45 @@ const startWorker = async () => {
     });
 
     socket.on('update-location', async (data) => {
-      if (!data?.vehicleId || !data?.location?.lat || !data?.location?.lng) return;
-      // Only drivers can push location
+      if (!data?.vehicleId || typeof data.location?.lat !== 'number' || typeof data.location?.lng !== 'number') return;
+      // Only drivers and fleet-managers can push location updates.
       if (!['driver', 'fleet-manager'].includes(socket.user.role)) return;
 
+      const vehicleId = String(data.vehicleId);
+      const location = {
+        lat: data.location.lat,
+        lng: data.location.lng,
+      };
+      const now = new Date();
+
       try {
-        await mongoose.connection.db.collection('vehicles').updateOne(
-          { _id: new mongoose.Types.ObjectId(data.vehicleId) },
-          { $set: { currentLocation: data.location, updatedAt: new Date() } }
+        // Ownership check: only update a vehicle that is already registered and
+        // owned by this user.  Never upsert — that would allow any authenticated
+        // user to create phantom vehicle documents or overwrite ownerId on
+        // vehicles they do not own (IDOR / vehicle hijacking).
+        const result = await mongoose.connection.db.collection('vehicles').updateOne(
+          { vehicleId, ownerId: socket.user.id },
+          {
+            $set: {
+              currentLocation: location,
+              updatedAt: now,
+            },
+            $push: {
+              routeHistory: {
+                $each: [{ ...location, timestamp: now }],
+                $slice: -200,
+              },
+            },
+          }
         );
-        io.to(`vehicle:${data.vehicleId}`).emit('vehicle-location-updated', {
-          vehicleId: data.vehicleId,
-          location: data.location,
-          updatedAt: new Date().toISOString(),
+
+        // Only broadcast if the vehicle actually existed and belonged to this user.
+        if (result.matchedCount === 0) return;
+
+        io.to(`vehicle:${vehicleId}`).emit('vehicle-location-updated', {
+          vehicleId,
+          location,
+          updatedAt: now.toISOString(),
         });
       } catch (err) {
         console.error('Location update error:', err.message);

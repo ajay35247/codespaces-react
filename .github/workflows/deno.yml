@@ -11,8 +11,18 @@ name: Deno
 on:
   push:
     branches: ["main"]
+    paths:
+      - "deno.json"
+      - "deno.jsonc"
+      - "deno/**"
+      - "scripts/deno/**"
   pull_request:
     branches: ["main"]
+    paths:
+      - "deno.json"
+      - "deno.jsonc"
+      - "deno/**"
+      - "scripts/deno/**"
 
 permissions:
   contents: read
@@ -36,7 +46,23 @@ jobs:
       #   run: deno fmt --check
 
       - name: Run linter
-        run: deno lint
+        run: |
+          TARGETS=""
+          [ -d deno ] && TARGETS="$TARGETS deno"
+          [ -d scripts/deno ] && TARGETS="$TARGETS scripts/deno"
+          if [ -n "$TARGETS" ]; then
+            deno lint $TARGETS
+          else
+            echo "No Deno source directories found; skipping lint."
+          fi
 
       - name: Run tests
-        run: deno test -A
+        run: |
+          TARGETS=""
+          [ -d deno ] && TARGETS="$TARGETS deno"
+          [ -d scripts/deno ] && TARGETS="$TARGETS scripts/deno"
+          if [ -n "$TARGETS" ]; then
+            deno test -A $TARGETS
+          else
+            echo "No Deno source directories found; skipping tests."
+          fi

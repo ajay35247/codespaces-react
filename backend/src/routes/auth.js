@@ -40,7 +40,7 @@ const authLimiter = rateLimit({
   message: { error: 'Too many auth requests, please try again later.' },
 });
 
-router.use(['/login', '/register', '/request-password-reset', '/refresh-token', '/reset-password'], authLimiter);
+router.use(['/login', '/register', '/request-password-reset', '/reset-password'], authLimiter);
 
 function ensureValidRequest(req, res) {
   const errors = validationResult(req);
@@ -204,13 +204,15 @@ router.post('/login', [
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    user.failedLoginCount = 0;
-    user.lockUntil = undefined;
-
+    // Check email verification BEFORE resetting the lock state to prevent a
+    // locked-out user from clearing their lock counter by supplying the correct
+    // password while their email is still unverified.
     if (!user.isEmailVerified) {
-      await user.save();
       return res.status(403).json({ error: 'Please verify your email address first' });
     }
+
+    user.failedLoginCount = 0;
+    user.lockUntil = undefined;
 
     const { accessToken, refreshToken } = issueTokensForUser(user);
     await user.save();

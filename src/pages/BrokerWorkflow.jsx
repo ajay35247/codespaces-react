@@ -20,7 +20,7 @@ export function BrokerWorkflow() {
       .then(([summaryData, loadsData]) => {
         if (summaryData.error) throw new Error(summaryData.error);
         if (loadsData.error) throw new Error(loadsData.error);
-        setSummary(summaryData.brokerSummary || null);
+        setSummary(summaryData.summary || null);
         setLoads(loadsData.loads || []);
       })
       .catch((err) => setError(err.message));
@@ -42,7 +42,7 @@ export function BrokerWorkflow() {
           </div>
           <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-6">
             <p className="text-sm uppercase tracking-[0.28em] text-slate-400">Pending commissions</p>
-            <p className="mt-4 text-3xl font-semibold text-white">₹{summary?.pendingCommissions?.toLocaleString('en-IN') ?? '—'}</p>
+            <p className="mt-4 text-3xl font-semibold text-white">₹{summary?.pendingBids?.toLocaleString('en-IN') ?? '—'}</p>
           </div>
           <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-6">
             <p className="text-sm uppercase tracking-[0.28em] text-slate-400">Active contracts</p>

@@ -2,13 +2,9 @@ import Queue from 'bull';
 
 const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
 
-export const matchingQueue = new Queue('matching-queue', {
-  redis: { url: redisUrl }
-});
+export const matchingQueue = new Queue('matching-queue', redisUrl);
 
-export const notificationQueue = new Queue('notification-queue', {
-  redis: { url: redisUrl }
-});
+export const notificationQueue = new Queue('notification-queue', redisUrl);
 
 export const queueOptions = {
   removeOnComplete: true,

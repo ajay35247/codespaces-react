@@ -1,6 +1,16 @@
 import { useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { buildApiUrl } from '../utils/api';
+import { apiRequest } from '../utils/api';
+
+function getPasswordErrors(password) {
+  const errors = [];
+  if (!password || password.length < 12) errors.push('Password must be at least 12 characters.');
+  if (!/[A-Z]/.test(password)) errors.push('Password must contain an uppercase letter.');
+  if (!/[a-z]/.test(password)) errors.push('Password must contain a lowercase letter.');
+  if (!/[0-9]/.test(password)) errors.push('Password must contain a digit.');
+  if (!/[^A-Za-z0-9]/.test(password)) errors.push('Password must contain a special character.');
+  return errors;
+}
 
 export function ResetPassword() {
   const [searchParams] = useSearchParams();
@@ -9,6 +19,7 @@ export function ResetPassword() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [status, setStatus] = useState(null);
+  const [complexityErrors, setComplexityErrors] = useState([]);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -16,16 +27,16 @@ export function ResetPassword() {
       setStatus('mismatch');
       return;
     }
-
+    const errors = getPasswordErrors(password);
+    if (errors.length > 0) {
+      setComplexityErrors(errors);
+      setStatus('weak');
+      return;
+    }
+    setComplexityErrors([]);
     setStatus('sending');
     try {
-      const response = await fetch(buildApiUrl('/auth/reset-password'), {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, password }),
-      });
-      if (!response.ok) throw new Error('Reset failed');
+      await apiRequest('/auth/reset-password', { method: 'POST', body: { token, password } });
       setStatus('success');
       setTimeout(() => navigate('/login'), 1500);
     } catch (error) {
@@ -68,6 +79,7 @@ export function ResetPassword() {
             {status === 'sending' ? 'Resetting password...' : 'Reset password'}
           </button>
           {status === 'mismatch' && <p className="text-orange-300">Passwords do not match.</p>}
+          {status === 'weak' && complexityErrors.map((e) => <p key={e} className="text-orange-300">{e}</p>)}
           {status === 'success' && <p className="text-green-300">Password reset successfully. Redirecting to login...</p>}
           {status === 'error' && <p className="text-orange-300">Unable to reset password. Please try again.</p>}
         </form>

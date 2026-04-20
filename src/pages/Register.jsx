@@ -91,12 +91,14 @@ export function Register() {
       }
       return;
     }
-    if (result.payload && result.payload.message) {
-      setMessage('Registration successful. Check your inbox for a verification link before logging in.');
+    // In dev mode the server returns the user with isEmailVerified:true – navigate immediately.
+    if (result.payload?.user?.isEmailVerified) {
+      navigate(`/dashboard/${result.payload.user.role}`);
       return;
     }
-    if (result.payload && result.payload.user) {
-      navigate(`/dashboard/${result.payload.user.role}`);
+    if (result.payload?.message) {
+      setMessage('Registration successful. Check your inbox for a verification link before logging in.');
+      return;
     }
   };
 

@@ -4,7 +4,7 @@ export interface User {
   role: 'shipper' | 'driver' | 'fleet-manager' | 'broker' | 'admin';
   name: string;
   phone: string;
-  isVerified: boolean;
+  isEmailVerified: boolean;
 }
 
 export interface Vehicle {

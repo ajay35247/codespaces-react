@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { buildApiUrl } from '../utils/api';
+import { apiRequest } from '../utils/api';
 
 export function ForgotPassword() {
   const [email, setEmail] = useState('');
@@ -9,13 +9,7 @@ export function ForgotPassword() {
     event.preventDefault();
     setStatus('sending');
     try {
-      const response = await fetch(buildApiUrl('/auth/request-password-reset'), {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
-      });
-      if (!response.ok) throw new Error('Request failed');
+      await apiRequest('/auth/request-password-reset', { method: 'POST', body: { email } });
       setStatus('sent');
     } catch (error) {
       setStatus('error');

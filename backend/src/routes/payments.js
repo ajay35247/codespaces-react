@@ -5,6 +5,7 @@ import express from 'express';
 import { verifyJWT, requireRole } from '../middleware/authorize.js';
 import { requirePaymentsEnabled } from '../middleware/platformControl.js';
 import { Joi, validateBody } from '../middleware/validation.js';
+import Payment from '../schemas/PaymentSchema.js';
 
 const router = Router();
 const razorpayKeyId = process.env.RAZORPAY_KEY_ID || '';
@@ -36,12 +37,19 @@ const payoutSchema = Joi.object({
 });
 
 function secureCompareHex(expected, actual) {
-  const left = Buffer.from(String(expected || ''), 'utf8');
-  const right = Buffer.from(String(actual || ''), 'utf8');
-  if (left.length !== right.length) {
+  // Both values are SHA-256 hex strings (64 chars each).  Use 'hex' decoding
+  // so the comparison operates on the raw digest bytes, consistent with the
+  // webhook signature check above.
+  try {
+    const left = Buffer.from(String(expected || ''), 'hex');
+    const right = Buffer.from(String(actual || ''), 'hex');
+    if (left.length === 0 || left.length !== right.length) {
+      return false;
+    }
+    return crypto.timingSafeEqual(left, right);
+  } catch {
     return false;
   }
-  return crypto.timingSafeEqual(left, right);
 }
 
 // ── Fraud detection ─ in-memory sliding window per IP ──────────────────────
@@ -90,7 +98,11 @@ router.post(
       .update(req.body)
       .digest('hex');
 
-    if (!crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature))) {
+    // Use 'hex' encoding since both values are hex strings produced by createHmac().digest('hex').
+    // This guarantees equal-length buffers and correct byte-level comparison.
+    const expectedBuf = Buffer.from(expected, 'hex');
+    const signatureBuf = Buffer.from(String(signature).toLowerCase(), 'hex');
+    if (expectedBuf.length !== signatureBuf.length || !crypto.timingSafeEqual(expectedBuf, signatureBuf)) {
       return res.status(400).json({ error: 'Invalid webhook signature' });
     }
 
@@ -103,14 +115,32 @@ router.post(
 
     // Handle events
     switch (event.event) {
-      case 'payment.captured':
-        console.log('Payment captured:', event.payload.payment.entity.id);
+      case 'payment.captured': {
+        const entity = event.payload?.payment?.entity;
+        const paymentId = entity?.id ? String(entity.id) : null;
+        if (paymentId) {
+          Payment.findOneAndUpdate(
+            { razorpayPaymentId: paymentId },
+            { $set: { status: 'captured', webhookEvent: 'payment.captured' } }
+          ).catch((err) => console.warn('Webhook DB update failed:', err.message));
+        }
+        console.log('Payment captured:', paymentId);
         break;
-      case 'payment.failed':
-        console.warn('Payment failed:', event.payload.payment.entity.id);
+      }
+      case 'payment.failed': {
+        const entity = event.payload?.payment?.entity;
+        const paymentId = entity?.id ? String(entity.id) : null;
+        if (paymentId) {
+          Payment.findOneAndUpdate(
+            { razorpayPaymentId: paymentId },
+            { $set: { status: 'failed', webhookEvent: 'payment.failed' } }
+          ).catch((err) => console.warn('Webhook DB update failed:', err.message));
+        }
+        console.warn('Payment failed:', paymentId);
         break;
+      }
       case 'subscription.activated':
-        console.log('Subscription activated:', event.payload.subscription.entity.id);
+        console.log('Subscription activated:', event.payload?.subscription?.entity?.id);
         break;
       default:
         console.log('Unhandled Razorpay event:', event.event);
@@ -144,6 +174,22 @@ router.post('/subscribe', verifyJWT, requirePaymentsEnabled(), flagFraud, valida
       payment_capture: 1,
     });
 
+    // Persist order to DB so webhook events can be correlated
+    try {
+      await Payment.create({
+        transactionId: order.id,
+        razorpayOrderId: order.id,
+        planId: plan.id,
+        userId: req.user.id,
+        amount: plan.price,
+        currency: 'INR',
+        sender: req.user.id,
+        status: 'pending',
+      });
+    } catch (dbErr) {
+      console.warn('Payment record creation failed:', dbErr.message);
+    }
+
     return res.status(200).json({
       orderId: order.id,
       amount: order.amount,
@@ -157,7 +203,7 @@ router.post('/subscribe', verifyJWT, requirePaymentsEnabled(), flagFraud, valida
   }
 });
 
-router.post('/verify', verifyJWT, validateBody(verifySchema), (req, res) => {
+router.post('/verify', verifyJWT, validateBody(verifySchema), async (req, res) => {
   const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
 
   const expected = crypto
@@ -169,33 +215,49 @@ router.post('/verify', verifyJWT, validateBody(verifySchema), (req, res) => {
     return res.status(400).json({ error: 'Invalid payment signature' });
   }
 
+  // Mark payment as verified in DB
+  // razorpay_order_id and razorpay_payment_id are Joi-validated strings; cast to String for safety.
+  try {
+    await Payment.findOneAndUpdate(
+      { razorpayOrderId: String(razorpay_order_id) },
+      {
+        $set: {
+          razorpayPaymentId: String(razorpay_payment_id),
+          status: 'captured',
+        },
+      }
+    );
+  } catch (dbErr) {
+    console.warn('Payment verification DB update failed:', dbErr.message);
+  }
+
   return res.json({ verified: true, paymentId: razorpay_payment_id });
 });
 
 router.post('/subscription/upgrade', verifyJWT, (req, res) => {
-  return res.status(200).json({ message: 'Subscription upgraded successfully', action: 'upgrade' });
+  // Subscription management is not yet implemented.  Returning a fake 200 success
+  // would mislead users into believing their plan changed when it did not.
+  return res.status(501).json({ error: 'Subscription upgrade is not yet implemented' });
 });
 
 router.post('/subscription/downgrade', verifyJWT, (req, res) => {
-  return res.status(200).json({ message: 'Subscription downgraded successfully', action: 'downgrade' });
+  return res.status(501).json({ error: 'Subscription downgrade is not yet implemented' });
 });
 
 router.post('/subscription/cancel', verifyJWT, (req, res) => {
-  return res.status(200).json({ message: 'Subscription canceled successfully', action: 'cancel' });
+  return res.status(501).json({ error: 'Subscription cancellation is not yet implemented' });
 });
 
 router.get('/wallets', verifyJWT, requireRole(['fleet-manager']), (req, res) => {
-  res.json({
-    wallets: [
-      { owner: 'Driver A', balance: 42000, currency: 'INR' },
-      { owner: 'Broker X', balance: 18500, currency: 'INR' },
-    ],
-  });
+  // Wallet balances are not yet stored in the database.  Returning hardcoded fake
+  // figures would expose fabricated financial data to the fleet manager.
+  return res.status(501).json({ error: 'Wallet feature is not yet implemented' });
 });
 
 router.post('/payout', verifyJWT, requireRole(['fleet-manager']), validateBody(payoutSchema), (req, res) => {
-  const { driverId, amount } = req.body;
-  return res.status(200).json({ message: 'Payout scheduled', driverId, amount });
+  // Payout disbursement logic is not yet implemented.  A fake success response
+  // here would imply a financial transfer occurred when none did.
+  return res.status(501).json({ error: 'Payout feature is not yet implemented' });
 });
 
 export default router;

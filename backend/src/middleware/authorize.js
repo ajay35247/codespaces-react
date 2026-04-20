@@ -77,6 +77,15 @@ function getRequestCookies(req) {
   return parseCookieHeader(req.headers?.cookie);
 }
 
+// CSRF double-submit cookie name.  This cookie is NOT HttpOnly so that the
+// browser-side JavaScript can read it and echo it back as the X-CSRF-Token
+// request header on every mutating request.
+export const CSRF_COOKIE = 'csrf-token';
+
+export function generateCsrfToken() {
+  return crypto.randomBytes(32).toString('hex');
+}
+
 export function setAuthCookies(res, { accessToken, refreshToken, admin = false }) {
   const accessCookieName = admin ? ADMIN_ACCESS_COOKIE : USER_ACCESS_COOKIE;
   const refreshCookieName = admin ? ADMIN_REFRESH_COOKIE : USER_REFRESH_COOKIE;
@@ -87,6 +96,14 @@ export function setAuthCookies(res, { accessToken, refreshToken, admin = false }
 
   res.cookie(accessCookieName, accessToken, getCookieOptions(accessMaxAge));
   res.cookie(refreshCookieName, refreshToken, getCookieOptions(refreshMaxAge));
+
+  // Set the double-submit CSRF token alongside the auth cookies.  It is
+  // intentionally NOT HttpOnly so the frontend JavaScript can read it.
+  const csrfToken = generateCsrfToken();
+  res.cookie(CSRF_COOKIE, csrfToken, {
+    ...getCookieOptions(Math.max(accessMaxAge, refreshMaxAge), /* httpOnly */ false),
+    httpOnly: false,
+  });
 }
 
 export function clearAuthCookies(res, admin = false) {
@@ -96,6 +113,7 @@ export function clearAuthCookies(res, admin = false) {
 
   res.clearCookie(accessCookieName, expiredOptions);
   res.clearCookie(refreshCookieName, expiredOptions);
+  res.clearCookie(CSRF_COOKIE, { ...expiredOptions, httpOnly: false });
 }
 
 export function getAccessTokenFromRequest(req, adminOnly = false) {

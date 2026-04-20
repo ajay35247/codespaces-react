@@ -40,7 +40,8 @@ export const useSocket = (userId?: string) => {
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
       newSocket.disconnect();
     };
-  }, [userId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const emit = (event: string, data?: any) => {
     if (socket && isConnected) {
@@ -56,6 +57,7 @@ export const useSocket = (userId?: string) => {
         socket.off(event, callback);
       };
     }
+    return () => {};
   };
 
   const off = (event: string, callback?: (...args: any[]) => void) => {

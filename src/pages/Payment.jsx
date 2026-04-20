@@ -56,10 +56,29 @@ export function Payment() {
         name: 'Speedy Trucks',
         description: data.plan.description,
         order_id: data.orderId,
-        handler: function (response) {
-          if (response.razorpay_payment_id) {
+        handler: async function (response) {
+          if (!response.razorpay_payment_id) {
+            setStatus('error');
+            return;
+          }
+          try {
+            const verifyResp = await fetch(buildApiUrl('/payments/verify'), {
+              method: 'POST',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature,
+              }),
+            });
+            if (!verifyResp.ok) {
+              const err = await verifyResp.json().catch(() => ({}));
+              throw new Error(err.error || 'Payment verification failed');
+            }
             setStatus('success');
-          } else {
+          } catch (verifyError) {
+            console.error('Payment verification failed:', verifyError);
             setStatus('error');
           }
         },

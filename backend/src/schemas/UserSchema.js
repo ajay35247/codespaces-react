@@ -60,13 +60,11 @@ UserSchema.index(
   }
 );
 
-// Sparse index on verificationToken — null values are skipped, no duplicate null errors
+// Sparse indexes so lookups during token flows are fast and don't collide on
+// documents where the field is undefined/null.
 UserSchema.index({ verificationToken: 1 }, { sparse: true });
-
-// Sparse index on resetToken — same reason
 UserSchema.index({ resetToken: 1 }, { sparse: true });
 
-// Hash password before saving
 UserSchema.pre('save', async function (next) {
   if (!this.isModified('password')) {
     return next();
