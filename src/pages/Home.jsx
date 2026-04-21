@@ -14,32 +14,32 @@ const PLATFORM_STATS = [
 const FEATURES = [
   {
     icon: '📦', title: 'Freight Marketplace',
-    desc: 'AI load-matching with real-time bidding, escrow payments and digital contracts.',
+    description: 'AI load-matching with real-time bidding, escrow payments and digital contracts.',
     border: 'border-cyan-500/20',    bg: 'from-cyan-500/15 to-sky-500/5',
   },
   {
     icon: '📍', title: 'Real-Time GPS Tracking',
-    desc: 'Track every truck across India with live coordinates, route replay and ETA.',
+    description: 'Track every truck across India with live coordinates, route replay and ETA.',
     border: 'border-orange-500/20',  bg: 'from-orange-500/15 to-amber-500/5',
   },
   {
     icon: '🧾', title: 'GST Compliance',
-    desc: 'Auto-generate GST invoices, CGST/IGST calculations and one-click PDF export.',
+    description: 'Auto-generate GST invoices, CGST/IGST calculations and one-click PDF export.',
     border: 'border-emerald-500/20', bg: 'from-emerald-500/15 to-green-500/5',
   },
   {
     icon: '🤖', title: 'AI Dispatch Engine',
-    desc: 'Smart route optimisation, fraud detection and autonomous driver assignment.',
+    description: 'Smart route optimisation, fraud detection and autonomous driver assignment.',
     border: 'border-violet-500/20',  bg: 'from-violet-500/15 to-purple-500/5',
   },
   {
     icon: '⚡', title: 'FASTag & Tolls',
-    desc: 'Integrated FASTag wallet management, toll recharges and transaction history.',
+    description: 'Integrated FASTag wallet management, toll recharges and transaction history.',
     border: 'border-amber-500/20',   bg: 'from-amber-500/15 to-yellow-500/5',
   },
   {
     icon: '🛡️', title: 'Enterprise Security',
-    desc: 'MFA, role-based access, audit logging and admin-controlled kill-switches.',
+    description: 'MFA, role-based access, audit logging and admin-controlled kill-switches.',
     border: 'border-rose-500/20',    bg: 'from-rose-500/15 to-pink-500/5',
   },
 ];
@@ -272,7 +272,7 @@ export function Home() {
                 <div className="relative">
                   <div className="mb-4 select-none text-3xl leading-none">{f.icon}</div>
                   <h3 className="text-base font-bold text-white">{f.title}</h3>
-                  <p className="mt-2 text-sm leading-6 text-slate-400">{f.desc}</p>
+                  <p className="mt-2 text-sm leading-6 text-slate-400">{f.description}</p>
                 </div>
               </motion.div>
             ))}
@@ -291,11 +291,10 @@ export function Home() {
             className="mb-10"
           >
             <p className="mb-3 text-xs uppercase tracking-[0.32em] text-orange-300">Choose Your Role</p>
-            <h2 className="text-3xl font-bold text-white sm:text-4xl">Your personalised dashboard</h2>
+            <h2 className="text-3xl font-bold text-white sm:text-4xl">Your personalized dashboard</h2>
             <p className="mt-3 max-w-xl text-slate-400">
               Each role unlocks a purpose-built workspace with KPIs, quick-action tools and real-time data.
-            </p>
-          </motion.div>
+            </p>          </motion.div>
 
           <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4" style={{ perspective: '1200px' }}>
             {ROLE_CARDS.map((role, i) => (

@@ -276,7 +276,7 @@ export function RoleDashboard() {
               {[
                 { icon: '📦', text: 'Freight marketplace, escrow & GST billing' },
                 { icon: '📍', text: 'Real-time GPS tracking & route optimisation' },
-                { icon: '🤖', text: 'AI dispatch, fraud detection & analytics' },
+                { icon: '🤖', text: 'AI dispatch, fraud detection and analytics' },
               ].map((item) => (
                 <li key={item.text} className="flex items-start gap-3 text-sm text-slate-300">
                   <span className="text-base leading-5 select-none">{item.icon}</span>
