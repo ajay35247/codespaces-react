@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Speedy Trucks</string>
+
+    <!-- Login -->
+    <string name="login_title">Welcome Back</string>
+    <string name="login_subtitle">Sign in to your Speedy Trucks account</string>
+    <string name="login_no_account">Don\'t have an account?</string>
+
+    <!-- Register -->
+    <string name="register_title">Create Account</string>
+    <string name="register_subtitle">Join Speedy Trucks today</string>
+    <string name="register_have_account">Already have an account?</string>
+    <string name="register_success">Registration successful! Please check your email to verify your account.</string>
+
+    <!-- Common labels -->
+    <string name="label_email">Email</string>
+    <string name="label_password">Password</string>
+    <string name="label_name">Full Name</string>
+    <string name="label_role">Role</string>
+
+    <!-- Buttons -->
+    <string name="btn_login">Sign In</string>
+    <string name="btn_register">Register</string>
+
+    <!-- Errors -->
+    <string name="error_generic">Something went wrong. Please try again.</string>
+    <string name="error_no_internet">No internet connection. Please check your connection and try again.</string>
+
+    <!-- Content descriptions -->
+    <string name="cd_show_password">Show password</string>
+    <string name="cd_hide_password">Hide password</string>
+</resources>
