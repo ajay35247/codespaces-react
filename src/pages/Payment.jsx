@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useSelector } from 'react-redux';
-import { buildApiUrl } from '../utils/api';
+import { apiRequest } from '../utils/api';
 
 const plans = [
   { id: 'basic', name: 'Starter', price: 999, benefits: ['Up to 50 loads/month', 'GST-ready invoices', 'Driver tracking'] },
@@ -33,15 +33,13 @@ export function Payment() {
   const handlePayment = async (planId) => {
     setStatus('processing');
     try {
-      const response = await fetch(buildApiUrl('/payments/subscribe'), {
+      // Use apiRequest so the CSRF token header is automatically included
+      const data = await apiRequest('/payments/subscribe', {
         method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ planId, currency: 'INR' }),
+        body: { planId, currency: 'INR' },
       });
-      const data = await response.json();
-      if (!response.ok || !data.orderId) {
-        throw new Error(data.error || 'Payment gateway error');
+      if (!data.orderId) {
+        throw new Error('Payment gateway error');
       }
 
       const loaded = await loadRazorpayScript();
@@ -62,20 +60,15 @@ export function Payment() {
             return;
           }
           try {
-            const verifyResp = await fetch(buildApiUrl('/payments/verify'), {
+            // Use apiRequest so the CSRF token header is automatically included
+            await apiRequest('/payments/verify', {
               method: 'POST',
-              credentials: 'include',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
+              body: {
                 razorpay_order_id: response.razorpay_order_id,
                 razorpay_payment_id: response.razorpay_payment_id,
                 razorpay_signature: response.razorpay_signature,
-              }),
+              },
             });
-            if (!verifyResp.ok) {
-              const err = await verifyResp.json().catch(() => ({}));
-              throw new Error(err.error || 'Payment verification failed');
-            }
             setStatus('success');
           } catch (verifyError) {
             console.error('Payment verification failed:', verifyError);

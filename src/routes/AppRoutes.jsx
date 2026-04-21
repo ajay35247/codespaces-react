@@ -17,6 +17,9 @@ import { Payment } from '../pages/Payment';
 import { Subscription } from '../pages/Subscription';
 import { FAQ } from '../pages/FAQ';
 import { AdminControlPanel } from '../pages/AdminControlPanel';
+import { ShipperWorkflow } from '../pages/ShipperWorkflow';
+import { DriverDashboard } from '../pages/DriverDashboard';
+import { TollDashboard } from '../pages/TollDashboard';
 import { ProtectedRoute } from '../components/ProtectedRoute';
 
 const ADMIN_PANEL_PATH = (import.meta.env.VITE_ADMIN_PANEL_PATH || '/ops-bridge-93a1').replace(/^\//, '');
@@ -48,6 +51,21 @@ export function AppRoutes() {
       <Route path="/subscription" element={
         <ProtectedRoute allowedRoles={['shipper', 'driver', 'fleet-manager', 'broker']}>
           <Subscription />
+        </ProtectedRoute>
+      } />
+      <Route path="/shipper" element={
+        <ProtectedRoute allowedRoles={['shipper']}>
+          <ShipperWorkflow />
+        </ProtectedRoute>
+      } />
+      <Route path="/driver" element={
+        <ProtectedRoute allowedRoles={['driver']}>
+          <DriverDashboard />
+        </ProtectedRoute>
+      } />
+      <Route path="/tolls" element={
+        <ProtectedRoute allowedRoles={['driver', 'fleet-manager']}>
+          <TollDashboard />
         </ProtectedRoute>
       } />
       <Route path="/contact" element={<Contact />} />

@@ -85,7 +85,7 @@ export function Tracking() {
                   </div>
                   <div className="rounded-3xl bg-slate-950/80 p-4">
                     <p className="text-sm text-slate-400">Distance remaining</p>
-                    <p className="mt-2 text-xl font-semibold text-white">{selectedShipment ? '278 km' : '—'}</p>
+                    <p className="mt-2 text-xl font-semibold text-white">{selectedShipment?.distanceKm != null ? `${selectedShipment.distanceKm} km` : '—'}</p>
                   </div>
                 </div>
               </div>

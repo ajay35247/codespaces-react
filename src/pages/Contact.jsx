@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { buildApiUrl } from '../utils/api';
+import { apiRequest } from '../utils/api';
 
 export function Contact() {
   const [form, setForm] = useState({ name: '', email: '', subject: '', message: '' });
@@ -13,13 +13,7 @@ export function Contact() {
     event.preventDefault();
     setStatus('sending');
     try {
-      const response = await fetch(buildApiUrl('/support/contact'), {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
-      });
-      if (!response.ok) throw new Error('Submission failed');
+      await apiRequest('/support/contact', { method: 'POST', body: form });
       setStatus('submitted');
       setForm({ name: '', email: '', subject: '', message: '' });
     } catch (error) {
@@ -81,7 +75,8 @@ export function Contact() {
           </label>
           <button
             type="submit"
-            className="rounded-full bg-orange-500 px-5 py-3 text-sm font-semibold uppercase tracking-[0.18em] text-slate-950 transition hover:bg-orange-400"
+            disabled={status === 'sending'}
+            className="rounded-full bg-orange-500 px-5 py-3 text-sm font-semibold uppercase tracking-[0.18em] text-slate-950 transition hover:bg-orange-400 disabled:opacity-50"
           >
             {status === 'sending' ? 'Sending...' : 'Submit request'}
           </button>

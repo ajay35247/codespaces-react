@@ -29,6 +29,8 @@ const LoadSchema = new mongoose.Schema({
   documents: [{ type: String }],
   postedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
   postedByRole: { type: String },
+  assignedDriver: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true, default: null },
+  acceptedBidId: { type: mongoose.Schema.Types.ObjectId, default: null },
   bids: [BidSchema],
   createdAt: { type: Date, default: Date.now },
 });

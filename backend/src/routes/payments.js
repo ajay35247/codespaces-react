@@ -244,8 +244,60 @@ router.post('/subscription/downgrade', verifyJWT, (req, res) => {
   return res.status(501).json({ error: 'Subscription downgrade is not yet implemented' });
 });
 
-router.post('/subscription/cancel', verifyJWT, (req, res) => {
-  return res.status(501).json({ error: 'Subscription cancellation is not yet implemented' });
+router.post('/subscription/cancel', verifyJWT, async (req, res) => {
+  try {
+    // Mark the user's latest active subscription payment as cancelled
+    const result = await Payment.findOneAndUpdate(
+      { userId: req.user.id, status: { $in: ['captured', 'success', 'pending'] }, planId: { $exists: true, $ne: null } },
+      { $set: { status: 'refunded', webhookEvent: 'subscription.cancelled' } },
+      { sort: { createdAt: -1 }, new: true }
+    );
+    if (!result) {
+      return res.status(404).json({ error: 'No active subscription found to cancel' });
+    }
+    return res.json({ message: 'Subscription cancelled', paymentId: result._id });
+  } catch (error) {
+    console.error('Subscription cancel error:', error.message);
+    return res.status(500).json({ error: 'Failed to cancel subscription' });
+  }
+});
+
+// ── Current user subscription ─────────────────────────────────────────────────
+
+router.get('/subscription/me', verifyJWT, async (req, res) => {
+  try {
+    const payment = await Payment.findOne(
+      { userId: req.user.id, planId: { $exists: true, $ne: null } },
+      null,
+      { sort: { createdAt: -1 } }
+    ).lean();
+
+    if (!payment) {
+      return res.json({ subscription: null });
+    }
+
+    const plan = plans.find((p) => p.id === payment.planId) || null;
+
+    // Compute renewal date (30 days from payment creation)
+    const renewalDate = payment.createdAt
+      ? new Date(new Date(payment.createdAt).getTime() + 30 * 24 * 60 * 60 * 1000)
+      : null;
+
+    return res.json({
+      subscription: {
+        planId: payment.planId,
+        plan: plan?.title || payment.planId,
+        amount: payment.amount,
+        currency: payment.currency,
+        status: payment.status,
+        createdAt: payment.createdAt,
+        renewal: renewalDate ? renewalDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }) : null,
+      },
+    });
+  } catch (error) {
+    console.error('Subscription me error:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch subscription' });
+  }
 });
 
 router.get('/wallets', verifyJWT, requireRole(['fleet-manager']), (req, res) => {
