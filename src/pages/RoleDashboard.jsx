@@ -81,7 +81,7 @@ function TruckScene3D({ title, description }) {
       <div className="relative grid items-center gap-8 lg:grid-cols-[1.05fr_0.95fr] [perspective:1200px]">
         <div>
           <p className="text-sm uppercase tracking-[0.32em] text-orange-300">Dashboard</p>
-          <h1 className="mt-3 text-4xl font-semibold text-white">{title}</h1>
+          <h2 className="mt-3 text-4xl font-semibold text-white">{title}</h2>
           <p className="mt-4 text-slate-300">{description}</p>
         </div>
 
@@ -107,6 +107,7 @@ function TruckScene3D({ title, description }) {
       <style>{`
         .role-hero3d {
           --truck-speed: 8s;
+          --truck-vertical-offset: 1px;
         }
 
         .role-hero3d-road {
@@ -184,7 +185,7 @@ function TruckScene3D({ title, description }) {
 
         @keyframes roleHeroTruckRun {
           from { transform: translateX(0) translateY(0); }
-          50% { transform: translateX(95%) translateY(-1px); }
+          50% { transform: translateX(95%) translateY(calc(var(--truck-vertical-offset) * -1)); }
           to { transform: translateX(145%) translateY(0); }
         }
 
@@ -232,6 +233,7 @@ export function RoleDashboard() {
 
   return (
     <main className="mx-auto max-w-7xl px-6 py-10 sm:px-10">
+      <h1 className="sr-only">{`${card?.label || 'Overview'} Dashboard`}</h1>
       <TruckScene3D
         title={`${card?.label || 'Overview'} Dashboard`}
         description={`Live platform data for your ${card?.label || role} account.`}
