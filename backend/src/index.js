@@ -27,6 +27,7 @@ import { enforceTrustedOriginForCookieAuth } from './middleware/csrfProtection.j
 import { getSocketAccessToken, verifyAccessToken } from './middleware/authorize.js';
 import { ensureAdminAccount } from './services/securityBootstrap.js';
 import { getAdminPathSegment } from './middleware/adminSecurity.js';
+import { requireNotMaintenance } from './middleware/platformControl.js';
 
 promClient.collectDefaultMetrics({ timeout: 5000 });
 import authRoutes from './routes/auth.js';
@@ -275,15 +276,16 @@ const createApp = async () => {
 
   app.use('/api/auth', authLimiter, authRoutes);
   app.use(`/api/${getAdminPathSegment()}`, adminRoutes);
-  app.use('/api/payments', paymentLimiter, paymentRoutes);
-  app.use('/api/loads', loadsRoutes);
+  // Maintenance mode blocks all user-facing endpoints; admin routes above are exempt.
+  app.use('/api/payments', paymentLimiter, requireNotMaintenance(), paymentRoutes);
+  app.use('/api/loads', requireNotMaintenance(), loadsRoutes);
   app.use('/api/match', matchingRoutes);
   app.use('/api/tracking', trackingRoutes);
   app.use('/api/support', supportRoutes);
   app.use('/api/gst', gstRoutes);
   app.use('/api/broker', brokerRoutes);
   app.use('/api/fleet', fleetRoutes);
-  app.use('/api/dashboard', dashboardRoutes);
+  app.use('/api/dashboard', requireNotMaintenance(), dashboardRoutes);
   app.use('/api/tolls', tollsRoutes);
 
   app.use((req, res) => {

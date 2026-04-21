@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { verifyJWT } from '../middleware/authorize.js';
+import { requireSupportEnabled } from '../middleware/platformControl.js';
 import { Joi, validateBody } from '../middleware/validation.js';
 import SupportTicket from '../schemas/SupportTicketSchema.js';
 
@@ -28,7 +29,7 @@ function generateTicketNumber() {
   return `TKT-${ts}-${rand}`;
 }
 
-router.post('/contact', supportLimiter, validateBody(contactSchema), async (req, res) => {
+router.post('/contact', supportLimiter, requireSupportEnabled(), validateBody(contactSchema), async (req, res) => {
   try {
     const { name, email, subject, message } = req.body;
 

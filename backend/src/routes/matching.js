@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { MatchingEngine } from '../services/matchingEngine.js';
 import { requireRole, verifyJWT } from '../middleware/authorize.js';
+import { requireMatchingEnabled } from '../middleware/platformControl.js';
 import { Joi, validateBody } from '../middleware/validation.js';
 
 const router = Router();
@@ -10,7 +11,7 @@ const matchingSchema = Joi.object({
   vehicleId: Joi.string().trim().min(1).max(128),
 }).xor('loadId', 'vehicleId');
 
-router.use(verifyJWT, requireRole(['broker', 'fleet-manager', 'admin']));
+router.use(verifyJWT, requireRole(['broker', 'fleet-manager', 'admin']), requireMatchingEnabled());
 
 router.post('/load', validateBody(matchingSchema), async (req, res) => {
   const { loadId } = req.body;

@@ -3,7 +3,7 @@ import mongoose from 'mongoose';
 import { Router } from 'express';
 import Razorpay from 'razorpay';
 import { verifyJWT, requireRole } from '../middleware/authorize.js';
-import { requirePaymentsEnabled } from '../middleware/platformControl.js';
+import { requirePaymentsEnabled, requireTollsEnabled } from '../middleware/platformControl.js';
 import { Joi, validateBody } from '../middleware/validation.js';
 import FasTagWallet from '../schemas/FasTagWalletSchema.js';
 import TollTransaction from '../schemas/TollTransactionSchema.js';
@@ -90,7 +90,7 @@ router.post('/wallet/setup', validateBody(setupWalletSchema), async (req, res) =
 
 // ── POST /api/tolls/recharge/order – create Razorpay order for top-up ────────
 
-router.post('/recharge/order', requirePaymentsEnabled(), validateBody(rechargeOrderSchema), async (req, res) => {
+router.post('/recharge/order', requirePaymentsEnabled(), requireTollsEnabled(), validateBody(rechargeOrderSchema), async (req, res) => {
   try {
     const wallet = await FasTagWallet.findOne({ userId: req.user.id });
     if (!wallet) {

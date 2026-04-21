@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { verifyJWT, requireRole } from '../middleware/authorize.js';
-import { requireBookingsEnabled } from '../middleware/platformControl.js';
+import { requireBookingsEnabled, requireBrokersEnabled } from '../middleware/platformControl.js';
 import { Joi, validateBody } from '../middleware/validation.js';
 import Load from '../schemas/LoadSchema.js';
 
@@ -11,7 +11,7 @@ const negotiateSchema = Joi.object({
   proposedRate: Joi.number().positive().required(),
 });
 
-router.use(verifyJWT, requireRole(['broker']));
+router.use(verifyJWT, requireRole(['broker']), requireBrokersEnabled());
 
 router.get('/summary', async (req, res) => {
   try {

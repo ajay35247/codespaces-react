@@ -1,13 +1,14 @@
 import mongoose from 'mongoose';
 import { Router } from 'express';
 import { verifyJWT } from '../middleware/authorize.js';
+import { requireTrackingEnabled } from '../middleware/platformControl.js';
 
 const router = Router();
 
 /** GPS data older than this is marked stale */
 const STALE_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
 
-router.use(verifyJWT);
+router.use(verifyJWT, requireTrackingEnabled());
 
 router.get('/locations', async (req, res) => {
   try {
