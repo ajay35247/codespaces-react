@@ -16,8 +16,8 @@ body,
 
 body {
   margin: 0;
-  background: radial-gradient(circle at top, rgba(14, 165, 233, 0.12), transparent 30%),
-    radial-gradient(circle at 80% 20%, rgba(249, 115, 22, 0.12), transparent 25%),
+  background: radial-gradient(circle at top, rgba(14, 165, 233, 0.10), transparent 30%),
+    radial-gradient(circle at 80% 20%, rgba(249, 115, 22, 0.10), transparent 25%),
     #020617;
   color: #f8fafc;
 }
@@ -25,3 +25,256 @@ body {
 * {
   box-sizing: border-box;
 }
+
+/* ─────────────────────────────────────────────────────────────────────
+   GLASSMORPHISM
+───────────────────────────────────────────────────────────────────── */
+.glass {
+  background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.glass-strong {
+  background: rgba(255, 255, 255, 0.07);
+  backdrop-filter: blur(40px);
+  -webkit-backdrop-filter: blur(40px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   NEON GLOW SHADOWS
+───────────────────────────────────────────────────────────────────── */
+.glow-cyan    { box-shadow: 0 0 24px rgba(6, 182, 212, 0.40), 0 0 60px rgba(6, 182, 212, 0.12); }
+.glow-orange  { box-shadow: 0 0 24px rgba(249, 115, 22, 0.40), 0 0 60px rgba(249, 115, 22, 0.12); }
+.glow-violet  { box-shadow: 0 0 24px rgba(139, 92, 246, 0.40), 0 0 60px rgba(139, 92, 246, 0.12); }
+.glow-emerald { box-shadow: 0 0 24px rgba(52, 211, 153, 0.40), 0 0 60px rgba(52, 211, 153, 0.12); }
+.glow-amber   { box-shadow: 0 0 24px rgba(251, 191, 36, 0.40), 0 0 60px rgba(251, 191, 36, 0.12); }
+
+/* ─────────────────────────────────────────────────────────────────────
+   GRADIENT TEXT
+───────────────────────────────────────────────────────────────────── */
+.gradient-text-cyan-orange {
+  background: linear-gradient(135deg, #06b6d4 20%, #f97316 80%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.gradient-text-violet-cyan {
+  background: linear-gradient(135deg, #8b5cf6, #06b6d4);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.gradient-text-white {
+  background: linear-gradient(135deg, #ffffff 30%, rgba(255, 255, 255, 0.6));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   LIVE PULSE DOT
+───────────────────────────────────────────────────────────────────── */
+@keyframes liveBlink {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.3; transform: scale(0.85); }
+}
+.live-dot { animation: liveBlink 1.6s ease-in-out infinite; }
+
+/* ─────────────────────────────────────────────────────────────────────
+   MESH GRADIENT ORBS
+───────────────────────────────────────────────────────────────────── */
+@keyframes meshFloat1 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33%       { transform: translate(28px, -28px) scale(1.06); }
+  66%       { transform: translate(-18px, 18px) scale(0.97); }
+}
+@keyframes meshFloat2 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33%       { transform: translate(-22px, 22px) scale(1.04); }
+  66%       { transform: translate(32px, -14px) scale(0.98); }
+}
+@keyframes meshFloat3 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50%       { transform: translate(18px, 26px) scale(1.07); }
+}
+.mesh-orb-1 { animation: meshFloat1 13s ease-in-out infinite; }
+.mesh-orb-2 { animation: meshFloat2 17s ease-in-out infinite; }
+.mesh-orb-3 { animation: meshFloat3 11s ease-in-out infinite; }
+
+/* ─────────────────────────────────────────────────────────────────────
+   ANIMATED PERSPECTIVE GRID
+───────────────────────────────────────────────────────────────────── */
+@keyframes gridScroll {
+  from { background-position: 0 0; }
+  to   { background-position: 40px 40px; }
+}
+.perspective-grid {
+  background-image:
+    linear-gradient(rgba(6, 182, 212, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(6, 182, 212, 0.055) 1px, transparent 1px);
+  background-size: 40px 40px;
+  animation: gridScroll 3.5s linear infinite;
+  mask-image: linear-gradient(to bottom, transparent 0%, black 18%, black 82%, transparent 100%);
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   FLOATING 3D ANIMATION
+───────────────────────────────────────────────────────────────────── */
+@keyframes float3d {
+  0%, 100% { transform: translateY(0)  rotateX(3deg) rotateY(-4deg); }
+  25%       { transform: translateY(-9px)  rotateX(4deg) rotateY(-2deg); }
+  50%       { transform: translateY(-15px) rotateX(2deg) rotateY(-5deg); }
+  75%       { transform: translateY(-7px)  rotateX(5deg) rotateY(-2deg); }
+}
+.float-3d { animation: float3d 7s ease-in-out infinite; }
+
+/* ─────────────────────────────────────────────────────────────────────
+   CARD HOVER SHINE
+───────────────────────────────────────────────────────────────────── */
+.card-shine { position: relative; overflow: hidden; }
+.card-shine::before {
+  content: '';
+  position: absolute;
+  top: 0; left: -80%;
+  width: 55%; height: 100%;
+  background: linear-gradient(
+    120deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.055) 50%,
+    transparent 100%
+  );
+  transform: skewX(-15deg);
+  transition: left 0.65s ease;
+  pointer-events: none;
+}
+.card-shine:hover::before { left: 155%; }
+
+/* ─────────────────────────────────────────────────────────────────────
+   3D DEPTH CARD  (CSS-only hover depth)
+───────────────────────────────────────────────────────────────────── */
+.depth-card {
+  transition: transform 0.38s cubic-bezier(0.23, 1, 0.32, 1), box-shadow 0.38s ease;
+}
+.depth-card:hover {
+  transform: translateY(-7px) rotateX(3deg);
+  box-shadow: 0 28px 56px rgba(0, 0, 0, 0.45), 0 0 28px rgba(6, 182, 212, 0.10);
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   SHIMMER LOADING
+───────────────────────────────────────────────────────────────────── */
+@keyframes shimmerSlide {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(220%); }
+}
+.shimmer-slide::after {
+  content: '';
+  position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent);
+  animation: shimmerSlide 2.6s ease-in-out infinite;
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   PROGRESS BAR FILL
+───────────────────────────────────────────────────────────────────── */
+@keyframes progressFill {
+  from { width: 0; }
+}
+.progress-fill { animation: progressFill 1.4s cubic-bezier(0.23, 1, 0.32, 1) forwards; }
+
+/* ─────────────────────────────────────────────────────────────────────
+   SCANLINES  (subtle CRT effect)
+───────────────────────────────────────────────────────────────────── */
+.scanlines {
+  background-image: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.04) 2px,
+    rgba(0, 0, 0, 0.04) 4px
+  );
+  pointer-events: none;
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   TRUCK ANIMATION  (shared — used in RoleDashboard & Home)
+───────────────────────────────────────────────────────────────────── */
+.st-road {
+  position: relative;
+  background-image: linear-gradient(to bottom, rgba(15, 23, 42, 0.5), rgba(2, 6, 23, 0.9));
+}
+.st-road-lines {
+  position: absolute; inset: 0;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent 0 16px,
+    rgba(226, 232, 240, 0.32) 16px 26px
+  );
+  animation: stRoadMove 1.1s linear infinite;
+  mask-image: linear-gradient(to right, transparent 0%, black 12%, black 88%, transparent 100%);
+}
+.st-truck {
+  position: absolute;
+  left: -15%; bottom: 10px;
+  width: 122px; height: 42px;
+  animation: stTruckRun var(--truck-speed, 8s) linear infinite;
+  filter: drop-shadow(0 8px 14px rgba(0, 0, 0, 0.55));
+}
+.st-cabin {
+  position: absolute; left: 0; bottom: 10px;
+  width: 34px; height: 20px;
+  border-radius: 8px 5px 5px 8px;
+  border: 1px solid rgba(255,255,255,0.22);
+  background: linear-gradient(130deg, rgba(251,146,60,0.95), rgba(251,146,60,0.55));
+}
+.st-trailer {
+  position: absolute; left: 30px; bottom: 8px;
+  width: 86px; height: 24px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: linear-gradient(130deg, rgba(56,189,248,0.38), rgba(59,130,246,0.14));
+}
+.st-wheel {
+  position: absolute; bottom: 0;
+  width: 14px; height: 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: radial-gradient(circle at 35% 35%, rgba(248,250,252,0.38), rgba(15,23,42,0.80));
+  animation: stWheelSpin 0.60s linear infinite;
+}
+.st-wheel-front { left: 8px; }
+.st-wheel-rear  { left: 82px; }
+
+@keyframes stRoadMove {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-42px); }
+}
+@keyframes stTruckRun {
+  from { transform: translateX(0) translateY(0); }
+  50%  { transform: translateX(95%) translateY(-1px); }
+  to   { transform: translateX(145%) translateY(0); }
+}
+@keyframes stWheelSpin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   REDUCE MOTION
+───────────────────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .mesh-orb-1, .mesh-orb-2, .mesh-orb-3,
+  .float-3d,
+  .perspective-grid,
+  .st-road-lines, .st-truck, .st-wheel,
+  /* legacy class names kept for backward compat */
+  .role-hero3d-road-lines, .role-hero3d-truck, .role-hero3d-wheel {
+    animation: none !important;
+  }
+}
+
