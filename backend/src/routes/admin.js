@@ -27,6 +27,7 @@ import {
   hashToken,
   requireAjayAdmin,
 } from '../middleware/authorize.js';
+import { invalidatePlatformStateCache } from '../middleware/platformControl.js';
 import { sendAdminMfaCodeEmail } from '../utils/emailService.js';
 import { getAdminEmail, getStrongPasswordErrors, normalizeEmail } from '../utils/securityPolicy.js';
 import {
@@ -621,17 +622,51 @@ router.patch('/control/override', [
   }
 });
 
+/**
+ * Default feature-flag values.  Mirrors the defaults in platformControl.js so
+ * the GET endpoint always returns a complete object even on a fresh database.
+ */
+const FEATURE_FLAG_DEFAULTS = {
+  bookingsPaused: false,
+  paymentsPaused: false,
+  registrationsPaused: false,
+  trackingPaused: false,
+  matchingPaused: false,
+  gstPaused: false,
+  tollsPaused: false,
+  fleetPaused: false,
+  brokersPaused: false,
+  supportPaused: false,
+  maintenanceMode: false,
+};
+
 router.post('/control/kill-switch', [
   body('bookingsPaused').isBoolean(),
   body('paymentsPaused').isBoolean(),
   body('registrationsPaused').isBoolean(),
+  body('trackingPaused').isBoolean(),
+  body('matchingPaused').isBoolean(),
+  body('gstPaused').isBoolean(),
+  body('tollsPaused').isBoolean(),
+  body('fleetPaused').isBoolean(),
+  body('brokersPaused').isBoolean(),
+  body('supportPaused').isBoolean(),
+  body('maintenanceMode').isBoolean(),
 ], async (req, res) => {
   if (!ensureValidRequest(req, res)) return;
   try {
     const value = {
-      bookingsPaused: req.body.bookingsPaused,
-      paymentsPaused: req.body.paymentsPaused,
-      registrationsPaused: req.body.registrationsPaused,
+      bookingsPaused: Boolean(req.body.bookingsPaused),
+      paymentsPaused: Boolean(req.body.paymentsPaused),
+      registrationsPaused: Boolean(req.body.registrationsPaused),
+      trackingPaused: Boolean(req.body.trackingPaused),
+      matchingPaused: Boolean(req.body.matchingPaused),
+      gstPaused: Boolean(req.body.gstPaused),
+      tollsPaused: Boolean(req.body.tollsPaused),
+      fleetPaused: Boolean(req.body.fleetPaused),
+      brokersPaused: Boolean(req.body.brokersPaused),
+      supportPaused: Boolean(req.body.supportPaused),
+      maintenanceMode: Boolean(req.body.maintenanceMode),
     };
 
     await AdminControlState.findOneAndUpdate(
@@ -646,6 +681,24 @@ router.post('/control/kill-switch', [
       { upsert: true, new: true }
     );
 
+    // Force the in-process platform-control cache to re-read from the DB on the
+    // very next request so the change takes effect immediately across all routes.
+    invalidatePlatformStateCache();
+
+    await AuditLog.create({
+      userId: req.user.id,
+      userEmail: req.user.email,
+      userRole: req.user.role,
+      action: 'ADMIN_FEATURE_FLAGS_UPDATE',
+      resource: 'platform-control',
+      ipAddress: getRequestIp(req),
+      userAgent: req.get('user-agent'),
+      method: req.method,
+      path: req.path,
+      statusCode: 200,
+      metadata: { value },
+    });
+
     return res.json({ value });
   } catch (error) {
     console.error('Kill-switch update error:', error.message);
@@ -656,11 +709,7 @@ router.post('/control/kill-switch', [
 router.get('/control/kill-switch', async (req, res) => {
   try {
     const item = await AdminControlState.findOne({ key: 'kill-switch' });
-    const value = item?.value || {
-      bookingsPaused: false,
-      paymentsPaused: false,
-      registrationsPaused: false,
-    };
+    const value = { ...FEATURE_FLAG_DEFAULTS, ...(item?.value || {}) };
     return res.json({ value });
   } catch (error) {
     console.error('Kill-switch fetch error:', error.message);

@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { Router } from 'express';
 import { verifyJWT, requireRole } from '../middleware/authorize.js';
+import { requireGstEnabled } from '../middleware/platformControl.js';
 import { Joi, validateBody } from '../middleware/validation.js';
 import { generateGSTInvoice } from '../utils/pdfGenerator.js';
 import GstInvoice from '../schemas/GstInvoiceSchema.js';
@@ -84,6 +85,7 @@ router.get('/invoices/:id', async (req, res) => {
 router.post(
   '/invoices',
   requireRole(['shipper', 'fleet-manager']),
+  requireGstEnabled(),
   validateBody(createInvoiceSchema),
   async (req, res) => {
     try {

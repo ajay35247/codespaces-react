@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import mongoose from 'mongoose';
 import { Router } from 'express';
 import { verifyJWT, requireRole } from '../middleware/authorize.js';
+import { requireFleetEnabled } from '../middleware/platformControl.js';
 import { Joi, validateBody } from '../middleware/validation.js';
 import Load from '../schemas/LoadSchema.js';
 
@@ -34,7 +35,7 @@ const maintenanceSchema = Joi.object({
   issue: Joi.string().trim().min(4).max(1000).required(),
 });
 
-router.use(verifyJWT, requireRole(['fleet-manager']));
+router.use(verifyJWT, requireRole(['fleet-manager']), requireFleetEnabled());
 
 // ── Vehicle Registration ──────────────────────────────────────────────────────
 
