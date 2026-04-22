@@ -396,12 +396,14 @@ test('L11.4 cookie-authenticated mutation accepts trusted origin', () => {
   process.env.FRONTEND_URL = 'https://www.aptrucking.in';
   process.env.CLIENT_URL = 'https://www.aptrucking.in';
 
+  const csrfValue = 'csrf-secret-value';
   const req = {
     method: 'POST',
-    cookies: { st_access: 'cookie-token' },
+    cookies: { st_access: 'cookie-token', 'csrf-token': csrfValue },
     get(header) {
       if (header === 'origin') return 'https://www.aptrucking.in';
       if (header === 'authorization') return undefined;
+      if (header === 'x-csrf-token') return csrfValue;
       return undefined;
     },
     headers: {},

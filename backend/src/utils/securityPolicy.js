@@ -54,3 +54,27 @@ export function getStrongPasswordErrors(password = '') {
 export function isStrongPassword(password = '') {
   return getStrongPasswordErrors(password).length === 0;
 }
+
+// Public-facing (end-user) password policy: between 6 and 8 characters and
+// must include at least one special (non-alphanumeric) character. Admin and
+// privileged-reset flows continue to use the stricter `getStrongPasswordErrors`.
+export const PUBLIC_PASSWORD_MIN_LENGTH = 6;
+export const PUBLIC_PASSWORD_MAX_LENGTH = 8;
+const PUBLIC_PASSWORD_SPECIAL_CHAR_REGEX = /[^A-Za-z0-9]/;
+
+export function getPublicPasswordErrors(password = '') {
+  const value = String(password);
+  const errors = [];
+
+  if (value.length < PUBLIC_PASSWORD_MIN_LENGTH || value.length > PUBLIC_PASSWORD_MAX_LENGTH) {
+    errors.push(
+      `Password must be between ${PUBLIC_PASSWORD_MIN_LENGTH} and ${PUBLIC_PASSWORD_MAX_LENGTH} characters.`
+    );
+  }
+
+  if (!PUBLIC_PASSWORD_SPECIAL_CHAR_REGEX.test(value)) {
+    errors.push('Password must include at least one special character.');
+  }
+
+  return errors;
+}

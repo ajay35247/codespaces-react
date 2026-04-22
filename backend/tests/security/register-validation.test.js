@@ -7,7 +7,7 @@ import { PUBLIC_ROLES, registerValidationRules } from '../../src/routes/auth.js'
 const validBasePayload = {
   name: 'Public User',
   email: 'person@gmail.com',
-  password: 'Stronger@1234',
+  password: 'Short@1',
   phone: '+91 9876543210',
   gstin: '27AAPCU9603R1Z0',
 };
@@ -64,8 +64,28 @@ test('register validators reject weak password length', async () => {
   const errors = await getValidationErrors({
     ...validBasePayload,
     role: 'broker',
-    password: 'Short@1',
+    password: 'ab12',
   });
 
-  assert.equal(errors.includes('Password must be at least 12 characters long.'), true);
+  assert.equal(errors.includes('Password must be between 6 and 8 characters.'), true);
+});
+
+test('register validators reject password longer than 8 characters', async () => {
+  const errors = await getValidationErrors({
+    ...validBasePayload,
+    role: 'broker',
+    password: 'Stronger@1234',
+  });
+
+  assert.equal(errors.includes('Password must be between 6 and 8 characters.'), true);
+});
+
+test('register validators reject password missing special character', async () => {
+  const errors = await getValidationErrors({
+    ...validBasePayload,
+    role: 'broker',
+    password: 'abcd1234',
+  });
+
+  assert.equal(errors.includes('Password must include at least one special character.'), true);
 });
