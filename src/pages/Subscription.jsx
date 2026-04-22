@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { apiRequest } from '../utils/api';
 
 const PLAN_FEATURE_COPY = [
-  { key: 'maxBidsPerMonth',    label: 'Bids per month',        format: (v) => (v === null || v === undefined) ? '—' : (v === Infinity || v > 1e6 ? 'Unlimited' : String(v)) },
+  { key: 'maxBidsPerMonth',    label: 'Bids per month',        format: (v) => (v === null || v === undefined) ? '—' : (typeof v === 'number' && (v < 0 || v > 1e6) ? 'Unlimited' : String(v)) },
   { key: 'walletWithdrawals',  label: 'Wallet withdrawals',    format: (v) => v ? 'Yes' : 'No' },
   { key: 'aiMatching',         label: 'AI load matching',      format: (v) => v ? 'Yes' : 'No' },
   { key: 'advancedAnalytics',  label: 'Advanced analytics',    format: (v) => v ? 'Yes' : 'No' },

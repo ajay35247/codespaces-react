@@ -33,7 +33,10 @@ const PLAN_FEATURES = {
     prioritySupport: false,
   },
   enterprise: {
-    maxBidsPerMonth: Infinity,
+    // -1 is used as a sentinel for "unlimited" so the descriptor serialises
+    // cleanly over JSON (`Infinity` becomes `null` during JSON.stringify).
+    // The frontend interprets any negative number as Unlimited.
+    maxBidsPerMonth: -1,
     walletWithdrawals: true,
     aiMatching: true,
     advancedAnalytics: true,

@@ -260,7 +260,7 @@ router.post(
         balanceAfter: debited.balance,
         reference,
         status: 'pending', // payout settlement is processed offline
-        notes: `Withdrawal to ${accountReference.slice(0, 4)}***`,
+        notes: 'Withdrawal to linked bank account / UPI',
       });
 
       return res.status(201).json({
