@@ -501,6 +501,52 @@ router.patch('/control/users/:id/status', [
   }
 });
 
+// Hard-delete a public account (fraud remediation). Admin accounts cannot be
+// deleted via this endpoint – they must be handled through a separate secured
+// process.  All deletions are recorded in the AuditLog for forensic review.
+router.delete('/control/users/:id', async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid user ID' });
+    }
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    if (user.role === 'admin') {
+      return res.status(403).json({ error: 'Admin accounts cannot be deleted via this endpoint' });
+    }
+
+    const snapshot = {
+      userId: user._id.toString(),
+      email: user.email,
+      role: user.role,
+      accountStatus: user.accountStatus || 'active',
+    };
+
+    await user.deleteOne();
+
+    await AuditLog.create({
+      userId: req.user.id,
+      userEmail: req.user.email,
+      userRole: req.user.role,
+      action: 'ADMIN_USER_DELETE',
+      resource: 'user',
+      resourceId: snapshot.userId,
+      ipAddress: getRequestIp(req),
+      userAgent: req.get('user-agent'),
+      method: req.method,
+      path: req.path,
+      statusCode: 200,
+      metadata: { deletedUser: snapshot, reason: String(req.body?.reason || 'fraud').slice(0, 500) },
+    });
+
+    return res.json({ deletedUserId: snapshot.userId });
+  } catch (error) {
+    console.error('Admin user delete error:', error.message);
+    return res.status(500).json({ error: 'Failed to delete user' });
+  }
+});
+
 router.patch('/control/users/:id/kyc', [
   body('kycStatus').isIn(['pending', 'approved', 'rejected']),
 ], async (req, res) => {

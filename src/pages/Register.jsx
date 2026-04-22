@@ -89,14 +89,15 @@ export function Register() {
       }
       return;
     }
-    // In dev mode the server returns the user with isEmailVerified:true – navigate immediately.
-    if (result.payload?.user?.isEmailVerified) {
-      navigate(`/dashboard/${result.payload.user.role}`);
+    // Public registration is instant – server auto-verifies the account and
+    // sets auth cookies. Navigate straight to the role dashboard.
+    const user = result.payload?.user;
+    if (user?.role) {
+      navigate(`/dashboard/${user.role}`);
       return;
     }
     if (result.payload?.message) {
-      setMessage('Registration successful. Check your inbox for a verification link before logging in.');
-      return;
+      setMessage(result.payload.message);
     }
   };
 
@@ -222,7 +223,7 @@ export function Register() {
           </button>
 
           {message && <p className="mt-4 rounded-3xl bg-emerald-500/10 p-4 text-sm text-emerald-300">{message}</p>}
-          <p className="mt-4 text-sm text-slate-400">A verification link will be sent to your email address after registration.</p>
+          <p className="mt-4 text-sm text-slate-400">Your account is created and signed in instantly.</p>
 
           <p className="mt-6 text-center text-sm text-slate-400">
             Already have an account?{' '}

@@ -141,9 +141,18 @@ const authSlice = createSlice({
       .addCase(registerUser.fulfilled, (state, action) => {
         state.loading = false;
         state.ready = true;
-        state.user = null;
-        state.role = null;
-        state.token = null;
+        // Public registration is auto-verified and auto-authenticated on the
+        // server, so hydrate the session from the response when present.
+        const user = action.payload?.user;
+        if (user) {
+          state.user = user;
+          state.role = user.role || null;
+          state.token = action.payload?.accessToken || state.token;
+        } else {
+          state.user = null;
+          state.role = null;
+          state.token = null;
+        }
       })
       .addCase(registerUser.rejected, (state, action) => {
         state.loading = false;
