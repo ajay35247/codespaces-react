@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { verifyJWT, requireRole } from '../middleware/authorize.js';
 import { requireBookingsEnabled, requireBrokersEnabled } from '../middleware/platformControl.js';
+import { requireActiveSubscription } from '../middleware/subscription.js';
 import { Joi, validateBody } from '../middleware/validation.js';
 import Load from '../schemas/LoadSchema.js';
 
@@ -19,7 +20,12 @@ router.get('/summary', async (req, res) => {
 
     const [openLoads, loadsWithMyBids] = await Promise.all([
       Load.countDocuments({ status: 'posted' }),
-      Load.find({ 'bids.brokerId': brokerId })
+      Load.find({
+        $or: [
+          { 'bids.bidderId': brokerId },
+          { 'bids.brokerId': brokerId },
+        ],
+      })
         .select('status bids')
         .lean(),
     ]);
@@ -28,7 +34,8 @@ router.get('/summary', async (req, res) => {
     let acceptedBids = 0;
     for (const load of loadsWithMyBids) {
       for (const bid of load.bids) {
-        if (String(bid.brokerId) === String(brokerId)) {
+        const idField = bid.bidderId || bid.brokerId;
+        if (idField && String(idField) === String(brokerId)) {
           if (bid.status === 'pending') pendingBids += 1;
           if (bid.status === 'accepted') acceptedBids += 1;
         }
@@ -74,7 +81,7 @@ router.get('/loads', async (req, res) => {
   }
 });
 
-router.post('/negotiate', requireBookingsEnabled(), validateBody(negotiateSchema), async (req, res) => {
+router.post('/negotiate', requireBookingsEnabled(), requireActiveSubscription('basic'), validateBody(negotiateSchema), async (req, res) => {
   try {
     const { loadId, proposedRate } = req.body;
     const brokerId = req.user.id;
@@ -86,13 +93,31 @@ router.post('/negotiate', requireBookingsEnabled(), validateBody(negotiateSchema
     if (load.status !== 'posted') {
       return res.status(409).json({ error: 'This load is no longer accepting bids' });
     }
+    if (String(load.postedBy) === String(brokerId)) {
+      return res.status(403).json({ error: 'You cannot bid on a load you posted' });
+    }
 
-    const existingBidIndex = load.bids.findIndex((b) => String(b.brokerId) === String(brokerId));
+    const existingBidIndex = load.bids.findIndex((b) => {
+      const idField = b.bidderId || b.brokerId;
+      return idField && String(idField) === String(brokerId);
+    });
     if (existingBidIndex >= 0) {
       // Update existing bid amount
       load.bids[existingBidIndex].amount = proposedRate;
+      // Ensure the legacy record is tagged with bidder role on next save.
+      if (!load.bids[existingBidIndex].bidderRole) {
+        load.bids[existingBidIndex].bidderRole = 'broker';
+      }
+      if (!load.bids[existingBidIndex].bidderId) {
+        load.bids[existingBidIndex].bidderId = brokerId;
+      }
     } else {
-      load.bids.push({ brokerId, amount: proposedRate, currency: 'INR' });
+      load.bids.push({
+        bidderId: brokerId,
+        bidderRole: 'broker',
+        amount: proposedRate,
+        currency: 'INR',
+      });
     }
 
     await load.save();

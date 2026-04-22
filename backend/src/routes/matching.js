@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { MatchingEngine } from '../services/matchingEngine.js';
 import { requireRole, verifyJWT } from '../middleware/authorize.js';
 import { requireMatchingEnabled } from '../middleware/platformControl.js';
+import { requireActiveSubscription } from '../middleware/subscription.js';
 import { Joi, validateBody } from '../middleware/validation.js';
 
 const router = Router();
@@ -11,7 +12,17 @@ const matchingSchema = Joi.object({
   vehicleId: Joi.string().trim().min(1).max(128),
 }).xor('loadId', 'vehicleId');
 
-router.use(verifyJWT, requireRole(['broker', 'fleet-manager', 'admin']), requireMatchingEnabled());
+// AI matching is an advanced feature — require an active 'growth' or higher
+// subscription from non-admin callers. Admins can trigger matching for ops.
+router.use(
+  verifyJWT,
+  requireRole(['shipper', 'driver', 'broker', 'admin']),
+  requireMatchingEnabled(),
+  (req, res, next) => {
+    if (req.user.role === 'admin') return next();
+    return requireActiveSubscription('growth')(req, res, next);
+  }
+);
 
 router.post('/load', validateBody(matchingSchema), async (req, res) => {
   const { loadId } = req.body;

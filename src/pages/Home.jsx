@@ -197,7 +197,7 @@ export function Home() {
 
               <FadeUp delay={0.18}>
                 <p className="mt-6 max-w-xl text-lg leading-8 text-slate-300">
-                  AI-powered logistics connecting shippers, drivers, fleet owners and brokers
+                  AI-powered logistics connecting shippers, drivers, and brokers
                   with real-time GPS, GST billing, FASTag integration and autonomous dispatch.
                 </p>
               </FadeUp>

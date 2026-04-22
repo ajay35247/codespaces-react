@@ -418,7 +418,7 @@ Key principles:
 
 **Phase 3 — Ecosystem (12–24 months)**
 - Invoice discounting, fuel card, insurance, Safe-Stop network,
-  warehouse dock-slot, broker CRM, shipper ERP connectors.
+  broker CRM, shipper ERP connectors.
 
 **Phase 4 — Moat (24–36 months)**
 - Autopilot for fleets, AI negotiation agent, Shipment Passport,

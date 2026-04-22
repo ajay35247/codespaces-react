@@ -12,25 +12,21 @@ const ROLE_ACTIONS = {
     { label: 'Create Load', path: '/shipper' },
     { label: 'View My Loads', path: '/shipper' },
     { label: 'GST Billing', path: '/gst' },
-    { label: 'Payments', path: '/payment' },
+    { label: 'Wallet', path: '/wallet' },
+    { label: 'Subscription', path: '/subscription' },
   ],
   driver: [
     { label: 'View My Trips', path: '/driver' },
     { label: 'Available Loads', path: '/driver' },
     { label: 'Toll Tax & FASTag', path: '/tolls' },
+    { label: 'Wallet', path: '/wallet' },
     { label: 'GPS Tracking', path: '/tracking' },
-  ],
-  'fleet-manager': [
-    { label: 'Fleet Operations', path: '/fleet' },
-    { label: 'Register Vehicle', path: '/fleet' },
-    { label: 'Toll Tax & FASTag', path: '/tolls' },
-    { label: 'GPS Tracking', path: '/tracking' },
-    { label: 'GST Billing', path: '/gst' },
   ],
   broker: [
     { label: 'Browse Loads', path: '/broker' },
     { label: 'My Bids', path: '/broker' },
-    { label: 'Payments', path: '/payment' },
+    { label: 'Wallet', path: '/wallet' },
+    { label: 'Subscription', path: '/subscription' },
   ],
 };
 
@@ -58,12 +54,6 @@ function buildMetrics(role, stats) {
         { label: 'Earnings', value: formatStat(stats.earnings, role, 'earnings'), accent: 'text-emerald-400' },
         { label: 'Performance score', value: formatStat(stats.performanceScore, role, 'performanceScore'), accent: 'text-orange-400' },
       ];
-    case 'fleet-manager':
-      return [
-        { label: 'Trucks active', value: formatStat(stats.trucksActive, role, 'trucksActive'), accent: 'text-sky-400' },
-        { label: 'Utilization', value: formatStat(stats.utilization, role, 'utilization'), accent: 'text-emerald-400' },
-        { label: 'Maintenance alerts', value: formatStat(stats.maintenanceAlerts, role, 'maintenanceAlerts'), accent: 'text-orange-400' },
-      ];
     case 'broker':
       return [
         { label: 'Open bids', value: formatStat(stats.openBids, role, 'openBids'), accent: 'text-sky-400' },
@@ -80,7 +70,6 @@ function TruckScene3D({ title, description, role }) {
   const ROLE_META = {
     shipper:        { glow: 'rgba(56,189,248,0.18)',  accent: 'rgba(249,115,22,0.14)', badge: '🚢 Shipper View' },
     driver:         { glow: 'rgba(249,115,22,0.18)',  accent: 'rgba(251,191,36,0.14)', badge: '🧑‍✈️ Driver View' },
-    'fleet-manager':{ glow: 'rgba(139,92,246,0.18)',  accent: 'rgba(56,189,248,0.14)', badge: '🏗️ Fleet View' },
     broker:         { glow: 'rgba(52,211,153,0.18)',  accent: 'rgba(249,115,22,0.14)', badge: '🤝 Broker View' },
   };
   const meta = ROLE_META[role] || ROLE_META.shipper;

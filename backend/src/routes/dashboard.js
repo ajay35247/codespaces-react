@@ -101,61 +101,28 @@ router.get('/stats', async (req, res) => {
         });
       }
 
-      case 'fleet-manager': {
-        const [vehicleStats, loadStats, maintenanceCount] = await Promise.all([
-          mongoose.connection.db.collection('vehicles').aggregate([
-            { $match: { ownerId: String(userId) } },
-            {
-              $group: {
-                _id: '$status',
-                count: { $sum: 1 },
-              },
-            },
-          ]).toArray(),
-          Load.aggregate([
-            { $match: { postedBy: new mongoose.Types.ObjectId(userId) } },
-            { $group: { _id: '$status', count: { $sum: 1 } } },
-          ]),
-          mongoose.connection.db.collection('maintenance_requests').countDocuments({
-            reportedBy: String(userId),
-            status: 'open',
-          }),
-        ]);
-
-        const vehicleByStatus = {};
-        let totalVehicles = 0;
-        for (const s of vehicleStats) {
-          vehicleByStatus[s._id] = s.count;
-          totalVehicles += s.count;
-        }
-        const activeVehicles = vehicleByStatus.active || 0;
-        const utilization = totalVehicles > 0 ? Math.round((activeVehicles / totalVehicles) * 100) : 0;
-
-        const loadByStatus = {};
-        for (const s of loadStats) {
-          loadByStatus[s._id] = s.count;
-        }
-
-        return res.json({
-          stats: {
-            trucksActive: activeVehicles,
-            utilization: `${utilization}%`,
-            maintenanceAlerts: maintenanceCount,
-            totalVehicles,
-            postedLoads: loadByStatus.posted || 0,
-            inTransitLoads: loadByStatus['in-transit'] || 0,
-            deliveredLoads: loadByStatus.delivered || 0,
-          },
-        });
-      }
-
       case 'broker': {
+        const userObjectId = new mongoose.Types.ObjectId(userId);
         const [openLoads, myBids, invoiceStats] = await Promise.all([
           Load.countDocuments({ status: 'posted' }),
           Load.aggregate([
-            { $match: { 'bids.brokerId': new mongoose.Types.ObjectId(userId) } },
+            {
+              $match: {
+                $or: [
+                  { 'bids.bidderId': userObjectId },
+                  { 'bids.brokerId': userObjectId },
+                ],
+              },
+            },
             { $unwind: '$bids' },
-            { $match: { 'bids.brokerId': new mongoose.Types.ObjectId(userId) } },
+            {
+              $match: {
+                $or: [
+                  { 'bids.bidderId': userObjectId },
+                  { 'bids.brokerId': userObjectId },
+                ],
+              },
+            },
             {
               $group: {
                 _id: '$bids.status',
@@ -165,7 +132,7 @@ router.get('/stats', async (req, res) => {
             },
           ]),
           Payment.aggregate([
-            { $match: { userId: new mongoose.Types.ObjectId(userId), status: 'captured' } },
+            { $match: { userId: userObjectId, status: 'captured' } },
             { $group: { _id: null, total: { $sum: '$amount' } } },
           ]),
         ]);

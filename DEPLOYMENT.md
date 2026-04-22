@@ -173,8 +173,12 @@ All routes require valid JWT in `Authorization: Bearer <token>` header.
 ### Broker Operations (broker/admin only)
 - `GET /api/broker/summary` - Broker dashboard summary
 
-### Fleet Management (fleet-manager/admin only)
-- `GET /api/fleet/dashboard` - Fleet dashboard
+### Wallet (all public roles)
+- `GET /api/wallet` - Wallet balance & recent transactions
+- `GET /api/wallet/transactions` - Paginated transaction ledger
+- `POST /api/wallet/topup` - Create Razorpay top-up order
+- `POST /api/wallet/topup/verify` - Verify Razorpay signature and credit the wallet
+- `POST /api/wallet/withdraw` - Request a withdrawal (subscription required)
 
 ---
 

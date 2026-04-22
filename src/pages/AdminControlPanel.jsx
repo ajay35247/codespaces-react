@@ -47,7 +47,6 @@ const FEATURE_FLAGS = [
   { key: 'matchingPaused',       label: 'Pause Load Matching',   description: 'Disables AI/load-matching engine',             danger: false },
   { key: 'gstPaused',            label: 'Pause GST Invoicing',   description: 'Prevents new GST invoices from being created', danger: false },
   { key: 'tollsPaused',          label: 'Pause Tolls',           description: 'Blocks FASTag wallet recharge orders',         danger: false },
-  { key: 'fleetPaused',          label: 'Pause Fleet Mgmt',      description: 'Disables all fleet-manager routes',            danger: false },
   { key: 'brokersPaused',        label: 'Pause Brokers',         description: 'Disables all broker routes',                   danger: false },
   { key: 'supportPaused',        label: 'Pause Support',         description: 'Prevents new support ticket submissions',      danger: false },
 ];

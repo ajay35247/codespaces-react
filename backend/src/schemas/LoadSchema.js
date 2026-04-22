@@ -1,7 +1,16 @@
 import mongoose from 'mongoose';
 
 const BidSchema = new mongoose.Schema({
-  brokerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  // New: generic bidder fields — shippers, drivers, and brokers can all bid.
+  bidderId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  bidderRole: {
+    type: String,
+    enum: ['shipper', 'driver', 'broker'],
+  },
+  // Legacy field kept for backward compatibility with pre-migration documents.
+  // Newer code reads `bidderId` and falls back to `brokerId` when it is not
+  // present so historical bids remain queryable.
+  brokerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   amount: { type: Number, required: true },
   currency: { type: String, default: 'INR' },
   status: {

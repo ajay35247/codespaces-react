@@ -110,7 +110,7 @@ export function Register() {
       <div className="rounded-[2rem] border border-white/10 bg-slate-950/90 p-10 shadow-2xl shadow-slate-900/20">
         <p className="text-sm uppercase tracking-[0.28em] text-orange-300">Create Account</p>
         <h1 className="mt-4 text-4xl font-semibold text-white">Join Speedy Trucks</h1>
-        <p className="mt-3 text-slate-300">Register as a shipper, driver, broker, or fleet manager.</p>
+        <p className="mt-3 text-slate-300">Register as a shipper, driver, or broker.</p>
 
         {localError && <div className="mt-6 rounded-3xl bg-rose-500/10 p-4 text-sm text-rose-300">{localError}</div>}
         {error && <div className="mt-6 rounded-3xl bg-orange-500/10 p-4 text-sm text-orange-300">{error}</div>}

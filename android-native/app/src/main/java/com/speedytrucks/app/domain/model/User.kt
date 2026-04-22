@@ -19,7 +19,6 @@ data class User(
 enum class UserRole(val value: String) {
     SHIPPER("shipper"),
     DRIVER("driver"),
-    FLEET_MANAGER("fleet-manager"),
     BROKER("broker");
 
     companion object {
