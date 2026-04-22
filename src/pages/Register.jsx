@@ -32,6 +32,10 @@ function getPasswordErrors(password = '') {
     errors.push('Password must be between 6 and 8 characters');
   }
 
+  if (!/[^A-Za-z0-9]/.test(value)) {
+    errors.push('Password must include at least one special character');
+  }
+
   return errors;
 }
 
@@ -153,7 +157,7 @@ export function Register() {
               disabled={loading}
             />
             <p className="mt-2 text-xs text-slate-400">
-              Must be between 6 and 8 characters.
+              Must be between 6 and 8 characters and include at least one special character.
             </p>
           </label>
 

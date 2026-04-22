@@ -7,6 +7,9 @@ function getPasswordErrors(password) {
   if (!password || password.length < 6 || password.length > 8) {
     errors.push('Password must be between 6 and 8 characters.');
   }
+  if (!password || !/[^A-Za-z0-9]/.test(password)) {
+    errors.push('Password must include at least one special character.');
+  }
   return errors;
 }
 

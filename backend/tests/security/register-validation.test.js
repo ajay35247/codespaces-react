@@ -79,3 +79,13 @@ test('register validators reject password longer than 8 characters', async () =>
 
   assert.equal(errors.includes('Password must be between 6 and 8 characters.'), true);
 });
+
+test('register validators reject password missing special character', async () => {
+  const errors = await getValidationErrors({
+    ...validBasePayload,
+    role: 'broker',
+    password: 'abcd1234',
+  });
+
+  assert.equal(errors.includes('Password must include at least one special character.'), true);
+});

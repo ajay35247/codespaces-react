@@ -61,7 +61,10 @@ export const registerValidationRules = [
   body('password')
     .isString().withMessage('Password is required.')
     .isLength({ min: PUBLIC_PASSWORD_MIN_LENGTH, max: PUBLIC_PASSWORD_MAX_LENGTH })
-    .withMessage(`Password must be between ${PUBLIC_PASSWORD_MIN_LENGTH} and ${PUBLIC_PASSWORD_MAX_LENGTH} characters.`),
+    .withMessage(`Password must be between ${PUBLIC_PASSWORD_MIN_LENGTH} and ${PUBLIC_PASSWORD_MAX_LENGTH} characters.`)
+    .bail()
+    .matches(/[^A-Za-z0-9]/)
+    .withMessage('Password must include at least one special character.'),
   body('name')
     .isString().withMessage('Name is required.')
     .trim()
