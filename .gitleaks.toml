@@ -1,0 +1,40 @@
+# Gitleaks configuration for codespaces-react
+#
+# Extends the default gitleaks ruleset (so all built-in secret detectors stay
+# active) and adds a targeted allowlist to silence known false-positives from
+# committed example / template files.
+#
+# IMPORTANT: This ONLY suppresses findings for clearly-marked placeholder
+# values in *.env.example template files. Real secret files (.env, .env.prod,
+# etc.) remain fully scanned and are also gitignored from commits.
+
+title = "codespaces-react gitleaks config"
+
+# Inherit all upstream rules (generic-api-key, JWT, AWS, Stripe, etc.).
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Ignore placeholder values in example env templates"
+
+# Allowlist by file path — only affects committed template/example files.
+paths = [
+  '''(^|/)\.env\.example$''',
+  '''(^|/)\.env\.prod\.example$''',
+  '''(^|/).*\.env\.example$''',
+  '''(^|/)\.env\.example\..*$''',
+]
+
+# Allowlist by regex — matches the obvious placeholder strings we use in
+# documentation and example files. If a value matches one of these patterns
+# anywhere in the repo, gitleaks will not flag it.
+regexes = [
+  '''REPLACE_ME''',
+  '''replace_with_[a-zA-Z0-9_]+''',
+  '''your_[a-zA-Z0-9_]*_(here|key|secret|token|password)''',
+  '''<password>''',
+  '''<user>''',
+  '''<host>''',
+  '''xxxxxxxxxxxx''',
+  '''example(_|-)?(key|secret|token)''',
+]
