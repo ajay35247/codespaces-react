@@ -4,11 +4,9 @@ import { apiRequest } from '../utils/api';
 
 function getPasswordErrors(password) {
   const errors = [];
-  if (!password || password.length < 12) errors.push('Password must be at least 12 characters.');
-  if (!/[A-Z]/.test(password)) errors.push('Password must contain an uppercase letter.');
-  if (!/[a-z]/.test(password)) errors.push('Password must contain a lowercase letter.');
-  if (!/[0-9]/.test(password)) errors.push('Password must contain a digit.');
-  if (!/[^A-Za-z0-9]/.test(password)) errors.push('Password must contain a special character.');
+  if (!password || password.length < 6 || password.length > 8) {
+    errors.push('Password must be between 6 and 8 characters.');
+  }
   return errors;
 }
 

@@ -54,3 +54,22 @@ export function getStrongPasswordErrors(password = '') {
 export function isStrongPassword(password = '') {
   return getStrongPasswordErrors(password).length === 0;
 }
+
+// Public-facing (end-user) password policy: keep it short and simple per product
+// requirements – between 6 and 8 characters, no complexity requirement. Admin
+// and privileged-reset flows continue to use the stricter `getStrongPasswordErrors`.
+export const PUBLIC_PASSWORD_MIN_LENGTH = 6;
+export const PUBLIC_PASSWORD_MAX_LENGTH = 8;
+
+export function getPublicPasswordErrors(password = '') {
+  const value = String(password);
+  const errors = [];
+
+  if (value.length < PUBLIC_PASSWORD_MIN_LENGTH || value.length > PUBLIC_PASSWORD_MAX_LENGTH) {
+    errors.push(
+      `Password must be between ${PUBLIC_PASSWORD_MIN_LENGTH} and ${PUBLIC_PASSWORD_MAX_LENGTH} characters.`
+    );
+  }
+
+  return errors;
+}

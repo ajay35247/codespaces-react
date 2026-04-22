@@ -15,7 +15,9 @@ import {
 } from '../middleware/authorize.js';
 import { sendVerificationEmail, sendPasswordResetEmail } from '../utils/emailService.js';
 import {
-  getStrongPasswordErrors,
+  getPublicPasswordErrors,
+  PUBLIC_PASSWORD_MAX_LENGTH,
+  PUBLIC_PASSWORD_MIN_LENGTH,
   isBlockedAccountEmail,
   normalizeEmail,
 } from '../utils/securityPolicy.js';
@@ -58,7 +60,8 @@ export const registerValidationRules = [
   body('email').isEmail().withMessage('Please enter a valid email address.').normalizeEmail(),
   body('password')
     .isString().withMessage('Password is required.')
-    .isLength({ min: 12 }).withMessage('Password must be at least 12 characters long.'),
+    .isLength({ min: PUBLIC_PASSWORD_MIN_LENGTH, max: PUBLIC_PASSWORD_MAX_LENGTH })
+    .withMessage(`Password must be between ${PUBLIC_PASSWORD_MIN_LENGTH} and ${PUBLIC_PASSWORD_MAX_LENGTH} characters.`),
   body('name')
     .isString().withMessage('Name is required.')
     .trim()
@@ -104,9 +107,9 @@ router.post('/register', [requireRegistrationsEnabled(), ...registerValidationRu
       return res.status(403).json({ error: 'This account is disabled by security policy' });
     }
 
-    const passwordErrors = getStrongPasswordErrors(password);
+    const passwordErrors = getPublicPasswordErrors(password);
     if (passwordErrors.length > 0) {
-      return res.status(400).json({ error: 'Password does not meet complexity policy', details: passwordErrors });
+      return res.status(400).json({ error: 'Password does not meet length policy', details: passwordErrors });
     }
 
     const existingUser = await User.findOne({ email });
@@ -326,9 +329,9 @@ router.post('/reset-password', async (req, res) => {
     if (!token || !password) {
       return res.status(400).json({ error: 'Token and password are required' });
     }
-    const passwordErrors = getStrongPasswordErrors(password);
+    const passwordErrors = getPublicPasswordErrors(password);
     if (passwordErrors.length > 0) {
-      return res.status(400).json({ error: 'Password does not meet complexity policy', details: passwordErrors });
+      return res.status(400).json({ error: 'Password does not meet length policy', details: passwordErrors });
     }
 
     const user = await User.findOne({ resetToken: token, resetTokenExpires: { $gt: Date.now() } });

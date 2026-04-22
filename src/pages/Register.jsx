@@ -28,11 +28,9 @@ function getPasswordErrors(password = '') {
   const value = String(password);
   const errors = [];
 
-  if (value.length < 12) errors.push('At least 12 characters');
-  if (!/[A-Z]/.test(value)) errors.push('At least one uppercase letter');
-  if (!/[a-z]/.test(value)) errors.push('At least one lowercase letter');
-  if (!/[0-9]/.test(value)) errors.push('At least one number');
-  if (!/[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(value)) errors.push('At least one special character');
+  if (value.length < 6 || value.length > 8) {
+    errors.push('Password must be between 6 and 8 characters');
+  }
 
   return errors;
 }
@@ -154,7 +152,7 @@ export function Register() {
               disabled={loading}
             />
             <p className="mt-2 text-xs text-slate-400">
-              Must be at least 12 characters and include uppercase, lowercase, number, and special character.
+              Must be between 6 and 8 characters.
             </p>
           </label>
 
