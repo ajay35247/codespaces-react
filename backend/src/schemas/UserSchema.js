@@ -16,7 +16,7 @@ const UserSchema = new mongoose.Schema({
   role: {
     type: String,
     required: true,
-    enum: ['shipper', 'driver', 'fleet-manager', 'broker', 'admin'],
+    enum: ['shipper', 'driver', 'broker', 'admin'],
   },
   accountStatus: {
     type: String,

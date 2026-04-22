@@ -15,7 +15,7 @@ export function BrandHeader() {
           </div>
         </div>
         <div className="space-y-1 text-right">
-          <p className="text-sm text-slate-200">Modern enterprise logistics for shippers, drivers, brokers, and fleet owners.</p>
+          <p className="text-sm text-slate-200">Modern enterprise logistics for shippers, drivers, and brokers.</p>
           <p className="text-xs text-slate-300">Nationwide India scale · Real-time shipments · AI dispatch</p>
         </div>
       </div>

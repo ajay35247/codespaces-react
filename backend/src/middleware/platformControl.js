@@ -19,7 +19,6 @@ const DEFAULT_STATE = {
   matchingPaused: false,
   gstPaused: false,
   tollsPaused: false,
-  fleetPaused: false,
   brokersPaused: false,
   supportPaused: false,
   // ── Maintenance mode — when true ALL non-admin API returns 503 ─────────────
@@ -154,19 +153,6 @@ export function requireTollsEnabled() {
     }
     if (state.tollsPaused) {
       return res.status(503).json({ error: 'Toll management is temporarily paused' });
-    }
-    return next();
-  };
-}
-
-export function requireFleetEnabled() {
-  return async (req, res, next) => {
-    const state = await getKillSwitchState();
-    if (state.maintenanceMode) {
-      return res.status(503).json({ error: 'Platform is under maintenance. Please try again later.' });
-    }
-    if (state.fleetPaused) {
-      return res.status(503).json({ error: 'Fleet management is temporarily paused' });
     }
     return next();
   };

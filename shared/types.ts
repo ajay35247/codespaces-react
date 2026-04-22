@@ -1,7 +1,7 @@
 export interface User {
   _id: string;
   email: string;
-  role: 'shipper' | 'driver' | 'fleet-manager' | 'broker' | 'admin';
+  role: 'shipper' | 'driver' | 'broker' | 'admin';
   name: string;
   phone: string;
   isEmailVerified: boolean;

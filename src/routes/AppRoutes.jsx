@@ -6,7 +6,6 @@ import { RoleDashboard } from '../pages/RoleDashboard';
 import { Tracking } from '../pages/Tracking';
 import { GstBilling } from '../pages/GstBilling';
 import { BrokerWorkflow } from '../pages/BrokerWorkflow';
-import { FleetWorkflow } from '../pages/FleetWorkflow';
 import { PrivacyPolicy } from '../pages/PrivacyPolicy';
 import { Terms } from '../pages/Terms';
 import { Contact } from '../pages/Contact';
@@ -15,6 +14,7 @@ import { ResetPassword } from '../pages/ResetPassword';
 import { VerifyEmail } from '../pages/VerifyEmail';
 import { Payment } from '../pages/Payment';
 import { Subscription } from '../pages/Subscription';
+import { Wallet } from '../pages/Wallet';
 import { FAQ } from '../pages/FAQ';
 import { AdminControlPanel } from '../pages/AdminControlPanel';
 import { ShipperWorkflow } from '../pages/ShipperWorkflow';
@@ -34,23 +34,28 @@ export function AppRoutes() {
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/verify-email/:token" element={<VerifyEmail />} />
       <Route path="/tracking" element={
-        <ProtectedRoute allowedRoles={['shipper', 'driver', 'fleet-manager', 'broker']}>
+        <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker']}>
           <Tracking />
         </ProtectedRoute>
       } />
       <Route path="/gst" element={
-        <ProtectedRoute allowedRoles={['shipper', 'fleet-manager', 'broker']}>
+        <ProtectedRoute allowedRoles={['shipper', 'broker']}>
           <GstBilling />
         </ProtectedRoute>
       } />
       <Route path="/payment" element={
-        <ProtectedRoute allowedRoles={['shipper', 'driver', 'fleet-manager', 'broker']}>
+        <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker']}>
           <Payment />
         </ProtectedRoute>
       } />
       <Route path="/subscription" element={
-        <ProtectedRoute allowedRoles={['shipper', 'driver', 'fleet-manager', 'broker']}>
+        <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker']}>
           <Subscription />
+        </ProtectedRoute>
+      } />
+      <Route path="/wallet" element={
+        <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker']}>
+          <Wallet />
         </ProtectedRoute>
       } />
       <Route path="/shipper" element={
@@ -64,7 +69,7 @@ export function AppRoutes() {
         </ProtectedRoute>
       } />
       <Route path="/tolls" element={
-        <ProtectedRoute allowedRoles={['driver', 'fleet-manager']}>
+        <ProtectedRoute allowedRoles={['driver']}>
           <TollDashboard />
         </ProtectedRoute>
       } />
@@ -81,17 +86,9 @@ export function AppRoutes() {
         }
       />
       <Route
-        path="/fleet"
-        element={
-          <ProtectedRoute allowedRoles={['fleet-manager']}>
-            <FleetWorkflow />
-          </ProtectedRoute>
-        }
-      />
-      <Route
         path="/dashboard/:role"
         element={
-          <ProtectedRoute allowedRoles={['shipper', 'driver', 'fleet-manager', 'broker']}>
+          <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker']}>
             <RoleDashboard />
           </ProtectedRoute>
         }

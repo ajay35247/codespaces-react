@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import { Router } from 'express';
 import { requireRole, verifyJWT } from '../middleware/authorize.js';
 import { requireBookingsEnabled } from '../middleware/platformControl.js';
+import { requireActiveSubscription } from '../middleware/subscription.js';
 import { Joi, validateBody } from '../middleware/validation.js';
 import Load from '../schemas/LoadSchema.js';
 
@@ -27,10 +28,6 @@ const ALLOWED_LOAD_STATUSES = new Set(['posted', 'in-transit', 'delivered', 'can
 
 const updateStatusSchema = Joi.object({
   status: Joi.string().valid('in-transit', 'delivered', 'cancelled').required(),
-});
-
-const assignDriverSchema = Joi.object({
-  driverId: Joi.string().trim().min(1).max(128).required(),
 });
 
 /** Escape special regex characters to prevent regex injection. */
@@ -69,7 +66,7 @@ router.get('/', async (req, res) => {
 router.post(
   '/',
   verifyJWT,
-  requireRole(['shipper', 'fleet-manager']),
+  requireRole(['shipper']),
   requireBookingsEnabled(),
   validateBody(createLoadSchema),
   async (req, res) => {
@@ -97,11 +94,17 @@ router.post(
   }
 );
 
+// ── All-side bidding ──────────────────────────────────────────────────────────
+// Shippers, drivers, and brokers can all place competitive bids on open loads
+// (subject to an active subscription — bidding is an "advanced" paid feature).
+// Bidders cannot bid on loads they posted themselves.
+
 router.post(
   '/bid',
   verifyJWT,
-  requireRole(['broker']),
+  requireRole(['shipper', 'driver', 'broker']),
   requireBookingsEnabled(),
+  requireActiveSubscription('basic'),
   validateBody(bidSchema),
   async (req, res) => {
     try {
@@ -114,17 +117,29 @@ router.post(
       if (load.status !== 'posted') {
         return res.status(409).json({ error: 'This load is no longer accepting bids' });
       }
-      const existingBid = load.bids.find((b) => String(b.brokerId) === String(req.user.id));
+      if (String(load.postedBy) === String(req.user.id)) {
+        return res.status(403).json({ error: 'You cannot bid on a load you posted' });
+      }
+      const existingBid = load.bids.find((b) => {
+        const idField = b.bidderId || b.brokerId;
+        return idField && String(idField) === String(req.user.id);
+      });
       if (existingBid) {
         return res.status(409).json({ error: 'You have already placed a bid on this load' });
       }
-      load.bids.push({ brokerId: req.user.id, amount, currency: 'INR' });
+      load.bids.push({
+        bidderId: req.user.id,
+        bidderRole: req.user.role,
+        amount,
+        currency: 'INR',
+      });
       await load.save();
       return res.status(201).json({
         message: 'Bid submitted',
         loadId,
         amount,
-        brokerId: req.user.id,
+        bidderId: req.user.id,
+        bidderRole: req.user.role,
       });
     } catch (error) {
       console.error('Bid submission error:', error.message);
@@ -133,14 +148,14 @@ router.post(
   }
 );
 
-// ── Own loads (shipper / fleet-manager / driver) ─────────────────────────────
+// ── Own loads (shipper / driver) ──────────────────────────────────────────────
 // NOTE: /mine and /available MUST be declared before /:loadId so Express does
 // not treat the literal string "mine" or "available" as a loadId parameter.
 
 router.get(
   '/mine',
   verifyJWT,
-  requireRole(['shipper', 'fleet-manager', 'driver']),
+  requireRole(['shipper', 'driver']),
   async (req, res) => {
     try {
       const page = Math.max(1, parseInt(req.query.page || '1', 10));
@@ -234,7 +249,7 @@ router.get('/:loadId', async (req, res) => {
 router.patch(
   '/:loadId/status',
   verifyJWT,
-  requireRole(['shipper', 'fleet-manager', 'driver']),
+  requireRole(['shipper', 'driver']),
   validateBody(updateStatusSchema),
   async (req, res) => {
     try {
@@ -246,7 +261,7 @@ router.patch(
         return res.status(404).json({ error: 'Load not found' });
       }
 
-      // Authorization: shipper/fleet-manager must own the load; driver must be assigned
+      // Authorization: shipper must own the load; driver must be assigned
       if (req.user.role === 'driver') {
         if (!load.assignedDriver || String(load.assignedDriver) !== String(req.user.id)) {
           return res.status(403).json({ error: 'You are not assigned to this load' });
@@ -277,7 +292,7 @@ router.patch(
 router.post(
   '/:loadId/bids/:bidId/accept',
   verifyJWT,
-  requireRole(['shipper', 'fleet-manager']),
+  requireRole(['shipper']),
   async (req, res) => {
     try {
       const loadId = String(req.params.loadId);
@@ -302,6 +317,11 @@ router.post(
       }
       load.status = 'in-transit';
       load.acceptedBidId = bid._id;
+      // If the accepted bid came from a driver, auto-assign them so the load
+      // shows up under the driver's /loads/mine view and status transitions.
+      if (bid.bidderRole === 'driver' && bid.bidderId) {
+        load.assignedDriver = bid.bidderId;
+      }
       await load.save();
 
       return res.json({ message: 'Bid accepted, load is now in-transit', loadId, bidId });
@@ -317,7 +337,7 @@ router.post(
 router.post(
   '/:loadId/bids/:bidId/reject',
   verifyJWT,
-  requireRole(['shipper', 'fleet-manager']),
+  requireRole(['shipper']),
   async (req, res) => {
     try {
       const loadId = String(req.params.loadId);
@@ -344,41 +364,8 @@ router.post(
 );
 
 // ── Assign driver to load ─────────────────────────────────────────────────────
-
-router.post(
-  '/:loadId/assign',
-  verifyJWT,
-  requireRole(['fleet-manager']),
-  validateBody(assignDriverSchema),
-  async (req, res) => {
-    try {
-      const loadId = String(req.params.loadId);
-      const { driverId } = req.body;
-
-      if (!mongoose.Types.ObjectId.isValid(driverId)) {
-        return res.status(400).json({ error: 'Invalid driver ID' });
-      }
-
-      const load = await Load.findOne({ loadId, postedBy: req.user.id });
-      if (!load) {
-        return res.status(404).json({ error: 'Load not found or not owned by you' });
-      }
-      if (!['posted', 'in-transit'].includes(load.status)) {
-        return res.status(409).json({ error: 'Cannot assign driver to a completed or cancelled load' });
-      }
-
-      load.assignedDriver = new mongoose.Types.ObjectId(driverId);
-      if (load.status === 'posted') {
-        load.status = 'in-transit';
-      }
-      await load.save();
-
-      return res.json({ message: 'Driver assigned', loadId, driverId });
-    } catch (error) {
-      console.error('Driver assignment error:', error.message);
-      return res.status(500).json({ error: 'Failed to assign driver' });
-    }
-  }
-);
+// NOTE: Driver assignment was previously handled by the fleet-manager role,
+// which has been removed. Shippers now assign drivers implicitly by accepting
+// a driver's bid (see /:loadId/bids/:bidId/accept above).
 
 export default router;

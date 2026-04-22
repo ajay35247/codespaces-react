@@ -76,7 +76,7 @@ router.get('/broker/summary', verifyJWT, requireRole(['broker', 'admin']), (req,
 });
 ```
 
-**Roles**: `['shipper', 'driver', 'fleet-manager', 'broker', 'admin']`
+**Roles**: `['shipper', 'driver', 'broker', 'admin']`
 
 ---
 

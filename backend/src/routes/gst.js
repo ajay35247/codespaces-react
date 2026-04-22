@@ -84,7 +84,7 @@ router.get('/invoices/:id', async (req, res) => {
 
 router.post(
   '/invoices',
-  requireRole(['shipper', 'fleet-manager']),
+  requireRole(['shipper']),
   requireGstEnabled(),
   validateBody(createInvoiceSchema),
   async (req, res) => {

@@ -54,6 +54,7 @@ docker-compose up --build
 - `backend/` - backend API server and schema models
 - `ARCHITECTURE.md` - platform architecture overview
 - `DEPLOYMENT.md` - deploy and Docker guide
+- `PRODUCT_BLUEPRINT.md` - advanced, role-by-role product blueprint (2026–2030 vision)
 
 ## Notes
 

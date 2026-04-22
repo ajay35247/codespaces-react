@@ -12,12 +12,6 @@ export const ROLE_CARDS = [
     color: 'from-orange-500 to-amber-500',
   },
   {
-    key: 'fleet-manager',
-    label: 'Fleet Manager',
-    description: 'Monitor fleet utilization, assign drivers, and manage maintenance.',
-    color: 'from-indigo-600 to-violet-500',
-  },
-  {
     key: 'broker',
     label: 'Broker',
     description: 'Match loads with trucks, negotiate rates and manage commissions.',

@@ -57,7 +57,7 @@ test('register validators reject unsupported role', async () => {
     role: 'admin',
   });
 
-  assert.equal(errors.includes('Role must be one of: shipper, driver, fleet-manager, broker.'), true);
+  assert.equal(errors.includes('Role must be one of: shipper, driver, broker.'), true);
 });
 
 test('register validators reject weak password length', async () => {

@@ -176,7 +176,7 @@ GET    /audit/actions                 — Admin action audit trail
 ### Registration (Public)
 ```
 POST /api/auth/register
-  role: shipper | driver | fleet-manager | broker  (NOT admin)
+  role: shipper | driver | broker  (NOT admin)
   
   ✅ CANNOT select admin role
   ❌ Admin role auto-rejected

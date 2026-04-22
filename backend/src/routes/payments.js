@@ -2,8 +2,9 @@ import Razorpay from 'razorpay';
 import { Router } from 'express';
 import crypto from 'crypto';
 import express from 'express';
-import { verifyJWT, requireRole } from '../middleware/authorize.js';
+import { verifyJWT } from '../middleware/authorize.js';
 import { requirePaymentsEnabled } from '../middleware/platformControl.js';
+import { getSubscriptionFeatures } from '../middleware/subscription.js';
 import { Joi, validateBody } from '../middleware/validation.js';
 import Payment from '../schemas/PaymentSchema.js';
 
@@ -29,11 +30,6 @@ const verifySchema = Joi.object({
   razorpay_order_id: Joi.string().trim().required(),
   razorpay_payment_id: Joi.string().trim().required(),
   razorpay_signature: Joi.string().trim().required(),
-});
-
-const payoutSchema = Joi.object({
-  driverId: Joi.string().trim().min(1).max(128).required(),
-  amount: Joi.number().positive().required(),
 });
 
 function secureCompareHex(expected, actual) {
@@ -300,16 +296,19 @@ router.get('/subscription/me', verifyJWT, async (req, res) => {
   }
 });
 
-router.get('/wallets', verifyJWT, requireRole(['fleet-manager']), (req, res) => {
-  // Wallet balances are not yet stored in the database.  Returning hardcoded fake
-  // figures would expose fabricated financial data to the fleet manager.
-  return res.status(501).json({ error: 'Wallet feature is not yet implemented' });
-});
+// ── Wallet endpoints moved to /api/wallet (see routes/wallet.js) ──────────────
+// Legacy /payments/wallets and /payments/payout routes have been removed in
+// favour of the dedicated wallet module available to all public roles.
 
-router.post('/payout', verifyJWT, requireRole(['fleet-manager']), validateBody(payoutSchema), (req, res) => {
-  // Payout disbursement logic is not yet implemented.  A fake success response
-  // here would imply a financial transfer occurred when none did.
-  return res.status(501).json({ error: 'Payout feature is not yet implemented' });
+// ── Advanced feature entitlement lookup ───────────────────────────────────────
+router.get('/subscription/features', verifyJWT, async (req, res) => {
+  try {
+    const features = await getSubscriptionFeatures(req.user.id);
+    return res.json(features);
+  } catch (error) {
+    console.error('Subscription features error:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch subscription features' });
+  }
 });
 
 export default router;

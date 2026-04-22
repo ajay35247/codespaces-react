@@ -31,7 +31,7 @@ import { requireRegistrationsEnabled } from '../middleware/platformControl.js';
 const router = Router();
 const LOGIN_MAX_FAILED_ATTEMPTS = 5;
 const LOGIN_LOCK_WINDOW_MS = 15 * 60 * 1000;
-export const PUBLIC_ROLES = ['shipper', 'driver', 'fleet-manager', 'broker'];
+export const PUBLIC_ROLES = ['shipper', 'driver', 'broker'];
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,

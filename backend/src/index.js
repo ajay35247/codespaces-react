@@ -37,11 +37,11 @@ import trackingRoutes from './routes/tracking.js';
 import paymentRoutes from './routes/payments.js';
 import gstRoutes from './routes/gst.js';
 import brokerRoutes from './routes/broker.js';
-import fleetRoutes from './routes/fleet.js';
 import supportRoutes from './routes/support.js';
 import adminRoutes from './routes/admin.js';
 import dashboardRoutes from './routes/dashboard.js';
 import tollsRoutes from './routes/tolls.js';
+import walletRoutes from './routes/wallet.js';
 
 const httpRequestsTotal = new promClient.Counter({
   name: 'speedy_trucks_http_requests_total',
@@ -284,9 +284,9 @@ const createApp = async () => {
   app.use('/api/support', supportRoutes);
   app.use('/api/gst', gstRoutes);
   app.use('/api/broker', brokerRoutes);
-  app.use('/api/fleet', fleetRoutes);
   app.use('/api/dashboard', requireNotMaintenance(), dashboardRoutes);
   app.use('/api/tolls', tollsRoutes);
+  app.use('/api/wallet', requireNotMaintenance(), walletRoutes);
 
   app.use((req, res) => {
     res.status(404).json({ error: 'API endpoint not found' });
@@ -351,8 +351,8 @@ const startWorker = async () => {
 
     socket.on('update-location', async (data) => {
       if (!data?.vehicleId || typeof data.location?.lat !== 'number' || typeof data.location?.lng !== 'number') return;
-      // Only drivers and fleet-managers can push location updates.
-      if (!['driver', 'fleet-manager'].includes(socket.user.role)) return;
+      // Only drivers can push location updates now that fleet-managers are gone.
+      if (socket.user.role !== 'driver') return;
 
       const vehicleId = String(data.vehicleId);
       const location = {

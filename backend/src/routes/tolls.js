@@ -17,8 +17,8 @@ const razorpay = razorpayKeyId && razorpayKeySecret
   ? new Razorpay({ key_id: razorpayKeyId, key_secret: razorpayKeySecret })
   : null;
 
-// All toll routes require authentication; drivers and fleet-managers use them
-router.use(verifyJWT, requireRole(['driver', 'fleet-manager']));
+// All toll routes require authentication; drivers use them directly.
+router.use(verifyJWT, requireRole(['driver']));
 
 // ── Validation schemas ────────────────────────────────────────────────────────
 
