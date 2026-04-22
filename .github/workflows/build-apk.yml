@@ -17,13 +17,18 @@ jobs:
       uses: actions/setup-node@v4
       with:
         node-version: '22'
+        cache: npm
 
-    - name: Install npm dependencies (skip scripts)
-      run: npm install --no-optional --legacy-peer-deps
+    - name: Install npm dependencies
+      # NOTE: do NOT pass --no-optional. Rollup ships its Linux x64 native
+      # binary (@rollup/rollup-linux-x64-gnu) as an optional dependency and
+      # Vite's build will crash without it. Use npm ci for a reproducible
+      # install from package-lock.json.
+      run: npm ci --legacy-peer-deps
 
     - name: Build web app (skip tests)
       run: npm run build -- --mode=production 2>/dev/null || npm run build
-      
+
     - name: Setup Java
       uses: actions/setup-java@v4
       with:
