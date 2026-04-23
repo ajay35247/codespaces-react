@@ -36,6 +36,21 @@ export function RatingBadge({ userId, size = 'sm' }) {
 }
 
 /**
+ * Inline "Verified" pill.  Accepts a `status` string ('pending'|'approved'|
+ * 'rejected') — renders green with a checkmark when approved; otherwise
+ * shows nothing so non-approved users don't get a negative stigma badge.
+ */
+export function VerifiedBadge({ status }) {
+  if (status !== 'approved') return null;
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-300">
+      <span aria-hidden>✔</span>
+      <span>KYC verified</span>
+    </span>
+  );
+}
+
+/**
  * Inline 1–5 star picker used inside rating modals.  Controlled via `value`
  * (1..5 or 0 for unset) and `onChange`.  Keyboard-accessible — each star is
  * a real button.

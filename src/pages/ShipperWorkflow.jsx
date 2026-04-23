@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { apiRequest } from '../utils/api';
 import { RatingBadge, StarPicker } from '../components/RatingBadge';
+import { loadRazorpayScript } from '../utils/razorpay';
 
 const TRUCK_TYPES = ['truck', 'mini-truck', 'trailer', 'container', 'tanker', 'flatbed', 'reefer'];
 
@@ -289,7 +291,10 @@ function LoadCard({ load, onStatusChange }) {
     if (!window.confirm('Mark this freight payment as released to the driver?')) return;
     setUpdating(true); setError(null);
     try {
-      await apiRequest(`/loads/${load.loadId}/payment/release`, { method: 'POST', body: {} });
+      const result = await apiRequest(`/loads/${load.loadId}/payment/release`, { method: 'POST', body: {} });
+      if (result?.releaseMode === 'real') {
+        window.alert(`Payout initiated via RazorpayX (id: ${result.payoutId || 'processing'})`);
+      }
       onStatusChange();
     } catch (err) {
       setError(err.message);
@@ -297,6 +302,56 @@ function LoadCard({ load, onStatusChange }) {
       setUpdating(false);
     }
   };
+
+  /**
+   * Fund escrow for this load via Razorpay Checkout.  Creates a platform Order
+   * for the accepted-bid / freight amount, opens Razorpay, and verifies the
+   * signature on success.  If escrow is not configured server-side the create
+   * call returns 501; we surface the error instead of silently faking funding.
+   */
+  const fundEscrow = async () => {
+    setUpdating(true); setError(null);
+    try {
+      const data = await apiRequest(`/loads/${load.loadId}/escrow/create`, { method: 'POST', body: {} });
+      if (!data?.orderId) throw new Error('Escrow gateway returned no order');
+      const ok = await loadRazorpayScript();
+      if (!ok) throw new Error('Unable to load Razorpay checkout');
+      const options = {
+        key: data.keyId,
+        amount: Math.round(data.amount * 100),
+        currency: data.currency || 'INR',
+        name: 'Speedy Trucks',
+        description: `Escrow for ${load.loadId}`,
+        order_id: data.orderId,
+        handler: async (response) => {
+          try {
+            await apiRequest(`/loads/${load.loadId}/escrow/verify`, {
+              method: 'POST',
+              body: {
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature,
+              },
+            });
+            onStatusChange();
+          } catch (verifyErr) {
+            setError(verifyErr.message);
+          }
+        },
+        theme: { color: '#fb923c' },
+      };
+      const rzp = new window.Razorpay(options);
+      rzp.open();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const escrow = load.escrow || {};
+  const escrowStatus = escrow.status || 'none';
+  const canFundEscrow = load.acceptedBidId && ['none', 'failed', 'refunded'].includes(escrowStatus);
 
   return (
     <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-6">
@@ -330,6 +385,36 @@ function LoadCard({ load, onStatusChange }) {
             >
               Cancel
             </button>
+          )}
+          {canFundEscrow && (
+            <button
+              onClick={fundEscrow}
+              disabled={updating}
+              className="rounded-full bg-sky-500 px-3 py-1 text-xs font-bold text-slate-950 transition hover:bg-sky-400 disabled:opacity-50"
+              title="Hold freight in Razorpay escrow until delivery"
+            >
+              🔒 Fund Escrow
+            </button>
+          )}
+          {escrowStatus === 'initiated' && (
+            <span className="rounded-full bg-sky-900/50 px-3 py-1 text-xs text-sky-200">Escrow awaiting payment</span>
+          )}
+          {escrowStatus === 'funded' && (
+            <span className="rounded-full bg-emerald-900/50 px-3 py-1 text-xs text-emerald-200">🔒 Escrow funded</span>
+          )}
+          {escrowStatus === 'released' && (
+            <span className="rounded-full bg-emerald-900/50 px-3 py-1 text-xs text-emerald-200">💸 Payout released</span>
+          )}
+          {escrowStatus === 'paid' && (
+            <span className="rounded-full bg-emerald-900/50 px-3 py-1 text-xs text-emerald-200">✅ Paid out</span>
+          )}
+          {load.status === 'in-transit' && load.vehicleId && (
+            <Link
+              to={`/tracking?loadId=${encodeURIComponent(load.loadId)}`}
+              className="rounded-full border border-sky-400/40 bg-sky-500/10 px-3 py-1 text-xs font-semibold text-sky-300 transition hover:bg-sky-500/20"
+            >
+              📍 Track Live
+            </Link>
           )}
           {load.status === 'delivered' && paymentStatus === 'pending' && load.pod && (
             <button

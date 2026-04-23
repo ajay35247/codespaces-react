@@ -6,6 +6,7 @@ const navItems = [
   { label: 'Home', to: '/' },
   { label: 'Tracking', to: '/tracking' },
   { label: 'GST Billing', to: '/gst' },
+  { label: 'KYC & Payouts', to: '/kyc' },
   { label: 'Payment', to: '/payment' },
   { label: 'Contact', to: '/contact' },
 ];

@@ -7,6 +7,53 @@ import { RatingBadge, StarPicker } from '../components/RatingBadge';
 // Hard cap matches MAX_POD_PHOTO_LENGTH on the backend (≈260 KB decoded).
 const MAX_POD_PHOTO_DATA_URL_LENGTH = 350_000;
 
+/**
+ * Inline control to bind a vehicle (by vehicleId string) to the load so the
+ * shipper's live tracking can follow it.  Pre-fills with the currently bound
+ * vehicle when set.  Kept deliberately minimal — a driver typing their
+ * vehicle's registration/ID is still leagues better than no link at all.
+ */
+function VehicleBinder({ load, onChanged }) {
+  const [vehicleId, setVehicleId] = useState(load.vehicleId || '');
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const save = async () => {
+    if (!vehicleId.trim()) return;
+    setSaving(true); setErr(null);
+    try {
+      await apiRequest(`/loads/${load.loadId}/vehicle`, { method: 'POST', body: { vehicleId: vehicleId.trim() } });
+      onChanged();
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      <input
+        type="text"
+        value={vehicleId}
+        onChange={(e) => setVehicleId(e.target.value)}
+        placeholder="Vehicle ID (for live tracking)"
+        className="w-48 rounded-full border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-white placeholder-slate-500"
+      />
+      <button
+        type="button"
+        onClick={save}
+        disabled={saving || !vehicleId.trim() || vehicleId === (load.vehicleId || '')}
+        className="rounded-full border border-sky-400/40 bg-sky-500/10 px-3 py-1.5 text-xs text-sky-200 transition hover:bg-sky-500/20 disabled:opacity-40"
+        title="Bind this vehicle so the shipper can track it live"
+      >
+        {saving ? 'Saving…' : (load.vehicleId ? 'Update vehicle' : 'Bind vehicle')}
+      </button>
+      {err && <span className="text-[10px] text-rose-300">{err}</span>}
+    </div>
+  );
+}
+
 function readFileAsDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -335,12 +382,15 @@ function LoadCard({ load, onChanged, isAssigned, onPlaceBid }) {
           )}
 
           {isAssigned && load.status === 'in-transit' && (
-            <button
-              onClick={() => setShowPod(true)}
-              className="rounded-full bg-emerald-500 px-4 py-2 text-xs font-bold text-slate-950 shadow-md shadow-emerald-500/20 transition hover:bg-emerald-400"
-            >
-              ✓ Submit POD &amp; Deliver
-            </button>
+            <>
+              <VehicleBinder load={load} onChanged={onChanged} />
+              <button
+                onClick={() => setShowPod(true)}
+                className="rounded-full bg-emerald-500 px-4 py-2 text-xs font-bold text-slate-950 shadow-md shadow-emerald-500/20 transition hover:bg-emerald-400"
+              >
+                ✓ Submit POD &amp; Deliver
+              </button>
+            </>
           )}
 
           {isAssigned && load.status === 'delivered' && paymentStatus === 'released' && (

@@ -20,6 +20,7 @@ import { AdminControlPanel } from '../pages/AdminControlPanel';
 import { ShipperWorkflow } from '../pages/ShipperWorkflow';
 import { DriverDashboard } from '../pages/DriverDashboard';
 import { TollDashboard } from '../pages/TollDashboard';
+import { Kyc } from '../pages/Kyc';
 import { ProtectedRoute } from '../components/ProtectedRoute';
 
 const ADMIN_PANEL_PATH = (import.meta.env.VITE_ADMIN_PANEL_PATH || '/ops-bridge-93a1').replace(/^\//, '');
@@ -56,6 +57,11 @@ export function AppRoutes() {
       <Route path="/wallet" element={
         <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker']}>
           <Wallet />
+        </ProtectedRoute>
+      } />
+      <Route path="/kyc" element={
+        <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker']}>
+          <Kyc />
         </ProtectedRoute>
       } />
       <Route path="/shipper" element={
