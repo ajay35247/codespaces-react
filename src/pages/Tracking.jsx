@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { GoogleMap, Marker, Polyline, useJsApiLoader } from '@react-google-maps/api';
 import { apiRequest } from '../utils/api';
+import { useSocket } from '../hooks/useSocket';
 
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAP_API_KEY || import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
 const mapContainerStyle = { width: '100%', height: '100%' };
@@ -10,24 +12,83 @@ export function Tracking() {
   const [shipments, setShipments] = useState([]);
   const [routePath, setRoutePath] = useState([]);
   const [error, setError] = useState(null);
+  const [searchParams] = useSearchParams();
+  const loadId = searchParams.get('loadId');
+  const [loadFocus, setLoadFocus] = useState(null);
 
   const { isLoaded } = useJsApiLoader({
     googleMapsApiKey: GOOGLE_MAPS_API_KEY,
   });
 
-  useEffect(() => {
-    apiRequest('/tracking/locations')
-      .then((data) => setShipments(data.shipments || []))
-      .catch((error) => setError(error.message));
-  }, []);
+  // Per-load focused tracking — refreshes on demand (initial mount + when
+  // a socket event tells us the load's state changed).  The old 15s
+  // polling loop has been replaced with `useSocket('load:status-changed')`.
+  const fetchLoadTracking = useCallback(async () => {
+    if (!loadId) return;
+    try {
+      const data = await apiRequest(`/tracking/load/${encodeURIComponent(loadId)}`);
+      setError(null);
+      setLoadFocus(data);
+      if (data?.tracking?.currentLocation) {
+        const loc = data.tracking.currentLocation;
+        setShipments([{
+          id: data.tracking.vehicleId,
+          lat: loc.lat,
+          lon: loc.lng || loc.lon,
+          status: data.tracking.status || data.load.status,
+          eta: null,
+          distanceKm: null,
+        }]);
+        setRoutePath(data.tracking.path || []);
+      } else {
+        setShipments([]);
+        setRoutePath([]);
+      }
+    } catch (err) {
+      setError(err.message);
+    }
+  }, [loadId]);
 
   useEffect(() => {
+    fetchLoadTracking();
+  }, [fetchLoadTracking]);
+
+  // Live vehicle location ping from the driver app (already emitted by the
+  // backend socket.io update-location handler as `vehicle-location-updated`).
+  // We join the vehicle-specific room on mount so only that vehicle's
+  // updates arrive.
+  const focusedVehicleId = loadFocus?.tracking?.vehicleId;
+  useSocket('vehicle-location-updated', (payload) => {
+    if (!focusedVehicleId || payload?.vehicleId !== focusedVehicleId) return;
+    setShipments((prev) => prev.map((s) => (s.id === payload.vehicleId
+      ? { ...s, lat: payload.location?.lat ?? s.lat, lon: payload.location?.lng ?? s.lon }
+      : s)));
+  });
+
+  // Status transitions (in-transit → delivered, etc.) push a hint — we
+  // re-fetch the authoritative load + tracking doc rather than trust the
+  // optimistic payload.
+  useSocket('load:status-changed', (payload) => {
+    if (!loadId || payload?.loadId !== loadId) return;
+    fetchLoadTracking();
+  });
+
+  // Fleet-wide fallback when no loadId is specified.
+  useEffect(() => {
+    if (loadId) return;
+    apiRequest('/tracking/locations')
+      .then((data) => setShipments(data.shipments || []))
+      .catch((err) => setError(err.message));
+  }, [loadId]);
+
+  useEffect(() => {
+    if (loadId) return;
     if (!shipments.length) return;
     const shipment = shipments[0];
     apiRequest(`/tracking/route/${shipment.id}`)
       .then((data) => setRoutePath(data.route?.path || []))
       .catch(() => {});
-  }, [shipments]);
+  }, [shipments, loadId]);
 
   const routePolyline = useMemo(() => routePath.map((point) => ({ lat: point.lat, lng: point.lng })), [routePath]);
   const selectedShipment = shipments[0];
@@ -37,8 +98,20 @@ export function Tracking() {
     <main className="mx-auto max-w-7xl px-6 py-10 sm:px-10">
       <section className="rounded-[2rem] bg-slate-950/90 p-10 shadow-2xl shadow-slate-900/20 ring-1 ring-white/10">
         <p className="text-sm uppercase tracking-[0.32em] text-orange-300">Real-time GPS Tracking</p>
-        <h1 className="mt-3 text-4xl font-semibold text-white">Live fleet location and route visibility</h1>
-        <p className="mt-4 text-slate-300">Track your shipments across India with live coordinates, ETA and freight progress.</p>
+        <h1 className="mt-3 text-4xl font-semibold text-white">
+          {loadFocus?.load?.loadId
+            ? `Tracking load ${loadFocus.load.loadId}`
+            : 'Live fleet location and route visibility'}
+        </h1>
+        {loadFocus?.load
+          ? (
+            <p className="mt-4 text-slate-300">
+              {loadFocus.load.origin} → {loadFocus.load.destination} • status: <span className="font-semibold text-white">{loadFocus.load.status}</span>
+              {!loadFocus.tracking && ' • no live location yet — driver app needs to send GPS pings'}
+            </p>
+          )
+          : <p className="mt-4 text-slate-300">Track your shipments across India with live coordinates, ETA and freight progress.</p>
+        }
 
         <div className="mt-10 grid gap-6 lg:grid-cols-[1.4fr_0.6fr]">
           <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-6">

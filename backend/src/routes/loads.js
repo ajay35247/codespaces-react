@@ -1,13 +1,32 @@
 import crypto from 'crypto';
 import mongoose from 'mongoose';
+import Razorpay from 'razorpay';
 import { Router } from 'express';
 import { requireRole, verifyJWT } from '../middleware/authorize.js';
 import { requireBookingsEnabled } from '../middleware/platformControl.js';
 import { requireActiveSubscription } from '../middleware/subscription.js';
 import { Joi, validateBody } from '../middleware/validation.js';
 import Load from '../schemas/LoadSchema.js';
+import User from '../schemas/UserSchema.js';
+import {
+  isRazorpayConfigured,
+  isRazorpayXConfigured,
+  verifyRazorpayOrderSignature,
+  registerFundAccount,
+  issuePayout,
+} from '../utils/razorpayClient.js';
+import { notify, pushLive } from '../services/notifications.js';
+import { rankLoadsForDriver, rankDriversForLoad } from '../services/smartRanking.js';
 
 const router = Router();
+
+// Shared Razorpay SDK instance — only the Orders API is exercised here.
+// Payouts / Contacts / Fund Accounts go through utils/razorpayClient.js
+// which hits the REST endpoints directly (RazorpayX isn't wrapped by
+// the v2 SDK yet).
+const razorpay = isRazorpayConfigured()
+  ? new Razorpay({ key_id: process.env.RAZORPAY_KEY_ID, key_secret: process.env.RAZORPAY_KEY_SECRET })
+  : null;
 
 const createLoadSchema = Joi.object({
   origin: Joi.string().trim().min(2).max(200).required(),
@@ -28,6 +47,30 @@ const ALLOWED_LOAD_STATUSES = new Set(['posted', 'in-transit', 'delivered', 'can
 
 const updateStatusSchema = Joi.object({
   status: Joi.string().valid('in-transit', 'delivered', 'cancelled').required(),
+});
+
+// Hard size cap on POD photo data URL (base64 ~ 4/3 of decoded bytes).
+// 350_000 chars ≈ 260 KB decoded — enough for a phone snapshot, small
+// enough to keep MongoDB documents reasonable without object storage.
+const MAX_POD_PHOTO_LENGTH = 350_000;
+
+const podSchema = Joi.object({
+  receiverName: Joi.string().trim().min(2).max(120).required(),
+  receiverPhone: Joi.string().trim().max(40).allow('').optional(),
+  note: Joi.string().trim().max(1000).allow('').optional(),
+  photoUrl: Joi.string()
+    .pattern(/^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/)
+    .max(MAX_POD_PHOTO_LENGTH)
+    .allow('')
+    .optional(),
+});
+
+const releasePaymentSchema = Joi.object({}).unknown(false);
+const receivedPaymentSchema = Joi.object({}).unknown(false);
+
+const rateSchema = Joi.object({
+  stars: Joi.number().integer().min(1).max(5).required(),
+  comment: Joi.string().trim().max(500).allow('').optional(),
 });
 
 /** Escape special regex characters to prevent regex injection. */
@@ -134,6 +177,22 @@ router.post(
         currency: 'INR',
       });
       await load.save();
+
+      // Notify the load's shipper so their dashboard lights up without
+      // needing to poll.  `pushLive` also fires a `load:bid-placed` event
+      // so an already-open loads list can refresh in place.
+      if (load.postedBy && String(load.postedBy) !== String(req.user.id)) {
+        notify({
+          userId: load.postedBy,
+          type: 'bid:placed',
+          title: `New bid on ${load.loadId}`,
+          body: `₹${Number(amount).toLocaleString('en-IN')} from a ${req.user.role}`,
+          link: `/shipper`,
+          meta: { loadId: load.loadId, amount, bidderRole: req.user.role },
+        }).catch(() => {});
+        pushLive(load.postedBy, 'load:bid-placed', { loadId: load.loadId, amount });
+      }
+
       return res.status(201).json({
         message: 'Bid submitted',
         loadId,
@@ -229,6 +288,84 @@ router.get(
   }
 );
 
+// ── Smart ranking: deterministic, rule-based "smart ranking" (NOT AI/ML) ──────
+// Two endpoints, both pure-read:
+//   GET /loads/match                    — driver: rank available loads for me
+//   GET /loads/:loadId/suggested-drivers — shipper/broker: rank candidate drivers
+// Scoring lives in services/smartRanking.js — swap that one file for a
+// trained model once labelled outcome data is available.
+
+router.get(
+  '/match',
+  verifyJWT,
+  requireRole(['driver']),
+  async (req, res) => {
+    try {
+      const limit = Math.min(50, Math.max(1, parseInt(req.query.limit || '20', 10)));
+      const posted = await Load.find({ status: 'posted', assignedDriver: null })
+        .sort({ createdAt: -1 })
+        .limit(200)
+        .lean();
+      const ranked = await rankLoadsForDriver(posted, req.user.id);
+      return res.json({
+        ranking: 'smart-ranking-v1',
+        results: ranked.slice(0, limit),
+      });
+    } catch (error) {
+      console.error('Smart-ranking match error:', error.message);
+      return res.status(500).json({ error: 'Failed to rank loads' });
+    }
+  }
+);
+
+router.get(
+  '/:loadId/suggested-drivers',
+  verifyJWT,
+  requireRole(['shipper', 'broker']),
+  async (req, res) => {
+    try {
+      const load = await Load.findOne({ loadId: req.params.loadId })
+        .select('loadId origin destination truckType postedBy').lean();
+      if (!load) return res.status(404).json({ error: 'Load not found' });
+      // Only the posting shipper (or any broker) may query suggested drivers.
+      if (req.user.role === 'shipper' && String(load.postedBy) !== String(req.user.id)) {
+        return res.status(403).json({ error: 'Not authorized' });
+      }
+
+      // Candidate pool: drivers who have ever delivered a load (i.e. active
+      // on the platform).  Deliberately avoid returning newly-registered,
+      // unproven drivers so shipper suggestions stay signal-heavy.
+      const activeDriverIds = await Load.distinct('assignedDriver', { status: 'delivered' });
+      if (activeDriverIds.length === 0) {
+        return res.json({ ranking: 'smart-ranking-v1', results: [] });
+      }
+      const drivers = await User.find({
+        _id: { $in: activeDriverIds },
+        role: 'driver',
+        accountStatus: 'active',
+      }).select('name email role').limit(100).lean();
+
+      const ranked = await rankDriversForLoad(drivers, load);
+      return res.json({
+        ranking: 'smart-ranking-v1',
+        loadId: load.loadId,
+        results: ranked.slice(0, 20).map((r) => ({
+          driver: {
+            _id: r.driver._id,
+            name: r.driver.name,
+            email: r.driver.email,
+          },
+          score: r.score,
+          breakdown: r.breakdown,
+        })),
+      });
+    } catch (error) {
+      console.error('Suggested drivers error:', error.message);
+      return res.status(500).json({ error: 'Failed to rank drivers' });
+    }
+  }
+);
+
 // ── Get single load by ID ─────────────────────────────────────────────────────
 
 router.get('/:loadId', async (req, res) => {
@@ -270,6 +407,13 @@ router.patch(
         if (load.status !== 'in-transit' || status !== 'delivered') {
           return res.status(409).json({ error: 'Drivers can only mark in-transit loads as delivered' });
         }
+        // Require Proof-of-Delivery before allowing the status transition.
+        // Drivers should use POST /:loadId/pod which submits POD and flips
+        // status atomically; this PATCH path remains as a safety net for
+        // loads that already have POD on file.
+        if (!load.pod || !load.pod.receiverName) {
+          return res.status(409).json({ error: 'Proof of Delivery required before marking delivered' });
+        }
       } else {
         if (String(load.postedBy) !== String(req.user.id)) {
           return res.status(403).json({ error: 'You do not own this load' });
@@ -278,6 +422,10 @@ router.patch(
 
       load.status = status;
       await load.save();
+
+      // Push a refresh hint to both sides of the load.
+      if (load.postedBy) pushLive(load.postedBy, 'load:status-changed', { loadId, status });
+      if (load.assignedDriver) pushLive(load.assignedDriver, 'load:status-changed', { loadId, status });
 
       return res.json({ message: 'Load status updated', loadId, status });
     } catch (error) {
@@ -321,8 +469,41 @@ router.post(
       // shows up under the driver's /loads/mine view and status transitions.
       if (bid.bidderRole === 'driver' && bid.bidderId) {
         load.assignedDriver = bid.bidderId;
+        // Best-effort: auto-bind the driver's most-recently-updated vehicle
+        // so the shipper immediately gets live tracking.  The driver can
+        // change it later via POST /:loadId/vehicle.
+        try {
+          const vehicle = await mongoose.connection.db.collection('vehicles').findOne(
+            { ownerId: String(bid.bidderId) },
+            { sort: { updatedAt: -1 }, projection: { vehicleId: 1 } }
+          );
+          if (vehicle?.vehicleId) {
+            load.vehicleId = String(vehicle.vehicleId);
+          }
+        } catch (lookupErr) {
+          console.warn('Auto-bind vehicle lookup failed:', lookupErr.message);
+        }
       }
       await load.save();
+
+      // Notify the winning bidder + any losers.
+      for (const b of load.bids) {
+        const bidderUserId = b.bidderId || b.brokerId;
+        if (!bidderUserId) continue;
+        if (String(b._id) === bidId) {
+          notify({
+            userId: bidderUserId,
+            type: 'bid:accepted',
+            title: `Your bid was accepted`,
+            body: `Load ${load.loadId} — ${load.origin} → ${load.destination}`,
+            link: b.bidderRole === 'driver' ? '/driver' : '/broker',
+            meta: { loadId: load.loadId, amount: b.amount },
+          }).catch(() => {});
+        }
+        pushLive(bidderUserId, 'load:bid-accepted', { loadId: load.loadId, won: String(b._id) === bidId });
+      }
+      // Shipper's own list should also refresh (status flipped to in-transit).
+      pushLive(load.postedBy, 'load:status-changed', { loadId: load.loadId, status: 'in-transit' });
 
       return res.json({ message: 'Bid accepted, load is now in-transit', loadId, bidId });
     } catch (error) {
@@ -367,5 +548,622 @@ router.post(
 // NOTE: Driver assignment was previously handled by the fleet-manager role,
 // which has been removed. Shippers now assign drivers implicitly by accepting
 // a driver's bid (see /:loadId/bids/:bidId/accept above).
+
+// ── Proof of Delivery (driver) ────────────────────────────────────────────────
+// Driver submits POD details (receiver name + optional phone/note/photo).
+// On success, transitions load to 'delivered' atomically so the loop is closed
+// in one round-trip instead of POD + separate PATCH /status.
+
+router.post(
+  '/:loadId/pod',
+  verifyJWT,
+  requireRole(['driver']),
+  validateBody(podSchema),
+  async (req, res) => {
+    try {
+      const loadId = String(req.params.loadId);
+      const load = await Load.findOne({ loadId });
+      if (!load) {
+        return res.status(404).json({ error: 'Load not found' });
+      }
+      if (!load.assignedDriver || String(load.assignedDriver) !== String(req.user.id)) {
+        return res.status(403).json({ error: 'You are not assigned to this load' });
+      }
+      if (load.status !== 'in-transit') {
+        return res.status(409).json({ error: 'POD can only be submitted for in-transit loads' });
+      }
+      if (load.pod && load.pod.receiverName) {
+        return res.status(409).json({ error: 'POD already submitted for this load' });
+      }
+      load.pod = {
+        receiverName: req.body.receiverName,
+        receiverPhone: req.body.receiverPhone || '',
+        note: req.body.note || '',
+        photoUrl: req.body.photoUrl || '',
+        submittedBy: req.user.id,
+        deliveredAt: new Date(),
+      };
+      load.status = 'delivered';
+      await load.save();
+
+      // Tell the shipper their load is done and POD is on file.
+      if (load.postedBy) {
+        notify({
+          userId: load.postedBy,
+          type: 'load:pod',
+          title: `POD submitted for ${load.loadId}`,
+          body: `Delivered to ${load.pod.receiverName}`,
+          link: `/shipper`,
+          meta: { loadId: load.loadId },
+        }).catch(() => {});
+        pushLive(load.postedBy, 'load:status-changed', { loadId, status: 'delivered' });
+      }
+
+      return res.json({ message: 'POD submitted, load marked delivered', loadId, pod: load.pod, status: load.status });
+    } catch (error) {
+      console.error('POD submit error:', error.message);
+      return res.status(500).json({ error: 'Failed to submit POD' });
+    }
+  }
+);
+
+// ── Payment release / acknowledge (closes the trust loop) ─────────────────────
+// release  : shipper acknowledges they paid the driver (off-platform or via
+//            their own gateway).  Requires load delivered + POD on file.
+// received : driver acknowledges they received the funds.
+
+router.post(
+  '/:loadId/payment/release',
+  verifyJWT,
+  requireRole(['shipper']),
+  validateBody(releasePaymentSchema),
+  async (req, res) => {
+    try {
+      const loadId = String(req.params.loadId);
+      const load = await Load.findOne({ loadId });
+      if (!load) {
+        return res.status(404).json({ error: 'Load not found' });
+      }
+      if (String(load.postedBy) !== String(req.user.id)) {
+        return res.status(403).json({ error: 'You do not own this load' });
+      }
+      if (load.status !== 'delivered') {
+        return res.status(409).json({ error: 'Load must be delivered before releasing payment' });
+      }
+      if (!load.pod || !load.pod.receiverName) {
+        return res.status(409).json({ error: 'POD required before releasing payment' });
+      }
+      if (load.payment?.status !== 'pending') {
+        return res.status(409).json({ error: `Payment already ${load.payment?.status}` });
+      }
+
+      // Try a real RazorpayX Payout to the driver's registered fund account
+      // when the escrow has been funded and RazorpayX is configured.  Falls
+      // back to the plain acknowledgement flow (mode='acknowledgement')
+      // otherwise, so this endpoint never hard-fails for merchants who
+      // haven't enabled payouts yet.
+      let releaseMode = 'acknowledgement';
+      let payoutId = '';
+      if (
+        isRazorpayXConfigured()
+        && load.escrow?.status === 'funded'
+        && load.assignedDriver
+      ) {
+        try {
+          const driver = await User.findById(load.assignedDriver).select('fundAccount name email phone role');
+          if (!driver?.fundAccount?.razorpayFundAccountId) {
+            return res.status(409).json({
+              error: 'Driver has not registered a payout destination yet',
+              code: 'DRIVER_NO_FUND_ACCOUNT',
+            });
+          }
+          const payout = await issuePayout({
+            fundAccountId: driver.fundAccount.razorpayFundAccountId,
+            amountInPaise: Math.round(Number(load.escrow.amount) * 100),
+            mode: driver.fundAccount.method,
+            referenceId: load.loadId,
+            narration: `Load ${load.loadId}`.slice(0, 30),
+          });
+          if (payout.configured) {
+            releaseMode = 'real';
+            payoutId = payout.payoutId;
+            load.escrow.razorpayPayoutId = payout.payoutId;
+            load.escrow.status = 'released';
+            load.escrow.releasedAt = new Date();
+            load.escrow.releaseMode = 'real';
+          }
+        } catch (payoutErr) {
+          console.error('RazorpayX payout failed:', payoutErr.message);
+          load.escrow.failureReason = payoutErr.message;
+          // Do NOT silently succeed — surface the failure to the shipper so
+          // they can retry or fall back to an off-platform transfer.
+          return res.status(502).json({
+            error: `Payout failed: ${payoutErr.message}`,
+            code: 'PAYOUT_FAILED',
+          });
+        }
+      } else if (load.escrow?.status === 'none' || !load.escrow?.status) {
+        // Older loads written before the escrow sub-doc existed may have
+        // `load.escrow` as undefined; coerce to the default shape so we
+        // don't TypeError when annotating releaseMode below.
+        if (!load.escrow) {
+          load.escrow = { status: 'none', releaseMode: 'acknowledgement' };
+        } else {
+          load.escrow.releaseMode = 'acknowledgement';
+        }
+      }
+
+      load.payment = {
+        status: 'released',
+        releasedAt: new Date(),
+        releasedBy: req.user.id,
+        receivedAt: null,
+        receivedBy: null,
+      };
+      await load.save();
+
+      // Notify the driver that payment was released (and via which mode).
+      if (load.assignedDriver) {
+        notify({
+          userId: load.assignedDriver,
+          type: 'payment:released',
+          title: `Payment released for ${load.loadId}`,
+          body: releaseMode === 'real' ? 'Funds sent to your registered account' : 'Shipper has acknowledged payment',
+          link: '/driver',
+          meta: { loadId: load.loadId, releaseMode },
+        }).catch(() => {});
+      }
+
+      return res.json({
+        message: 'Payment marked released',
+        loadId,
+        payment: load.payment,
+        escrow: load.escrow,
+        releaseMode,
+        payoutId,
+      });
+    } catch (error) {
+      console.error('Payment release error:', error.message);
+      return res.status(500).json({ error: 'Failed to release payment' });
+    }
+  }
+);
+
+router.post(
+  '/:loadId/payment/received',
+  verifyJWT,
+  requireRole(['driver']),
+  validateBody(receivedPaymentSchema),
+  async (req, res) => {
+    try {
+      const loadId = String(req.params.loadId);
+      const load = await Load.findOne({ loadId });
+      if (!load) {
+        return res.status(404).json({ error: 'Load not found' });
+      }
+      if (!load.assignedDriver || String(load.assignedDriver) !== String(req.user.id)) {
+        return res.status(403).json({ error: 'You are not assigned to this load' });
+      }
+      if (load.payment?.status !== 'released') {
+        return res.status(409).json({ error: 'Payment has not been released yet' });
+      }
+      load.payment.status = 'received';
+      load.payment.receivedAt = new Date();
+      load.payment.receivedBy = req.user.id;
+      // When a real payout was issued, driver-side acknowledgement also
+      // reconciles the escrow state to 'paid'.
+      if (load.escrow?.status === 'released') {
+        load.escrow.status = 'paid';
+        load.escrow.paidAt = new Date();
+      }
+      await load.save();
+
+      if (load.postedBy) {
+        notify({
+          userId: load.postedBy,
+          type: 'payment:received',
+          title: `Driver confirmed payment for ${load.loadId}`,
+          body: 'Trip closed',
+          link: '/shipper',
+          meta: { loadId: load.loadId },
+        }).catch(() => {});
+      }
+
+      return res.json({ message: 'Payment marked received', loadId, payment: load.payment, escrow: load.escrow });
+    } catch (error) {
+      console.error('Payment received error:', error.message);
+      return res.status(500).json({ error: 'Failed to acknowledge payment' });
+    }
+  }
+);
+
+// ── Bilateral rating (shipper ↔ assigned driver) ──────────────────────────────
+// Only the load's shipper or assigned driver may rate, only after delivery,
+// at most once per role per load.  The ratee is inferred (shipper → driver,
+// driver → shipper) so the client can't target arbitrary users.
+
+router.post(
+  '/:loadId/rate',
+  verifyJWT,
+  requireRole(['shipper', 'driver']),
+  validateBody(rateSchema),
+  async (req, res) => {
+    try {
+      const loadId = String(req.params.loadId);
+      const load = await Load.findOne({ loadId });
+      if (!load) {
+        return res.status(404).json({ error: 'Load not found' });
+      }
+      if (load.status !== 'delivered') {
+        return res.status(409).json({ error: 'Ratings allowed only on delivered loads' });
+      }
+      if (!load.assignedDriver) {
+        return res.status(409).json({ error: 'Load has no assigned driver' });
+      }
+
+      const isShipper = String(load.postedBy) === String(req.user.id) && req.user.role === 'shipper';
+      const isDriver = String(load.assignedDriver) === String(req.user.id) && req.user.role === 'driver';
+      if (!isShipper && !isDriver) {
+        return res.status(403).json({ error: 'Only the shipper or assigned driver can rate this load' });
+      }
+
+      const raterRole = isShipper ? 'shipper' : 'driver';
+      const rateeId = isShipper ? load.assignedDriver : load.postedBy;
+
+      const already = (load.ratings || []).some((r) => r.raterRole === raterRole);
+      if (already) {
+        return res.status(409).json({ error: 'You have already rated this load' });
+      }
+
+      load.ratings.push({
+        raterId: req.user.id,
+        rateeId,
+        raterRole,
+        stars: req.body.stars,
+        comment: req.body.comment || '',
+      });
+      await load.save();
+      return res.status(201).json({ message: 'Rating recorded', loadId, raterRole, stars: req.body.stars });
+    } catch (error) {
+      console.error('Rate load error:', error.message);
+      return res.status(500).json({ error: 'Failed to record rating' });
+    }
+  }
+);
+
+// ── Public rating summary for a user ──────────────────────────────────────────
+// Aggregates all ratings where the given userId is the ratee.  Used by both
+// driver- and shipper-facing UI to display reputation badges.
+
+router.get('/users/:userId/rating-summary', verifyJWT, async (req, res) => {
+  try {
+    const userId = req.params.userId;
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({ error: 'Invalid user ID' });
+    }
+    const userObjectId = new mongoose.Types.ObjectId(userId);
+    const result = await Load.aggregate([
+      { $unwind: '$ratings' },
+      { $match: { 'ratings.rateeId': userObjectId } },
+      {
+        $group: {
+          _id: '$ratings.raterRole',
+          count: { $sum: 1 },
+          avgStars: { $avg: '$ratings.stars' },
+        },
+      },
+    ]);
+
+    let totalCount = 0;
+    let weightedSum = 0;
+    const byRole = {};
+    for (const row of result) {
+      byRole[row._id] = { count: row.count, avgStars: Math.round(row.avgStars * 10) / 10 };
+      totalCount += row.count;
+      weightedSum += row.avgStars * row.count;
+    }
+    return res.json({
+      userId,
+      totalCount,
+      avgStars: totalCount > 0 ? Math.round((weightedSum / totalCount) * 10) / 10 : null,
+      byRole,
+    });
+  } catch (error) {
+    console.error('Rating summary error:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch rating summary' });
+  }
+});
+
+// ── Escrow: real money hold via Razorpay Orders ───────────────────────────────
+// Flow:
+//   1. Shipper calls POST /:loadId/escrow/create — we create a Razorpay Order
+//      for the accepted-bid amount (or freightPrice) and persist orderId.
+//   2. Frontend opens Razorpay Checkout with the returned orderId + keyId.
+//      On success Checkout returns {razorpay_order_id, razorpay_payment_id,
+//      razorpay_signature}.
+//   3. Shipper calls POST /:loadId/escrow/verify with those fields — we verify
+//      the HMAC signature and mark escrow `funded`.
+// Release is triggered from POST /:loadId/payment/release above.
+//
+// When RAZORPAY_KEY_ID/SECRET are not set the create endpoint returns 501 so
+// the UI can gracefully show "Pay Offline" as the only option.  This is
+// intentional — we don't want to silently fake the hold.
+
+router.post(
+  '/:loadId/escrow/create',
+  verifyJWT,
+  requireRole(['shipper']),
+  requireBookingsEnabled(),
+  async (req, res) => {
+    try {
+      if (!razorpay) {
+        return res.status(501).json({
+          error: 'Escrow not configured — set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET',
+          code: 'RAZORPAY_NOT_CONFIGURED',
+        });
+      }
+      const loadId = String(req.params.loadId);
+      const load = await Load.findOne({ loadId });
+      if (!load) return res.status(404).json({ error: 'Load not found' });
+      if (String(load.postedBy) !== String(req.user.id)) {
+        return res.status(403).json({ error: 'You do not own this load' });
+      }
+      if (['funded', 'released', 'paid'].includes(load.escrow?.status)) {
+        return res.status(409).json({ error: `Escrow already ${load.escrow.status}` });
+      }
+
+      // Resolve escrow amount: prefer the accepted bid, fall back to freightPrice.
+      let amount = Number(load.freightPrice) || 0;
+      if (load.acceptedBidId) {
+        const accepted = load.bids.id(load.acceptedBidId);
+        if (accepted?.amount) amount = Number(accepted.amount);
+      }
+      if (!amount || amount <= 0) {
+        return res.status(409).json({ error: 'Load does not have a priced bid or freight price' });
+      }
+
+      const order = await razorpay.orders.create({
+        amount: Math.round(amount * 100),
+        currency: 'INR',
+        receipt: `escrow_${load.loadId}`.slice(0, 40),
+        notes: { loadId: load.loadId, shipperId: String(req.user.id), kind: 'escrow' },
+        payment_capture: 1,
+      });
+
+      load.escrow = {
+        status: 'initiated',
+        amount,
+        currency: 'INR',
+        razorpayOrderId: order.id,
+        razorpayPaymentId: '',
+        razorpayPayoutId: '',
+        releaseMode: '',
+        failureReason: '',
+        initiatedAt: new Date(),
+        fundedAt: null,
+        releasedAt: null,
+        paidAt: null,
+      };
+      await load.save();
+
+      return res.json({
+        loadId: load.loadId,
+        orderId: order.id,
+        amount,
+        currency: 'INR',
+        keyId: process.env.RAZORPAY_KEY_ID,
+        escrow: load.escrow,
+      });
+    } catch (error) {
+      console.error('Escrow create error:', error.message);
+      return res.status(500).json({ error: 'Failed to create escrow order' });
+    }
+  }
+);
+
+const escrowVerifySchema = Joi.object({
+  razorpay_order_id: Joi.string().trim().required(),
+  razorpay_payment_id: Joi.string().trim().required(),
+  razorpay_signature: Joi.string().trim().required(),
+});
+
+router.post(
+  '/:loadId/escrow/verify',
+  verifyJWT,
+  requireRole(['shipper']),
+  validateBody(escrowVerifySchema),
+  async (req, res) => {
+    try {
+      const loadId = String(req.params.loadId);
+      const load = await Load.findOne({ loadId });
+      if (!load) return res.status(404).json({ error: 'Load not found' });
+      if (String(load.postedBy) !== String(req.user.id)) {
+        return res.status(403).json({ error: 'You do not own this load' });
+      }
+      if (load.escrow?.status !== 'initiated') {
+        return res.status(409).json({ error: `Escrow is ${load.escrow?.status || 'none'}, cannot verify` });
+      }
+      if (load.escrow.razorpayOrderId !== req.body.razorpay_order_id) {
+        return res.status(400).json({ error: 'Order ID mismatch' });
+      }
+      const ok = verifyRazorpayOrderSignature(req.body);
+      if (!ok) {
+        return res.status(400).json({ error: 'Invalid payment signature' });
+      }
+
+      load.escrow.status = 'funded';
+      load.escrow.razorpayPaymentId = req.body.razorpay_payment_id;
+      load.escrow.fundedAt = new Date();
+      await load.save();
+
+      if (load.assignedDriver) {
+        notify({
+          userId: load.assignedDriver,
+          type: 'escrow:funded',
+          title: `Escrow funded for ${load.loadId}`,
+          body: `₹${Number(load.escrow.amount || 0).toLocaleString('en-IN')} is now held for this trip`,
+          link: '/driver',
+          meta: { loadId: load.loadId, amount: load.escrow.amount },
+        }).catch(() => {});
+      }
+
+      return res.json({ message: 'Escrow funded', loadId, escrow: load.escrow });
+    } catch (error) {
+      console.error('Escrow verify error:', error.message);
+      return res.status(500).json({ error: 'Failed to verify escrow payment' });
+    }
+  }
+);
+
+// ── Bind vehicle to load (driver-side) ────────────────────────────────────────
+// Lets the assigned driver set / switch the vehicle used for this load so
+// the shipper's live-tracking picks up the correct device.  Written as an
+// opt-in to the `vehicles` collection (owned by fleet.js) without coupling
+// to its schema — the endpoint only verifies the vehicle belongs to the
+// caller.
+
+const bindVehicleSchema = Joi.object({
+  vehicleId: Joi.string().trim().min(1).max(64).required(),
+});
+
+router.post(
+  '/:loadId/vehicle',
+  verifyJWT,
+  requireRole(['driver']),
+  validateBody(bindVehicleSchema),
+  async (req, res) => {
+    try {
+      const loadId = String(req.params.loadId);
+      const load = await Load.findOne({ loadId });
+      if (!load) return res.status(404).json({ error: 'Load not found' });
+      if (!load.assignedDriver || String(load.assignedDriver) !== String(req.user.id)) {
+        return res.status(403).json({ error: 'You are not assigned to this load' });
+      }
+      const owned = await mongoose.connection.db.collection('vehicles').findOne({
+        vehicleId: req.body.vehicleId,
+        ownerId: String(req.user.id),
+      });
+      if (!owned) {
+        return res.status(404).json({ error: 'Vehicle not found or not owned by you' });
+      }
+      load.vehicleId = String(req.body.vehicleId);
+      await load.save();
+      return res.json({ message: 'Vehicle bound to load', loadId, vehicleId: load.vehicleId });
+    } catch (error) {
+      console.error('Bind vehicle error:', error.message);
+      return res.status(500).json({ error: 'Failed to bind vehicle' });
+    }
+  }
+);
+
+// ── Insurance declaration ─────────────────────────────────────────────────────
+// Shipper attaches an existing policy to a load.  This is NOT an API-bound
+// policy — it's a record of a policy already purchased elsewhere (or a
+// broker-of-record declaration).  When a carrier partnership is signed the
+// same schema will hold carrier-issued data without frontend changes.
+
+const MAX_INSURANCE_DOC_LENGTH = 350_000;
+
+const declareInsuranceSchema = Joi.object({
+  carrierName: Joi.string().trim().min(2).max(200).required(),
+  policyNumber: Joi.string().trim().min(1).max(100).required(),
+  coverageAmount: Joi.number().min(0).max(1e12).required(),
+  premium: Joi.number().min(0).max(1e10).optional(),
+  brokerName: Joi.string().trim().max(200).allow('').optional(),
+  brokerEmail: Joi.string().trim().email().allow('').optional(),
+  documentDataUrl: Joi.string()
+    .pattern(/^data:(application\/pdf|image\/(png|jpe?g|webp));base64,[A-Za-z0-9+/=]+$/)
+    .max(MAX_INSURANCE_DOC_LENGTH)
+    .allow('')
+    .optional(),
+});
+
+router.post(
+  '/:loadId/insurance',
+  verifyJWT,
+  requireRole(['shipper']),
+  validateBody(declareInsuranceSchema),
+  async (req, res) => {
+    try {
+      const loadId = String(req.params.loadId);
+      const load = await Load.findOne({ loadId });
+      if (!load) return res.status(404).json({ error: 'Load not found' });
+      if (String(load.postedBy) !== String(req.user.id)) {
+        return res.status(403).json({ error: 'Only the shipper who posted this load can declare insurance' });
+      }
+      load.insurance = {
+        carrierName: req.body.carrierName,
+        policyNumber: req.body.policyNumber,
+        coverageAmount: req.body.coverageAmount,
+        premium: req.body.premium || 0,
+        brokerName: req.body.brokerName || '',
+        brokerEmail: req.body.brokerEmail || '',
+        documentDataUrl: req.body.documentDataUrl || '',
+        source: 'declared',
+        declaredAt: new Date(),
+      };
+      await load.save();
+      return res.json({
+        message: 'Insurance declared',
+        loadId,
+        insurance: {
+          carrierName: load.insurance.carrierName,
+          policyNumber: load.insurance.policyNumber,
+          coverageAmount: load.insurance.coverageAmount,
+          premium: load.insurance.premium,
+          brokerName: load.insurance.brokerName,
+          brokerEmail: load.insurance.brokerEmail,
+          source: load.insurance.source,
+          declaredAt: load.insurance.declaredAt,
+        },
+      });
+    } catch (error) {
+      console.error('Insurance declare error:', error.message);
+      return res.status(500).json({ error: 'Failed to declare insurance' });
+    }
+  }
+);
+
+router.get(
+  '/:loadId/insurance',
+  verifyJWT,
+  async (req, res) => {
+    try {
+      const loadId = String(req.params.loadId);
+      const load = await Load.findOne({ loadId }).select('postedBy assignedDriver insurance').lean();
+      if (!load) return res.status(404).json({ error: 'Load not found' });
+      const isShipper = String(load.postedBy) === String(req.user.id);
+      const isDriver = load.assignedDriver && String(load.assignedDriver) === String(req.user.id);
+      const isAdmin = req.user.role === 'admin';
+      if (!isShipper && !isDriver && !isAdmin) {
+        return res.status(403).json({ error: 'Not authorized' });
+      }
+      if (!load.insurance || !load.insurance.source) {
+        return res.json({ insurance: null });
+      }
+      // Drivers see a redacted view — no document, no premium.
+      if (isDriver && !isShipper && !isAdmin) {
+        return res.json({
+          insurance: {
+            carrierName: load.insurance.carrierName,
+            coverageAmount: load.insurance.coverageAmount,
+            source: load.insurance.source,
+            declaredAt: load.insurance.declaredAt,
+          },
+        });
+      }
+      const { documentDataUrl, ...rest } = load.insurance;
+      return res.json({
+        insurance: {
+          ...rest,
+          hasDocument: Boolean(documentDataUrl),
+        },
+      });
+    } catch (error) {
+      console.error('Insurance fetch error:', error.message);
+      return res.status(500).json({ error: 'Failed to fetch insurance' });
+    }
+  }
+);
 
 export default router;

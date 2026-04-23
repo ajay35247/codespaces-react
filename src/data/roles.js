@@ -17,4 +17,10 @@ export const ROLE_CARDS = [
     description: 'Match loads with trucks, negotiate rates and manage commissions.',
     color: 'from-emerald-600 to-lime-500',
   },
+  {
+    key: 'truck_owner',
+    label: 'Truck Owner',
+    description: 'Manage your fleet, assign drivers to loads, and track fleet earnings.',
+    color: 'from-indigo-600 to-violet-500',
+  },
 ];

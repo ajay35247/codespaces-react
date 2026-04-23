@@ -1,6 +1,81 @@
 import { useEffect, useState } from 'react';
 import { apiRequest } from '../utils/api';
 
+const DEAL_COLUMNS = [
+  { id: 'quoted', label: 'Quoted', accent: 'border-sky-500/40 text-sky-200', hint: 'Bid pending, load still open' },
+  { id: 'won', label: 'Won', accent: 'border-amber-500/40 text-amber-200', hint: 'Bid accepted, load in-transit' },
+  { id: 'delivered', label: 'Delivered', accent: 'border-emerald-500/40 text-emerald-200', hint: 'Completed — payout pending' },
+  { id: 'lost', label: 'Lost', accent: 'border-rose-500/40 text-rose-200', hint: 'Bid rejected' },
+];
+
+function DealCard({ load }) {
+  return (
+    <div className="rounded-2xl border border-white/5 bg-slate-950/60 p-3">
+      <p className="text-xs font-semibold text-white">{load.loadId}</p>
+      <p className="mt-1 text-xs text-slate-400">{load.origin} → {load.destination}</p>
+      <p className="mt-1 text-xs text-slate-500">
+        Bid ₹{(load.myBid?.amount || 0).toLocaleString('en-IN')}
+        {load.freightPrice ? ` • Freight ₹${load.freightPrice.toLocaleString('en-IN')}` : ''}
+      </p>
+      {load.payment?.status && load.payment.status !== 'pending' && (
+        <p className="mt-1 text-[10px] uppercase tracking-wide text-emerald-400">Payment {load.payment.status}</p>
+      )}
+    </div>
+  );
+}
+
+function DealBoard({ deals, loading }) {
+  if (loading && !deals) {
+    return <p className="mt-8 text-sm text-slate-400">Loading deal pipeline…</p>;
+  }
+  if (!deals) return null;
+  const totals = deals.totals || {};
+  return (
+    <div className="mt-10 rounded-3xl border border-white/10 bg-slate-900/80 p-6">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h2 className="text-xl font-semibold text-white">Deal pipeline</h2>
+          <p className="mt-1 text-sm text-slate-400">Your bids grouped by outcome.</p>
+        </div>
+        <div className="flex flex-wrap gap-3 text-xs">
+          <span className="rounded-full bg-emerald-500/10 px-3 py-1 text-emerald-300">
+            Won value ₹{(totals.totalWonAmount || 0).toLocaleString('en-IN')}
+          </span>
+          <span className="rounded-full bg-sky-500/10 px-3 py-1 text-sky-300">
+            Quoted value ₹{(totals.totalQuotedAmount || 0).toLocaleString('en-IN')}
+          </span>
+          <span className="rounded-full bg-rose-500/10 px-3 py-1 text-rose-300">
+            Lost value ₹{(totals.totalLostAmount || 0).toLocaleString('en-IN')}
+          </span>
+        </div>
+      </div>
+      <div className="mt-5 grid gap-4 lg:grid-cols-4">
+        {DEAL_COLUMNS.map((col) => {
+          const items = deals.pipeline?.[col.id] || [];
+          return (
+            <div key={col.id} className={`rounded-3xl border bg-slate-950/70 p-4 ${col.accent}`}>
+              <div className="flex items-baseline justify-between">
+                <p className="text-sm font-semibold uppercase tracking-wider">{col.label}</p>
+                <span className="rounded-full bg-slate-900/80 px-2 py-0.5 text-xs text-slate-300">{items.length}</span>
+              </div>
+              <p className="mt-1 text-[11px] text-slate-500">{col.hint}</p>
+              <div className="mt-3 space-y-2">
+                {items.length === 0
+                  ? <p className="text-xs text-slate-600">—</p>
+                  : items.slice(0, 8).map((load) => <DealCard key={load.loadId} load={load} />)
+                }
+                {items.length > 8 && (
+                  <p className="text-[10px] uppercase text-slate-500">+{items.length - 8} more</p>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export function BrokerWorkflow() {
   const [summary, setSummary] = useState(null);
   const [loads, setLoads] = useState([]);
@@ -10,15 +85,19 @@ export function BrokerWorkflow() {
   const [bidAmounts, setBidAmounts] = useState({});
   const [bidStatus, setBidStatus] = useState({});
 
+  const [deals, setDeals] = useState(null);
+
   const loadData = () => {
     setLoading(true);
     Promise.all([
       apiRequest('/broker/summary'),
       apiRequest('/broker/loads'),
+      apiRequest('/broker/deals').catch(() => null),
     ])
-      .then(([summaryData, loadsData]) => {
+      .then(([summaryData, loadsData, dealsData]) => {
         setSummary(summaryData.summary || null);
         setLoads(loadsData.loads || []);
+        setDeals(dealsData || null);
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
@@ -91,6 +170,8 @@ export function BrokerWorkflow() {
             </p>
           </div>
         </div>
+
+        <DealBoard deals={deals} loading={loading} />
 
         <div className="mt-10 rounded-3xl border border-white/10 bg-slate-900/80 p-6">
           <div className="flex items-center justify-between">

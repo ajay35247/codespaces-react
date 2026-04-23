@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { apiRequest } from '../utils/api';
+import { RatingBadge, StarPicker } from '../components/RatingBadge';
+import { loadRazorpayScript } from '../utils/razorpay';
 
 const TRUCK_TYPES = ['truck', 'mini-truck', 'trailer', 'container', 'tanker', 'flatbed', 'reefer'];
 
@@ -169,14 +172,24 @@ function BidRow({ bid, loadId, loadStatus, onAction }) {
     }
   };
 
+  const bidderOrBrokerId = bid.bidderId || bid.brokerId;
+
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-slate-800/50 px-4 py-3 text-sm">
-      <div>
-        <span className="text-slate-400">Bid amount: </span>
-        <span className="font-semibold text-white">₹{bid.amount?.toLocaleString('en-IN')}</span>
-        <span className={`ml-3 rounded-full px-2 py-0.5 text-xs ${bid.status === 'accepted' ? 'bg-emerald-800 text-emerald-200' : bid.status === 'rejected' ? 'bg-slate-700 text-slate-400' : 'bg-sky-800 text-sky-200'}`}>
-          {bid.status}
-        </span>
+      <div className="flex flex-wrap items-center gap-3">
+        <div>
+          <span className="text-slate-400">Bid amount: </span>
+          <span className="font-semibold text-white">₹{bid.amount?.toLocaleString('en-IN')}</span>
+          <span className={`ml-3 rounded-full px-2 py-0.5 text-xs ${bid.status === 'accepted' ? 'bg-emerald-800 text-emerald-200' : bid.status === 'rejected' ? 'bg-slate-700 text-slate-400' : 'bg-sky-800 text-sky-200'}`}>
+            {bid.status}
+          </span>
+        </div>
+        {bidderOrBrokerId && (
+          <span className="flex items-center gap-1.5">
+            <span className="text-[10px] uppercase tracking-wide text-slate-500">{bid.bidderRole || 'bidder'}</span>
+            <RatingBadge userId={bidderOrBrokerId} />
+          </span>
+        )}
       </div>
       {loadStatus === 'posted' && bid.status === 'pending' && (
         <div className="flex gap-2">
@@ -200,22 +213,251 @@ function BidRow({ bid, loadId, loadStatus, onAction }) {
   );
 }
 
+function RateDriverModal({ load, onClose, onRated }) {
+  const [stars, setStars] = useState(0);
+  const [comment, setComment] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (stars < 1) { setError('Please select a star rating'); return; }
+    setSubmitting(true); setError(null);
+    try {
+      const body = { stars };
+      if (comment.trim()) body.comment = comment.trim();
+      await apiRequest(`/loads/${load.loadId}/rate`, { method: 'POST', body });
+      onRated();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4" onClick={onClose}>
+      <form onClick={(e) => e.stopPropagation()} onSubmit={submit}
+        className="w-full max-w-sm space-y-4 rounded-3xl border border-white/10 bg-slate-900 p-6 shadow-2xl">
+        <header>
+          <p className="text-xs uppercase tracking-widest text-amber-300">Rate Driver</p>
+          <h3 className="mt-1 text-lg font-bold text-white">{load.loadId}</h3>
+        </header>
+        <div className="flex justify-center"><StarPicker value={stars} onChange={setStars} /></div>
+        <textarea
+          value={comment} onChange={(e) => setComment(e.target.value)} rows={3} maxLength={500}
+          placeholder="Optional comment"
+          className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+        />
+        {error && <p className="text-sm text-orange-300">{error}</p>}
+        <div className="flex items-center justify-end gap-2">
+          <button type="button" onClick={onClose} className="rounded-full border border-white/15 px-4 py-2 text-sm text-slate-300">Cancel</button>
+          <button type="submit" disabled={submitting || stars < 1}
+            className="rounded-full bg-amber-400 px-5 py-2 text-sm font-bold text-slate-950 disabled:opacity-50">
+            {submitting ? 'Saving…' : 'Submit rating'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function InsurancePanel({ load, onUpdated }) {
+  const [expanded, setExpanded] = useState(false);
+  const [existing, setExisting] = useState(load.insurance || null);
+  const [form, setForm] = useState({
+    carrierName: '', policyNumber: '', coverageAmount: '', premium: '',
+    brokerName: '', brokerEmail: '',
+  });
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
+  const [success, setSuccess] = useState(null);
+
+  useEffect(() => { setExisting(load.insurance || null); }, [load.insurance]);
+
+  const handleChange = (e) => setForm({ ...form, [e.target.name]: e.target.value });
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setSubmitting(true); setError(null); setSuccess(null);
+    try {
+      const body = {
+        carrierName: form.carrierName.trim(),
+        policyNumber: form.policyNumber.trim(),
+        coverageAmount: parseFloat(form.coverageAmount),
+      };
+      if (form.premium) body.premium = parseFloat(form.premium);
+      if (form.brokerName.trim()) body.brokerName = form.brokerName.trim();
+      if (form.brokerEmail.trim()) body.brokerEmail = form.brokerEmail.trim();
+      const data = await apiRequest(`/loads/${load.loadId}/insurance`, { method: 'POST', body });
+      setExisting(data.insurance);
+      setSuccess('Insurance declared');
+      onUpdated?.();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // External "Get a quote" link — a real carrier API integration would
+  // replace this with a bound policy flow.  Falls back to a mailto so it
+  // always does something useful even without env config.
+  const quoteUrl = import.meta.env.VITE_INSURANCE_QUOTE_URL
+    || `mailto:insurance@aptrucking.in?subject=Quote%20for%20load%20${encodeURIComponent(load.loadId)}`;
+
+  return (
+    <div className="mt-4 rounded-2xl border border-sky-400/20 bg-sky-500/5 p-3 text-xs text-sky-100">
+      <div className="flex items-center justify-between">
+        <p className="font-semibold uppercase tracking-wide text-sky-300">Insurance</p>
+        <div className="flex items-center gap-2">
+          <a
+            href={quoteUrl}
+            target="_blank" rel="noopener noreferrer"
+            className="rounded-full border border-sky-400/40 bg-sky-500/10 px-3 py-1 text-[11px] font-semibold text-sky-200 hover:bg-sky-500/20"
+          >
+            Get a quote ↗
+          </a>
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="rounded-full border border-white/15 bg-white/5 px-3 py-1 text-[11px] text-sky-100 hover:bg-white/10"
+          >
+            {existing ? (expanded ? 'Hide' : 'Update') : (expanded ? 'Cancel' : 'Declare policy')}
+          </button>
+        </div>
+      </div>
+
+      {existing && !expanded && (
+        <div className="mt-2 space-y-0.5 text-sky-100/90">
+          <p>Carrier: <span className="text-white">{existing.carrierName}</span></p>
+          <p>Policy #: <span className="text-white">{existing.policyNumber}</span></p>
+          <p>Coverage: <span className="text-white">₹{Number(existing.coverageAmount || 0).toLocaleString('en-IN')}</span></p>
+          {existing.brokerName && <p>Broker of record: {existing.brokerName}{existing.brokerEmail ? ` (${existing.brokerEmail})` : ''}</p>}
+          <p className="text-[10px] text-sky-300/70">
+            Source: {existing.source} — not an API-bound policy. See docs for carrier-API integration.
+          </p>
+        </div>
+      )}
+
+      {expanded && (
+        <form onSubmit={submit} className="mt-3 grid gap-2 sm:grid-cols-2">
+          <input name="carrierName" value={form.carrierName} onChange={handleChange} placeholder="Carrier name *" required minLength={2} maxLength={200}
+            className="rounded-xl border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] text-white" />
+          <input name="policyNumber" value={form.policyNumber} onChange={handleChange} placeholder="Policy number *" required minLength={1} maxLength={100}
+            className="rounded-xl border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] text-white" />
+          <input name="coverageAmount" type="number" min="0" step="0.01" value={form.coverageAmount} onChange={handleChange} placeholder="Coverage amount (₹) *" required
+            className="rounded-xl border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] text-white" />
+          <input name="premium" type="number" min="0" step="0.01" value={form.premium} onChange={handleChange} placeholder="Premium (₹, optional)"
+            className="rounded-xl border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] text-white" />
+          <input name="brokerName" value={form.brokerName} onChange={handleChange} placeholder="Broker name" maxLength={200}
+            className="rounded-xl border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] text-white" />
+          <input name="brokerEmail" type="email" value={form.brokerEmail} onChange={handleChange} placeholder="Broker email"
+            className="rounded-xl border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] text-white" />
+          <div className="sm:col-span-2 flex items-center gap-3">
+            <button type="submit" disabled={submitting}
+              className="rounded-full bg-sky-500 px-4 py-1.5 text-[11px] font-bold text-slate-950 disabled:opacity-50">
+              {submitting ? 'Saving…' : 'Save declaration'}
+            </button>
+            {error && <span className="text-[11px] text-orange-300">{error}</span>}
+            {success && <span className="text-[11px] text-emerald-300">{success}</span>}
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
+
 function LoadCard({ load, onStatusChange }) {
   const [expandBids, setExpandBids] = useState(false);
   const [updating, setUpdating] = useState(false);
+  const [error, setError] = useState(null);
+  const [showRate, setShowRate] = useState(false);
+
+  const shipperHasRated = (load.ratings || []).some((r) => r.raterRole === 'shipper');
+  const paymentStatus = load.payment?.status || 'pending';
+  const driverId = typeof load.assignedDriver === 'object' && load.assignedDriver
+    ? load.assignedDriver._id
+    : load.assignedDriver;
 
   const handleCancel = async () => {
     if (!window.confirm('Cancel this load?')) return;
-    setUpdating(true);
+    setUpdating(true); setError(null);
     try {
       await apiRequest(`/loads/${load.loadId}/status`, { method: 'PATCH', body: { status: 'cancelled' } });
       onStatusChange();
     } catch (err) {
-      console.error('Cancel load error:', err.message);
+      setError(err.message);
     } finally {
       setUpdating(false);
     }
   };
+
+  const releasePayment = async () => {
+    if (!window.confirm('Mark this freight payment as released to the driver?')) return;
+    setUpdating(true); setError(null);
+    try {
+      const result = await apiRequest(`/loads/${load.loadId}/payment/release`, { method: 'POST', body: {} });
+      if (result?.releaseMode === 'real') {
+        window.alert(`Payout initiated via RazorpayX (id: ${result.payoutId || 'processing'})`);
+      }
+      onStatusChange();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  /**
+   * Fund escrow for this load via Razorpay Checkout.  Creates a platform Order
+   * for the accepted-bid / freight amount, opens Razorpay, and verifies the
+   * signature on success.  If escrow is not configured server-side the create
+   * call returns 501; we surface the error instead of silently faking funding.
+   */
+  const fundEscrow = async () => {
+    setUpdating(true); setError(null);
+    try {
+      const data = await apiRequest(`/loads/${load.loadId}/escrow/create`, { method: 'POST', body: {} });
+      if (!data?.orderId) throw new Error('Escrow gateway returned no order');
+      const ok = await loadRazorpayScript();
+      if (!ok) throw new Error('Unable to load Razorpay checkout');
+      const options = {
+        key: data.keyId,
+        amount: Math.round(data.amount * 100),
+        currency: data.currency || 'INR',
+        name: 'Speedy Trucks',
+        description: `Escrow for ${load.loadId}`,
+        order_id: data.orderId,
+        handler: async (response) => {
+          try {
+            await apiRequest(`/loads/${load.loadId}/escrow/verify`, {
+              method: 'POST',
+              body: {
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature,
+              },
+            });
+            onStatusChange();
+          } catch (verifyErr) {
+            setError(verifyErr.message);
+          }
+        },
+        theme: { color: '#fb923c' },
+      };
+      const rzp = new window.Razorpay(options);
+      rzp.open();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const escrow = load.escrow || {};
+  const escrowStatus = escrow.status || 'none';
+  const canFundEscrow = load.acceptedBidId && ['none', 'failed', 'refunded'].includes(escrowStatus);
 
   return (
     <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-6">
@@ -231,6 +473,11 @@ function LoadCard({ load, onStatusChange }) {
           {load.pickupDate && (
             <p className="mt-1 text-xs text-slate-400">Pickup: {new Date(load.pickupDate).toLocaleDateString('en-IN')}</p>
           )}
+          {driverId && (
+            <p className="mt-2 flex items-center gap-2 text-xs text-slate-400">
+              Driver: <RatingBadge userId={driverId} />
+            </p>
+          )}
         </div>
         <div className="flex flex-col items-end gap-2">
           <span className={`rounded-full px-3 py-1 text-xs font-semibold uppercase ${STATUS_BADGE[load.status] || 'bg-slate-700 text-slate-300'}`}>
@@ -245,8 +492,78 @@ function LoadCard({ load, onStatusChange }) {
               Cancel
             </button>
           )}
+          {canFundEscrow && (
+            <button
+              onClick={fundEscrow}
+              disabled={updating}
+              className="rounded-full bg-sky-500 px-3 py-1 text-xs font-bold text-slate-950 transition hover:bg-sky-400 disabled:opacity-50"
+              title="Hold freight in Razorpay escrow until delivery"
+            >
+              🔒 Fund Escrow
+            </button>
+          )}
+          {escrowStatus === 'initiated' && (
+            <span className="rounded-full bg-sky-900/50 px-3 py-1 text-xs text-sky-200">Escrow awaiting payment</span>
+          )}
+          {escrowStatus === 'funded' && (
+            <span className="rounded-full bg-emerald-900/50 px-3 py-1 text-xs text-emerald-200">🔒 Escrow funded</span>
+          )}
+          {escrowStatus === 'released' && (
+            <span className="rounded-full bg-emerald-900/50 px-3 py-1 text-xs text-emerald-200">💸 Payout released</span>
+          )}
+          {escrowStatus === 'paid' && (
+            <span className="rounded-full bg-emerald-900/50 px-3 py-1 text-xs text-emerald-200">✅ Paid out</span>
+          )}
+          {load.status === 'in-transit' && load.vehicleId && (
+            <Link
+              to={`/tracking?loadId=${encodeURIComponent(load.loadId)}`}
+              className="rounded-full border border-sky-400/40 bg-sky-500/10 px-3 py-1 text-xs font-semibold text-sky-300 transition hover:bg-sky-500/20"
+            >
+              📍 Track Live
+            </Link>
+          )}
+          {load.status === 'delivered' && paymentStatus === 'pending' && load.pod && (
+            <button
+              onClick={releasePayment}
+              disabled={updating}
+              className="rounded-full bg-emerald-500 px-3 py-1 text-xs font-bold text-slate-950 transition hover:bg-emerald-400 disabled:opacity-50"
+            >
+              💸 Release Payment
+            </button>
+          )}
+          {load.status === 'delivered' && paymentStatus !== 'pending' && (
+            <span className={`rounded-full px-3 py-1 text-xs ${paymentStatus === 'received' ? 'bg-emerald-800 text-emerald-200' : 'bg-amber-800 text-amber-200'}`}>
+              Payment {paymentStatus}
+            </span>
+          )}
+          {load.status === 'delivered' && !shipperHasRated && (
+            <button
+              onClick={() => setShowRate(true)}
+              className="rounded-full border border-amber-400/40 bg-amber-500/10 px-3 py-1 text-xs font-semibold text-amber-300 transition hover:bg-amber-500/20"
+            >
+              ★ Rate Driver
+            </button>
+          )}
         </div>
       </div>
+
+      {load.status === 'delivered' && load.pod && (
+        <div className="mt-4 rounded-2xl border border-emerald-400/20 bg-emerald-500/5 p-3 text-xs text-emerald-200">
+          <p className="font-semibold uppercase tracking-wide text-emerald-300">Proof of Delivery</p>
+          <p className="mt-1">Received by {load.pod.receiverName}{load.pod.receiverPhone ? ` (${load.pod.receiverPhone})` : ''}</p>
+          {load.pod.note && <p className="mt-1 italic text-emerald-200/80">“{load.pod.note}”</p>}
+          {load.pod.deliveredAt && (
+            <p className="mt-1 text-emerald-200/60">Delivered: {new Date(load.pod.deliveredAt).toLocaleString('en-IN')}</p>
+          )}
+          {load.pod.photoUrl && (
+            <img src={load.pod.photoUrl} alt="POD" className="mt-2 h-32 w-auto rounded-xl border border-emerald-400/20" />
+          )}
+        </div>
+      )}
+
+      {error && <p className="mt-3 text-xs text-orange-300">{error}</p>}
+
+      <InsurancePanel load={load} onUpdated={onStatusChange} />
 
       {load.bids && load.bids.length > 0 && (
         <div className="mt-4">
@@ -273,7 +590,11 @@ function LoadCard({ load, onStatusChange }) {
       )}
 
       {load.bids && load.bids.length === 0 && load.status === 'posted' && (
-        <p className="mt-4 text-xs text-slate-500">No bids yet. Brokers will bid on this load.</p>
+        <p className="mt-4 text-xs text-slate-500">No bids yet. Drivers and brokers will bid on this load.</p>
+      )}
+
+      {showRate && (
+        <RateDriverModal load={load} onClose={() => setShowRate(false)} onRated={() => { setShowRate(false); onStatusChange(); }} />
       )}
     </div>
   );

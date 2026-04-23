@@ -28,6 +28,7 @@ import {
   requireAjayAdmin,
 } from '../middleware/authorize.js';
 import { invalidatePlatformStateCache } from '../middleware/platformControl.js';
+import { notify } from '../services/notifications.js';
 import { sendAdminMfaCodeEmail } from '../utils/emailService.js';
 import { getAdminEmail, getStrongPasswordErrors, normalizeEmail } from '../utils/securityPolicy.js';
 import {
@@ -557,6 +558,17 @@ router.patch('/control/users/:id/kyc', [
     }
     const user = await User.findByIdAndUpdate(req.params.id, { $set: { kycStatus: req.body.kycStatus } }, { new: true });
     if (!user) return res.status(404).json({ error: 'User not found' });
+    if (req.body.kycStatus === 'approved' || req.body.kycStatus === 'rejected') {
+      notify({
+        userId: user._id,
+        type: `kyc:${req.body.kycStatus}`,
+        title: req.body.kycStatus === 'approved' ? 'KYC approved' : 'KYC rejected',
+        body: req.body.kycStatus === 'approved'
+          ? 'Your account is now verified.'
+          : 'Please resubmit your KYC documents.',
+        link: '/kyc',
+      }).catch(() => {});
+    }
     return res.json({ userId: user._id, kycStatus: user.kycStatus });
   } catch (error) {
     console.error('Admin KYC update error:', error.message);

@@ -21,6 +21,95 @@ const BidSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
 });
 
+// Proof-of-Delivery sub-document submitted by the assigned driver when a
+// load is marked delivered.  Photo is stored as a `data:image/...` URL with
+// a hard size cap enforced at the route layer to avoid pulling in object
+// storage just for the MVP loop.
+const PodSchema = new mongoose.Schema({
+  note: { type: String, default: '' },
+  receiverName: { type: String, required: true },
+  receiverPhone: { type: String, default: '' },
+  photoUrl: { type: String, default: '' },
+  submittedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  deliveredAt: { type: Date, default: Date.now },
+}, { _id: false });
+
+// Payment lifecycle for a single load, decoupled from subscription Payments.
+//   pending  → no payment action yet
+//   released → shipper has acknowledged release of freight payment to driver
+//   received → driver has acknowledged receipt of freight payment
+const LoadPaymentSchema = new mongoose.Schema({
+  status: {
+    type: String,
+    enum: ['pending', 'released', 'received'],
+    default: 'pending',
+  },
+  releasedAt: { type: Date, default: null },
+  receivedAt: { type: Date, default: null },
+  releasedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  receivedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+}, { _id: false });
+
+// Bilateral one-per-role rating tied to a delivered load.
+const LoadRatingSchema = new mongoose.Schema({
+  raterId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  rateeId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  raterRole: { type: String, enum: ['shipper', 'driver'], required: true },
+  stars: { type: Number, min: 1, max: 5, required: true },
+  comment: { type: String, default: '' },
+  createdAt: { type: Date, default: Date.now },
+});
+
+// Escrow lifecycle tied to a load.
+//   none       → no escrow created yet (legacy default)
+//   initiated  → Razorpay Order created, awaiting shipper payment
+//   funded     → shipper paid, funds held in platform account (webhook or verify endpoint)
+//   released   → payout attempted to driver's fund account (RazorpayX Payouts)
+//   paid       → payout processed (webhook confirmation)
+//   refunded   → shipper cancelled before delivery; funds returned
+const LoadEscrowSchema = new mongoose.Schema({
+  status: {
+    type: String,
+    enum: ['none', 'initiated', 'funded', 'released', 'paid', 'refunded', 'failed'],
+    default: 'none',
+  },
+  amount: { type: Number, default: 0 },
+  currency: { type: String, default: 'INR' },
+  razorpayOrderId: { type: String, default: '' },
+  razorpayPaymentId: { type: String, default: '' },
+  razorpayPayoutId: { type: String, default: '' },
+  // 'real' when RazorpayX Payouts is configured and the payout API was called
+  // successfully; 'acknowledgement' when we only flipped status without any
+  // money movement (documented fallback).
+  releaseMode: { type: String, enum: ['real', 'acknowledgement', ''], default: '' },
+  failureReason: { type: String, default: '' },
+  initiatedAt: { type: Date, default: null },
+  fundedAt: { type: Date, default: null },
+  releasedAt: { type: Date, default: null },
+  paidAt: { type: Date, default: null },
+}, { _id: false });
+
+// Insurance declaration — NOT an API-bound policy.  Until we integrate with a
+// carrier (Digit/ACKO/ICICI Lombard), this is a record of an existing policy
+// attached by the shipper at load-post time.  When a carrier partnership is
+// signed, the same schema will hold the carrier-issued policy number without
+// any consumer-side changes.
+const LoadInsuranceSchema = new mongoose.Schema({
+  carrierName: { type: String, default: '' },
+  policyNumber: { type: String, default: '' },
+  coverageAmount: { type: Number, default: 0 },
+  premium: { type: Number, default: 0 },
+  brokerName: { type: String, default: '' },
+  brokerEmail: { type: String, default: '' },
+  // Data URL of the policy document (PDF/image).  Same 350K char cap as POD
+  // photos to stay inline-storage friendly — enforced at the route layer.
+  documentDataUrl: { type: String, default: '' },
+  // 'declared' when the shipper entered an existing policy; 'api-bound' when
+  // created via a future carrier API integration; '' when absent.
+  source: { type: String, enum: ['', 'declared', 'api-bound'], default: '' },
+  declaredAt: { type: Date, default: null },
+}, { _id: false });
+
 const LoadSchema = new mongoose.Schema({
   loadId: { type: String, required: true, unique: true },
   origin: { type: String, required: true },
@@ -39,8 +128,17 @@ const LoadSchema = new mongoose.Schema({
   postedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
   postedByRole: { type: String },
   assignedDriver: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true, default: null },
+  // Vehicle the assigned driver is using for this load — drives live tracking
+  // for the shipper.  String form because `vehicles` collection keys off
+  // `vehicleId` (not ObjectId) — see socket.io `update-location` handler.
+  vehicleId: { type: String, default: null, index: true },
   acceptedBidId: { type: mongoose.Schema.Types.ObjectId, default: null },
   bids: [BidSchema],
+  pod: { type: PodSchema, default: null },
+  payment: { type: LoadPaymentSchema, default: () => ({}) },
+  escrow: { type: LoadEscrowSchema, default: () => ({}) },
+  insurance: { type: LoadInsuranceSchema, default: null },
+  ratings: { type: [LoadRatingSchema], default: [] },
   createdAt: { type: Date, default: Date.now },
 });
 

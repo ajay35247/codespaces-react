@@ -42,6 +42,9 @@ import adminRoutes from './routes/admin.js';
 import dashboardRoutes from './routes/dashboard.js';
 import tollsRoutes from './routes/tolls.js';
 import walletRoutes from './routes/wallet.js';
+import notificationsRoutes from './routes/notifications.js';
+import fleetRoutes from './routes/fleet.js';
+import { setIo } from './utils/socketBus.js';
 
 const httpRequestsTotal = new promClient.Counter({
   name: 'speedy_trucks_http_requests_total',
@@ -287,6 +290,8 @@ const createApp = async () => {
   app.use('/api/dashboard', requireNotMaintenance(), dashboardRoutes);
   app.use('/api/tolls', tollsRoutes);
   app.use('/api/wallet', requireNotMaintenance(), walletRoutes);
+  app.use('/api/notifications', notificationsRoutes);
+  app.use('/api/fleet', requireNotMaintenance(), fleetRoutes);
 
   app.use((req, res) => {
     res.status(404).json({ error: 'API endpoint not found' });
@@ -311,6 +316,9 @@ const startWorker = async () => {
     },
     transports: ['websocket', 'polling'],
   });
+
+  // Expose io to route handlers (notify helper, load lifecycle push events).
+  setIo(io);
 
   let pubClient = null;
   let subClient = null;

@@ -7,6 +7,7 @@ import { PrimaryNav } from './components/PrimaryNav';
 import { AppRoutes } from './routes/AppRoutes';
 import { CookieConsentBanner } from './components/CookieConsentBanner';
 import { Footer } from './components/Footer';
+import { ThemeProvider } from './components/ThemeProvider';
 import { bootstrapSession } from './features/auth/authSlice';
 import { trackPageView } from './utils/analytics';
 
@@ -39,11 +40,13 @@ function AppWrapper() {
 export default function App() {
   return (
     <Provider store={store}>
-      <div className="min-h-screen bg-slate-950 text-white">
-        <BrowserRouter>
-          <AppWrapper />
-        </BrowserRouter>
-      </div>
+      <ThemeProvider>
+        <div className="min-h-screen bg-slate-950 text-white">
+          <BrowserRouter>
+            <AppWrapper />
+          </BrowserRouter>
+        </div>
+      </ThemeProvider>
     </Provider>
   );
 }

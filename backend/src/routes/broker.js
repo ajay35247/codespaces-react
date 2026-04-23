@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import { Router } from 'express';
 import { verifyJWT, requireRole } from '../middleware/authorize.js';
 import { requireBookingsEnabled, requireBrokersEnabled } from '../middleware/platformControl.js';
@@ -125,6 +126,101 @@ router.post('/negotiate', requireBookingsEnabled(), requireActiveSubscription('b
   } catch (error) {
     console.error('Broker negotiate error:', error.message);
     return res.status(500).json({ error: 'Failed to save negotiation' });
+  }
+});
+
+router.get('/deals', async (req, res) => {
+  try {
+    const brokerId = new mongoose.Types.ObjectId(req.user.id);
+
+    // Pull every load where I have any bid, plus loads I've won (accepted
+    // bid — assignedDriver may not be me since brokers don't drive) so I
+    // can see the full pipeline regardless of status.
+    const loads = await Load.find({
+      $or: [
+        { 'bids.bidderId': brokerId },
+        { 'bids.brokerId': brokerId },
+      ],
+    })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const categorized = {
+      quoted: [],         // my bid pending, load still posted
+      negotiating: [],    // my bid pending, load moved (edge case)
+      won: [],            // my bid accepted, load in-transit
+      delivered: [],      // load delivered
+      lost: [],           // my bid rejected / load awarded to someone else
+      cancelled: [],
+    };
+    let totalWonAmount = 0;
+    let totalLostAmount = 0;
+    let totalQuotedAmount = 0;
+    let totalNegotiatingAmount = 0;
+
+    for (const load of loads) {
+      const myBid = (load.bids || []).find((b) => {
+        const idField = b.bidderId || b.brokerId;
+        return idField && String(idField) === String(brokerId);
+      });
+      if (!myBid) continue;
+      const enriched = {
+        loadId: load.loadId,
+        origin: load.origin,
+        destination: load.destination,
+        freightPrice: load.freightPrice,
+        status: load.status,
+        myBid: { amount: myBid.amount, status: myBid.status, createdAt: myBid.createdAt },
+        payment: load.payment,
+        pod: load.pod,
+        createdAt: load.createdAt,
+      };
+
+      if (myBid.status === 'rejected') {
+        categorized.lost.push(enriched);
+        totalLostAmount += myBid.amount || 0;
+        continue;
+      }
+      if (load.status === 'cancelled') {
+        categorized.cancelled.push(enriched);
+        continue;
+      }
+      if (myBid.status === 'accepted') {
+        if (load.status === 'delivered') {
+          categorized.delivered.push(enriched);
+        } else {
+          categorized.won.push(enriched);
+        }
+        totalWonAmount += myBid.amount || 0;
+        continue;
+      }
+      // pending
+      if (load.status === 'posted') {
+        categorized.quoted.push(enriched);
+        totalQuotedAmount += myBid.amount || 0;
+      } else {
+        categorized.negotiating.push(enriched);
+        totalNegotiatingAmount += myBid.amount || 0;
+      }
+    }
+
+    return res.json({
+      totals: {
+        quoted: categorized.quoted.length,
+        negotiating: categorized.negotiating.length,
+        won: categorized.won.length,
+        delivered: categorized.delivered.length,
+        lost: categorized.lost.length,
+        totalWonAmount,
+        totalLostAmount,
+        totalQuotedAmount,
+        totalNegotiatingAmount,
+      },
+      pipeline: categorized,
+    });
+  } catch (error) {
+    console.error('Broker deals error:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch broker deals' });
   }
 });
 

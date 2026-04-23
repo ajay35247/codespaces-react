@@ -8,6 +8,46 @@
   background-color: #020617;
 }
 
+/* ─────────────────────────────────────────────────────────────────────
+   LIGHT THEME OVERRIDES
+   Activated when <html data-theme="light">.  Scoped to a handful of
+   global surfaces (body background, scrollbar) + opt-in `.theme-*`
+   utility classes used in navigation chrome.  A full per-component
+   light palette is out of scope for this PR — the toggle is honest
+   infrastructure that future design work can build on.
+───────────────────────────────────────────────────────────────────── */
+html[data-theme='light'] {
+  color-scheme: light;
+}
+html[data-theme='light'] body {
+  background: radial-gradient(circle at top, rgba(14, 165, 233, 0.08), transparent 35%),
+    radial-gradient(circle at 80% 20%, rgba(249, 115, 22, 0.10), transparent 28%),
+    #f1f5f9;
+  color: #0f172a;
+}
+html[data-theme='light'] .theme-chip {
+  background: rgba(15, 23, 42, 0.06);
+  color: #0f172a;
+}
+html[data-theme='light'] .theme-chip:hover {
+  background: rgba(15, 23, 42, 0.12);
+}
+html[data-theme='light'] .theme-chip-active {
+  background: #0f172a;
+  color: #ffffff;
+}
+html[data-theme='light'] .theme-panel {
+  background: #ffffff;
+  color: #0f172a;
+  border-color: rgba(15, 23, 42, 0.1);
+}
+html[data-theme='light'] .theme-heading {
+  color: #0f172a;
+}
+html[data-theme='light'] .theme-muted {
+  color: #475569;
+}
+
 html,
 body,
 #root {

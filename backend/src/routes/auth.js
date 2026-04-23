@@ -27,11 +27,13 @@ import {
   isTemporarilyLocked,
 } from '../utils/accountSecurity.js';
 import { requireRegistrationsEnabled } from '../middleware/platformControl.js';
+import { Joi, validateBody } from '../middleware/validation.js';
+import { registerFundAccount } from '../utils/razorpayClient.js';
 
 const router = Router();
 const LOGIN_MAX_FAILED_ATTEMPTS = 5;
 const LOGIN_LOCK_WINDOW_MS = 15 * 60 * 1000;
-export const PUBLIC_ROLES = ['shipper', 'driver', 'broker'];
+export const PUBLIC_ROLES = ['shipper', 'driver', 'broker', 'truck_owner'];
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -372,6 +374,176 @@ router.get('/me', verifyJWT, async (req, res) => {
   } catch (error) {
     console.error('Auth check error:', error.message);
     return res.status(500).json({ error: 'Authentication check failed' });
+  }
+});
+
+// ── KYC submission (user-side) ────────────────────────────────────────────────
+// We do NOT integrate a paid Aadhaar/PAN verification vendor (Digio, Signzy
+// etc. require GSP licensing/fees).  Users submit documents here and an
+// admin approves/rejects via PATCH /admin/control/users/:id/kyc.  The
+// existing admin endpoint already flips `kycStatus` which downstream flows
+// (loadings, payouts) check.
+
+// 350K chars ≈ 260 KB decoded — same bound as POD photos.
+const MAX_KYC_FILE_LENGTH = 350_000;
+
+const kycDocSchema = Joi.object({
+  docType: Joi.string().valid('pan', 'aadhaar', 'driving_license', 'rc_book', 'gstin').required(),
+  number: Joi.string().trim().min(4).max(40).required(),
+  holderName: Joi.string().trim().min(2).max(120).required(),
+  fileDataUrl: Joi.string()
+    .pattern(/^data:(image\/(png|jpe?g|webp)|application\/pdf);base64,[A-Za-z0-9+/=]+$/)
+    .max(MAX_KYC_FILE_LENGTH)
+    .allow('')
+    .optional(),
+});
+
+const kycSubmitSchema = Joi.object({
+  documents: Joi.array().items(kycDocSchema).min(1).max(4).required(),
+});
+
+router.post('/kyc', verifyJWT, validateBody(kycSubmitSchema), async (req, res) => {
+  try {
+    if (req.user.role === 'admin') {
+      return res.status(403).json({ error: 'Admin accounts do not submit KYC' });
+    }
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    // Do NOT auto-approve; only admin can flip status to 'approved'.
+    user.kycDocuments = req.body.documents.map((d) => ({
+      docType: d.docType,
+      number: d.number,
+      holderName: d.holderName,
+      fileDataUrl: d.fileDataUrl || '',
+      submittedAt: new Date(),
+    }));
+    user.kycSubmittedAt = new Date();
+    // Reset review-side fields so stale rejection reasons don't linger.
+    user.kycRejectionReason = '';
+    user.kycReviewedAt = null;
+    // If the user was previously rejected, reopen to 'pending' state.
+    if (user.kycStatus === 'rejected') user.kycStatus = 'pending';
+    await user.save();
+    return res.json({
+      message: 'KYC documents submitted for review',
+      kycStatus: user.kycStatus,
+      kycSubmittedAt: user.kycSubmittedAt,
+    });
+  } catch (error) {
+    console.error('KYC submit error:', error.message);
+    return res.status(500).json({ error: 'Failed to submit KYC documents' });
+  }
+});
+
+router.get('/kyc', verifyJWT, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select('kycStatus kycDocuments kycSubmittedAt kycReviewedAt kycRejectionReason');
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    // Strip the heavy data URLs from the listing; users can re-download
+    // individual documents if we ever add a per-doc GET.
+    const documents = (user.kycDocuments || []).map((d) => ({
+      docType: d.docType,
+      number: d.number,
+      holderName: d.holderName,
+      hasFile: Boolean(d.fileDataUrl),
+      submittedAt: d.submittedAt,
+    }));
+    return res.json({
+      kycStatus: user.kycStatus,
+      kycSubmittedAt: user.kycSubmittedAt,
+      kycReviewedAt: user.kycReviewedAt,
+      kycRejectionReason: user.kycRejectionReason,
+      documents,
+    });
+  } catch (error) {
+    console.error('KYC fetch error:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch KYC state' });
+  }
+});
+
+// ── Fund account (payout destination) ─────────────────────────────────────────
+// Drivers (and brokers) need to tell us where to send money when a shipper
+// releases escrow.  We accept either UPI VPA or bank IFSC + account number,
+// then attempt to register with RazorpayX (Contacts + Fund Account) when
+// configured.  The RazorpayX IDs are cached on the user so subsequent
+// payouts don't re-create.
+
+const fundAccountSchema = Joi.object({
+  method: Joi.string().valid('vpa', 'bank').required(),
+  vpa: Joi.when('method', { is: 'vpa', then: Joi.string().trim().pattern(/^[\w.-]+@[\w.-]+$/).required(), otherwise: Joi.forbidden() }),
+  accountNumber: Joi.when('method', { is: 'bank', then: Joi.string().trim().pattern(/^[0-9]{6,20}$/).required(), otherwise: Joi.forbidden() }),
+  ifsc: Joi.when('method', { is: 'bank', then: Joi.string().trim().pattern(/^[A-Z]{4}0[A-Z0-9]{6}$/).required(), otherwise: Joi.forbidden() }),
+  beneficiaryName: Joi.string().trim().min(2).max(120).required(),
+});
+
+router.post('/fund-account', verifyJWT, validateBody(fundAccountSchema), async (req, res) => {
+  try {
+    if (req.user.role === 'admin') {
+      return res.status(403).json({ error: 'Admin accounts do not register fund accounts' });
+    }
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const fundAccount = {
+      method: req.body.method,
+      vpa: req.body.vpa || '',
+      accountNumber: req.body.accountNumber || '',
+      ifsc: req.body.ifsc || '',
+      beneficiaryName: req.body.beneficiaryName,
+      updatedAt: new Date(),
+      razorpayContactId: '',
+      razorpayFundAccountId: '',
+    };
+
+    try {
+      const result = await registerFundAccount({ user, fundAccount });
+      if (result.configured) {
+        fundAccount.razorpayContactId = result.razorpayContactId;
+        fundAccount.razorpayFundAccountId = result.razorpayFundAccountId;
+      }
+    } catch (regErr) {
+      // Non-fatal: persist locally even if RazorpayX rejects; driver can
+      // fix and re-submit.  Log so ops can see which calls failed.
+      console.error('RazorpayX fund account registration failed:', regErr.message);
+    }
+
+    user.fundAccount = fundAccount;
+    await user.save();
+    return res.json({
+      message: 'Fund account saved',
+      fundAccount: {
+        method: user.fundAccount.method,
+        vpa: user.fundAccount.vpa,
+        accountLast4: user.fundAccount.accountNumber ? user.fundAccount.accountNumber.slice(-4) : '',
+        ifsc: user.fundAccount.ifsc,
+        beneficiaryName: user.fundAccount.beneficiaryName,
+        registeredWithRazorpayX: Boolean(user.fundAccount.razorpayFundAccountId),
+      },
+    });
+  } catch (error) {
+    console.error('Fund account error:', error.message);
+    return res.status(500).json({ error: 'Failed to save fund account' });
+  }
+});
+
+router.get('/fund-account', verifyJWT, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select('fundAccount');
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (!user.fundAccount) return res.json({ fundAccount: null });
+    return res.json({
+      fundAccount: {
+        method: user.fundAccount.method,
+        vpa: user.fundAccount.vpa,
+        accountLast4: user.fundAccount.accountNumber ? user.fundAccount.accountNumber.slice(-4) : '',
+        ifsc: user.fundAccount.ifsc,
+        beneficiaryName: user.fundAccount.beneficiaryName,
+        registeredWithRazorpayX: Boolean(user.fundAccount.razorpayFundAccountId),
+      },
+    });
+  } catch (error) {
+    console.error('Fund account fetch error:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch fund account' });
   }
 });
 
