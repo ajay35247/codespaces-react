@@ -33,7 +33,7 @@ import { registerFundAccount } from '../utils/razorpayClient.js';
 const router = Router();
 const LOGIN_MAX_FAILED_ATTEMPTS = 5;
 const LOGIN_LOCK_WINDOW_MS = 15 * 60 * 1000;
-export const PUBLIC_ROLES = ['shipper', 'driver', 'broker'];
+export const PUBLIC_ROLES = ['shipper', 'driver', 'broker', 'truck_owner'];
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,

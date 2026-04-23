@@ -15,6 +15,7 @@ import {
   registerFundAccount,
   issuePayout,
 } from '../utils/razorpayClient.js';
+import { notify, pushLive } from '../services/notifications.js';
 
 const router = Router();
 
@@ -175,6 +176,22 @@ router.post(
         currency: 'INR',
       });
       await load.save();
+
+      // Notify the load's shipper so their dashboard lights up without
+      // needing to poll.  `pushLive` also fires a `load:bid-placed` event
+      // so an already-open loads list can refresh in place.
+      if (load.postedBy && String(load.postedBy) !== String(req.user.id)) {
+        notify({
+          userId: load.postedBy,
+          type: 'bid:placed',
+          title: `New bid on ${load.loadId}`,
+          body: `₹${Number(amount).toLocaleString('en-IN')} from a ${req.user.role}`,
+          link: `/shipper`,
+          meta: { loadId: load.loadId, amount, bidderRole: req.user.role },
+        }).catch(() => {});
+        pushLive(load.postedBy, 'load:bid-placed', { loadId: load.loadId, amount });
+      }
+
       return res.status(201).json({
         message: 'Bid submitted',
         loadId,
@@ -327,6 +344,10 @@ router.patch(
       load.status = status;
       await load.save();
 
+      // Push a refresh hint to both sides of the load.
+      if (load.postedBy) pushLive(load.postedBy, 'load:status-changed', { loadId, status });
+      if (load.assignedDriver) pushLive(load.assignedDriver, 'load:status-changed', { loadId, status });
+
       return res.json({ message: 'Load status updated', loadId, status });
     } catch (error) {
       console.error('Load status update error:', error.message);
@@ -385,6 +406,25 @@ router.post(
         }
       }
       await load.save();
+
+      // Notify the winning bidder + any losers.
+      for (const b of load.bids) {
+        const bidderUserId = b.bidderId || b.brokerId;
+        if (!bidderUserId) continue;
+        if (String(b._id) === bidId) {
+          notify({
+            userId: bidderUserId,
+            type: 'bid:accepted',
+            title: `Your bid was accepted`,
+            body: `Load ${load.loadId} — ${load.origin} → ${load.destination}`,
+            link: b.bidderRole === 'driver' ? '/driver' : '/broker',
+            meta: { loadId: load.loadId, amount: b.amount },
+          }).catch(() => {});
+        }
+        pushLive(bidderUserId, 'load:bid-accepted', { loadId: load.loadId, won: String(b._id) === bidId });
+      }
+      // Shipper's own list should also refresh (status flipped to in-transit).
+      pushLive(load.postedBy, 'load:status-changed', { loadId: load.loadId, status: 'in-transit' });
 
       return res.json({ message: 'Bid accepted, load is now in-transit', loadId, bidId });
     } catch (error) {
@@ -466,6 +506,20 @@ router.post(
       };
       load.status = 'delivered';
       await load.save();
+
+      // Tell the shipper their load is done and POD is on file.
+      if (load.postedBy) {
+        notify({
+          userId: load.postedBy,
+          type: 'load:pod',
+          title: `POD submitted for ${load.loadId}`,
+          body: `Delivered to ${load.pod.receiverName}`,
+          link: `/shipper`,
+          meta: { loadId: load.loadId },
+        }).catch(() => {});
+        pushLive(load.postedBy, 'load:status-changed', { loadId, status: 'delivered' });
+      }
+
       return res.json({ message: 'POD submitted, load marked delivered', loadId, pod: load.pod, status: load.status });
     } catch (error) {
       console.error('POD submit error:', error.message);
@@ -568,6 +622,19 @@ router.post(
         receivedBy: null,
       };
       await load.save();
+
+      // Notify the driver that payment was released (and via which mode).
+      if (load.assignedDriver) {
+        notify({
+          userId: load.assignedDriver,
+          type: 'payment:released',
+          title: `Payment released for ${load.loadId}`,
+          body: releaseMode === 'real' ? 'Funds sent to your registered account' : 'Shipper has acknowledged payment',
+          link: '/driver',
+          meta: { loadId: load.loadId, releaseMode },
+        }).catch(() => {});
+      }
+
       return res.json({
         message: 'Payment marked released',
         loadId,
@@ -611,6 +678,18 @@ router.post(
         load.escrow.paidAt = new Date();
       }
       await load.save();
+
+      if (load.postedBy) {
+        notify({
+          userId: load.postedBy,
+          type: 'payment:received',
+          title: `Driver confirmed payment for ${load.loadId}`,
+          body: 'Trip closed',
+          link: '/shipper',
+          meta: { loadId: load.loadId },
+        }).catch(() => {});
+      }
+
       return res.json({ message: 'Payment marked received', loadId, payment: load.payment, escrow: load.escrow });
     } catch (error) {
       console.error('Payment received error:', error.message);
@@ -837,6 +916,17 @@ router.post(
       load.escrow.razorpayPaymentId = req.body.razorpay_payment_id;
       load.escrow.fundedAt = new Date();
       await load.save();
+
+      if (load.assignedDriver) {
+        notify({
+          userId: load.assignedDriver,
+          type: 'escrow:funded',
+          title: `Escrow funded for ${load.loadId}`,
+          body: `₹${Number(load.escrow.amount || 0).toLocaleString('en-IN')} is now held for this trip`,
+          link: '/driver',
+          meta: { loadId: load.loadId, amount: load.escrow.amount },
+        }).catch(() => {});
+      }
 
       return res.json({ message: 'Escrow funded', loadId, escrow: load.escrow });
     } catch (error) {

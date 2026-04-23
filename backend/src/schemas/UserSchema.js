@@ -48,7 +48,10 @@ const UserSchema = new mongoose.Schema({
   role: {
     type: String,
     required: true,
-    enum: ['shipper', 'driver', 'broker', 'admin'],
+    // truck_owner represents a fleet operator that owns trucks and assigns
+    // drivers to them — distinct from `driver` (who physically operates a
+    // single vehicle) and `broker` (who brokers loads without owning trucks).
+    enum: ['shipper', 'driver', 'broker', 'truck_owner', 'admin'],
   },
   accountStatus: {
     type: String,
