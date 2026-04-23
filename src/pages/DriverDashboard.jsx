@@ -4,7 +4,7 @@ import { apiRequest } from '../utils/api';
 import { Card3D } from '../components/Card3D';
 import { RatingBadge, StarPicker } from '../components/RatingBadge';
 
-// Hard cap matches MAX_POD_PHOTO_LENGTH on the backend (≈256 KB decoded).
+// Hard cap matches MAX_POD_PHOTO_LENGTH on the backend (≈260 KB decoded).
 const MAX_POD_PHOTO_DATA_URL_LENGTH = 350_000;
 
 function readFileAsDataUrl(file) {
@@ -36,7 +36,7 @@ function PodModal({ load, onClose, onSubmitted }) {
     try {
       const dataUrl = await readFileAsDataUrl(file);
       if (typeof dataUrl !== 'string' || dataUrl.length > MAX_POD_PHOTO_DATA_URL_LENGTH) {
-        setPhotoError('Photo too large — please pick a smaller image (≈250 KB).');
+        setPhotoError('Photo too large — please pick a smaller image (≈260 KB).');
         return;
       }
       setPhotoUrl(dataUrl);

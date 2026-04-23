@@ -170,7 +170,7 @@ function BidRow({ bid, loadId, loadStatus, onAction }) {
     }
   };
 
-  const bidderId = bid.bidderId || bid.brokerId;
+  const bidderOrBrokerId = bid.bidderId || bid.brokerId;
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-slate-800/50 px-4 py-3 text-sm">
@@ -182,10 +182,10 @@ function BidRow({ bid, loadId, loadStatus, onAction }) {
             {bid.status}
           </span>
         </div>
-        {bidderId && (
+        {bidderOrBrokerId && (
           <span className="flex items-center gap-1.5">
             <span className="text-[10px] uppercase tracking-wide text-slate-500">{bid.bidderRole || 'bidder'}</span>
-            <RatingBadge userId={bidderId} />
+            <RatingBadge userId={bidderOrBrokerId} />
           </span>
         )}
       </div>

@@ -31,7 +31,7 @@ const updateStatusSchema = Joi.object({
 });
 
 // Hard size cap on POD photo data URL (base64 ~ 4/3 of decoded bytes).
-// 350_000 chars ≈ 256 KB decoded — enough for a phone snapshot, small
+// 350_000 chars ≈ 260 KB decoded — enough for a phone snapshot, small
 // enough to keep MongoDB documents reasonable without object storage.
 const MAX_POD_PHOTO_LENGTH = 350_000;
 
