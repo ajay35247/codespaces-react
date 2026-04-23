@@ -41,6 +41,9 @@ function computeTrustScore({ user, deliveredCount, avgRating, ratingCount }) {
   return Math.min(100, Math.max(0, score));
 }
 
+// Fields that must never be sent to the client regardless of role or request.
+const EXCLUDED_USER_FIELDS = '-password -refreshTokens -resetToken -verificationToken -mfaCodeHash -mfaChallengeHash -mfaCodeExpires -mfaChallengeExpires';
+
 /**
  * GET /api/profile
  * Returns the authenticated user's profile, KYC status, rating summary,
@@ -55,7 +58,7 @@ router.get('/', async (req, res) => {
     }
 
     const user = await User.findById(userId)
-      .select('-password -refreshTokens -resetToken -verificationToken -mfaCodeHash -mfaChallengeHash -mfaCodeExpires -mfaChallengeExpires')
+      .select(EXCLUDED_USER_FIELDS)
       .lean();
 
     if (!user) return res.status(404).json({ error: 'User not found' });

@@ -83,12 +83,14 @@ export function EarningsWidget() {
 
   // Monthly earning target — intentionally ambitious to motivate action.
   const MONTHLY_TARGET = {
-    driver:     80000,
+    driver:      80000,
     shipper:    500000,
     broker:     200000,
     truck_owner:300000,
   };
   const monthlyTarget = MONTHLY_TARGET[role] ?? 100000;
+  // Guard against accidental zero so the ring percentage stays finite.
+  const safeTarget = monthlyTarget > 0 ? monthlyTarget : 1;
 
   if (loading) {
     return (
@@ -120,11 +122,11 @@ export function EarningsWidget() {
       <div className="flex items-center gap-6">
         {/* Animated progress ring */}
         <div className="relative shrink-0">
-          <ProgressRing value={earnings} max={monthlyTarget} />
+          <ProgressRing value={earnings} max={safeTarget} />
           <div className="absolute inset-0 flex flex-col items-center justify-center">
             <span className="text-[9px] text-slate-500">of goal</span>
             <span className="text-xs font-black text-white tabular-nums">
-              {Math.round((earnings / monthlyTarget) * 100)}%
+              {Math.round((earnings / safeTarget) * 100)}%
             </span>
           </div>
         </div>
@@ -185,7 +187,7 @@ export function EarningsWidget() {
 
       <div className="mt-4 flex justify-between items-center">
         <p className="text-[10px] text-slate-600">
-          Monthly target: ₹{Number(monthlyTarget).toLocaleString('en-IN')}
+          Monthly target: ₹{Number(safeTarget).toLocaleString('en-IN')}
         </p>
         <a href="/wallet" className="text-[11px] text-slate-500 hover:text-slate-300 transition">
           Wallet →

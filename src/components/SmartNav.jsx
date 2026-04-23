@@ -145,7 +145,7 @@ export function SmartNav({ expanded, onToggle, mobileClose = false }) {
       <nav className="mt-3 flex-1 px-2 space-y-0.5">
         {navItems.map((item) => (
           <NavLink
-            key={item.to + item.label}
+            key={item.to}
             to={item.to}
             end={item.to === '/driver' || item.to.includes('/dashboard')}
             title={!expanded ? item.label : undefined}

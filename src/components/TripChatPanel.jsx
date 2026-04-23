@@ -81,7 +81,11 @@ export function TripChatPanel({ loadId, loadRoute }) {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages.length]);
 
-  const handleSend = async (e) => {
+  // Clear any previous error when the user starts composing a new message.
+  const handleTextChange = (e) => {
+    if (error) setError(null);
+    setText(e.target.value);
+  };
     e.preventDefault();
     const trimmed = text.trim();
     if (!trimmed || sending) return;
@@ -198,7 +202,7 @@ export function TripChatPanel({ loadId, loadRoute }) {
           ref={inputRef}
           type="text"
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={handleTextChange}
           placeholder="Type a message…"
           maxLength={2000}
           disabled={sending || loading}
