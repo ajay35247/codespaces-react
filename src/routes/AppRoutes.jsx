@@ -23,6 +23,7 @@ import { DriverLive } from '../pages/DriverLive';
 import { TruckOwnerDashboard } from '../pages/TruckOwnerDashboard';
 import { TollDashboard } from '../pages/TollDashboard';
 import { Kyc } from '../pages/Kyc';
+import { UserProfilePanel } from '../pages/UserProfilePanel';
 import { ProtectedRoute } from '../components/ProtectedRoute';
 
 const ADMIN_PANEL_PATH = (import.meta.env.VITE_ADMIN_PANEL_PATH || '/ops-bridge-93a1').replace(/^\//, '');
@@ -64,6 +65,11 @@ export function AppRoutes() {
       <Route path="/kyc" element={
         <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker', 'truck_owner']}>
           <Kyc />
+        </ProtectedRoute>
+      } />
+      <Route path="/profile" element={
+        <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker', 'truck_owner']}>
+          <UserProfilePanel />
         </ProtectedRoute>
       } />
       <Route path="/shipper" element={

@@ -44,6 +44,8 @@ import tollsRoutes from './routes/tolls.js';
 import walletRoutes from './routes/wallet.js';
 import notificationsRoutes from './routes/notifications.js';
 import fleetRoutes from './routes/fleet.js';
+import profileRoutes from './routes/profile.js';
+import chatRoutes from './routes/chat.js';
 import { setIo } from './utils/socketBus.js';
 
 const httpRequestsTotal = new promClient.Counter({
@@ -292,6 +294,8 @@ const createApp = async () => {
   app.use('/api/wallet', requireNotMaintenance(), walletRoutes);
   app.use('/api/notifications', notificationsRoutes);
   app.use('/api/fleet', requireNotMaintenance(), fleetRoutes);
+  app.use('/api/profile', requireNotMaintenance(), profileRoutes);
+  app.use('/api/chat', requireNotMaintenance(), chatRoutes);
 
   app.use((req, res) => {
     res.status(404).json({ error: 'API endpoint not found' });
@@ -355,6 +359,20 @@ const startWorker = async () => {
 
     socket.on('leave-vehicle', (vehicleId) => {
       socket.leave(`vehicle:${vehicleId}`);
+    });
+
+    // Trip chat rooms — participants join by loadId so they receive
+    // real-time chat:message events without polling.
+    socket.on('join-load-chat', (loadId) => {
+      if (loadId && typeof loadId === 'string') {
+        socket.join(`load-chat:${loadId}`);
+      }
+    });
+
+    socket.on('leave-load-chat', (loadId) => {
+      if (loadId && typeof loadId === 'string') {
+        socket.leave(`load-chat:${loadId}`);
+      }
     });
 
     socket.on('update-location', async (data) => {
