@@ -16,6 +16,7 @@ import {
   issuePayout,
 } from '../utils/razorpayClient.js';
 import { notify, pushLive } from '../services/notifications.js';
+import { rankLoadsForDriver, rankDriversForLoad } from '../services/smartRanking.js';
 
 const router = Router();
 
@@ -283,6 +284,84 @@ router.get(
     } catch (error) {
       console.error('Available loads fetch error:', error.message);
       return res.status(500).json({ error: 'Failed to fetch available loads' });
+    }
+  }
+);
+
+// ── Smart ranking: deterministic, rule-based "smart ranking" (NOT AI/ML) ──────
+// Two endpoints, both pure-read:
+//   GET /loads/match                    — driver: rank available loads for me
+//   GET /loads/:loadId/suggested-drivers — shipper/broker: rank candidate drivers
+// Scoring lives in services/smartRanking.js — swap that one file for a
+// trained model once labelled outcome data is available.
+
+router.get(
+  '/match',
+  verifyJWT,
+  requireRole(['driver']),
+  async (req, res) => {
+    try {
+      const limit = Math.min(50, Math.max(1, parseInt(req.query.limit || '20', 10)));
+      const posted = await Load.find({ status: 'posted', assignedDriver: null })
+        .sort({ createdAt: -1 })
+        .limit(200)
+        .lean();
+      const ranked = await rankLoadsForDriver(posted, req.user.id);
+      return res.json({
+        ranking: 'smart-ranking-v1',
+        results: ranked.slice(0, limit),
+      });
+    } catch (error) {
+      console.error('Smart-ranking match error:', error.message);
+      return res.status(500).json({ error: 'Failed to rank loads' });
+    }
+  }
+);
+
+router.get(
+  '/:loadId/suggested-drivers',
+  verifyJWT,
+  requireRole(['shipper', 'broker']),
+  async (req, res) => {
+    try {
+      const load = await Load.findOne({ loadId: req.params.loadId })
+        .select('loadId origin destination truckType postedBy').lean();
+      if (!load) return res.status(404).json({ error: 'Load not found' });
+      // Only the posting shipper (or any broker) may query suggested drivers.
+      if (req.user.role === 'shipper' && String(load.postedBy) !== String(req.user.id)) {
+        return res.status(403).json({ error: 'Not authorized' });
+      }
+
+      // Candidate pool: drivers who have ever delivered a load (i.e. active
+      // on the platform).  Deliberately avoid returning newly-registered,
+      // unproven drivers so shipper suggestions stay signal-heavy.
+      const activeDriverIds = await Load.distinct('assignedDriver', { status: 'delivered' });
+      if (activeDriverIds.length === 0) {
+        return res.json({ ranking: 'smart-ranking-v1', results: [] });
+      }
+      const drivers = await User.find({
+        _id: { $in: activeDriverIds },
+        role: 'driver',
+        accountStatus: 'active',
+      }).select('name email role').limit(100).lean();
+
+      const ranked = await rankDriversForLoad(drivers, load);
+      return res.json({
+        ranking: 'smart-ranking-v1',
+        loadId: load.loadId,
+        results: ranked.slice(0, 20).map((r) => ({
+          driver: {
+            _id: r.driver._id,
+            name: r.driver.name,
+            email: r.driver.email,
+          },
+          score: r.score,
+          breakdown: r.breakdown,
+        })),
+      });
+    } catch (error) {
+      console.error('Suggested drivers error:', error.message);
+      return res.status(500).json({ error: 'Failed to rank drivers' });
     }
   }
 );
@@ -973,6 +1052,116 @@ router.post(
     } catch (error) {
       console.error('Bind vehicle error:', error.message);
       return res.status(500).json({ error: 'Failed to bind vehicle' });
+    }
+  }
+);
+
+// ── Insurance declaration ─────────────────────────────────────────────────────
+// Shipper attaches an existing policy to a load.  This is NOT an API-bound
+// policy — it's a record of a policy already purchased elsewhere (or a
+// broker-of-record declaration).  When a carrier partnership is signed the
+// same schema will hold carrier-issued data without frontend changes.
+
+const MAX_INSURANCE_DOC_LENGTH = 350_000;
+
+const declareInsuranceSchema = Joi.object({
+  carrierName: Joi.string().trim().min(2).max(200).required(),
+  policyNumber: Joi.string().trim().min(1).max(100).required(),
+  coverageAmount: Joi.number().min(0).max(1e12).required(),
+  premium: Joi.number().min(0).max(1e10).optional(),
+  brokerName: Joi.string().trim().max(200).allow('').optional(),
+  brokerEmail: Joi.string().trim().email().allow('').optional(),
+  documentDataUrl: Joi.string()
+    .pattern(/^data:(application\/pdf|image\/(png|jpe?g|webp));base64,[A-Za-z0-9+/=]+$/)
+    .max(MAX_INSURANCE_DOC_LENGTH)
+    .allow('')
+    .optional(),
+});
+
+router.post(
+  '/:loadId/insurance',
+  verifyJWT,
+  requireRole(['shipper']),
+  validateBody(declareInsuranceSchema),
+  async (req, res) => {
+    try {
+      const loadId = String(req.params.loadId);
+      const load = await Load.findOne({ loadId });
+      if (!load) return res.status(404).json({ error: 'Load not found' });
+      if (String(load.postedBy) !== String(req.user.id)) {
+        return res.status(403).json({ error: 'Only the shipper who posted this load can declare insurance' });
+      }
+      load.insurance = {
+        carrierName: req.body.carrierName,
+        policyNumber: req.body.policyNumber,
+        coverageAmount: req.body.coverageAmount,
+        premium: req.body.premium || 0,
+        brokerName: req.body.brokerName || '',
+        brokerEmail: req.body.brokerEmail || '',
+        documentDataUrl: req.body.documentDataUrl || '',
+        source: 'declared',
+        declaredAt: new Date(),
+      };
+      await load.save();
+      return res.json({
+        message: 'Insurance declared',
+        loadId,
+        insurance: {
+          carrierName: load.insurance.carrierName,
+          policyNumber: load.insurance.policyNumber,
+          coverageAmount: load.insurance.coverageAmount,
+          premium: load.insurance.premium,
+          brokerName: load.insurance.brokerName,
+          brokerEmail: load.insurance.brokerEmail,
+          source: load.insurance.source,
+          declaredAt: load.insurance.declaredAt,
+        },
+      });
+    } catch (error) {
+      console.error('Insurance declare error:', error.message);
+      return res.status(500).json({ error: 'Failed to declare insurance' });
+    }
+  }
+);
+
+router.get(
+  '/:loadId/insurance',
+  verifyJWT,
+  async (req, res) => {
+    try {
+      const loadId = String(req.params.loadId);
+      const load = await Load.findOne({ loadId }).select('postedBy assignedDriver insurance').lean();
+      if (!load) return res.status(404).json({ error: 'Load not found' });
+      const isShipper = String(load.postedBy) === String(req.user.id);
+      const isDriver = load.assignedDriver && String(load.assignedDriver) === String(req.user.id);
+      const isAdmin = req.user.role === 'admin';
+      if (!isShipper && !isDriver && !isAdmin) {
+        return res.status(403).json({ error: 'Not authorized' });
+      }
+      if (!load.insurance || !load.insurance.source) {
+        return res.json({ insurance: null });
+      }
+      // Drivers see a redacted view — no document, no premium.
+      if (isDriver && !isShipper && !isAdmin) {
+        return res.json({
+          insurance: {
+            carrierName: load.insurance.carrierName,
+            coverageAmount: load.insurance.coverageAmount,
+            source: load.insurance.source,
+            declaredAt: load.insurance.declaredAt,
+          },
+        });
+      }
+      const { documentDataUrl, ...rest } = load.insurance;
+      return res.json({
+        insurance: {
+          ...rest,
+          hasDocument: Boolean(documentDataUrl),
+        },
+      });
+    } catch (error) {
+      console.error('Insurance fetch error:', error.message);
+      return res.status(500).json({ error: 'Failed to fetch insurance' });
     }
   }
 );

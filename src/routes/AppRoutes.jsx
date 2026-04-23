@@ -19,6 +19,7 @@ import { FAQ } from '../pages/FAQ';
 import { AdminControlPanel } from '../pages/AdminControlPanel';
 import { ShipperWorkflow } from '../pages/ShipperWorkflow';
 import { DriverDashboard } from '../pages/DriverDashboard';
+import { DriverLive } from '../pages/DriverLive';
 import { TruckOwnerDashboard } from '../pages/TruckOwnerDashboard';
 import { TollDashboard } from '../pages/TollDashboard';
 import { Kyc } from '../pages/Kyc';
@@ -73,6 +74,11 @@ export function AppRoutes() {
       <Route path="/driver" element={
         <ProtectedRoute allowedRoles={['driver']}>
           <DriverDashboard />
+        </ProtectedRoute>
+      } />
+      <Route path="/driver/live" element={
+        <ProtectedRoute allowedRoles={['driver', 'truck_owner']}>
+          <DriverLive />
         </ProtectedRoute>
       } />
       <Route path="/truck-owner" element={

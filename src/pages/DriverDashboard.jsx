@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { apiRequest } from '../utils/api';
 import { Card3D } from '../components/Card3D';
 import { RatingBadge, StarPicker } from '../components/RatingBadge';
+import { useSpeechDictation, useSpeechSynthesis } from '../hooks/useSpeech';
 
 // Hard cap matches MAX_POD_PHOTO_LENGTH on the backend (≈260 KB decoded).
 const MAX_POD_PHOTO_DATA_URL_LENGTH = 350_000;
@@ -63,6 +64,37 @@ function readFileAsDataUrl(file) {
   });
 }
 
+function MicButton({ dictation, targetLabel, onCommit }) {
+  if (!dictation.supported) return null;
+  const active = dictation.listening;
+  const toggle = () => {
+    if (active) {
+      dictation.stop();
+      if (dictation.transcript) {
+        onCommit(dictation.transcript);
+        dictation.reset();
+      }
+    } else {
+      dictation.reset();
+      dictation.start();
+    }
+  };
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      title={`Dictate ${targetLabel} (English only)`}
+      className={`shrink-0 rounded-full px-3 py-2 text-xs font-semibold transition ${
+        active
+          ? 'bg-rose-500 text-white animate-pulse'
+          : 'border border-sky-400/40 bg-sky-500/10 text-sky-200 hover:bg-sky-500/20'
+      }`}
+    >
+      {active ? '● Listening…' : '🎙️ Dictate'}
+    </button>
+  );
+}
+
 function PodModal({ load, onClose, onSubmitted }) {
   const [receiverName, setReceiverName] = useState('');
   const [receiverPhone, setReceiverPhone] = useState('');
@@ -71,6 +103,13 @@ function PodModal({ load, onClose, onSubmitted }) {
   const [photoError, setPhotoError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+
+  // Web Speech dictation — English only by design. Two independent
+  // recognisers (one per target field) so dictation into the note doesn't
+  // clobber the receiver name.
+  const nameDictation = useSpeechDictation('en-IN');
+  const noteDictation = useSpeechDictation('en-IN');
+  const tts = useSpeechSynthesis();
 
   const handlePhoto = async (e) => {
     setPhotoError(null);
@@ -102,6 +141,10 @@ function PodModal({ load, onClose, onSubmitted }) {
       if (note.trim()) body.note = note.trim();
       if (photoUrl) body.photoUrl = photoUrl;
       await apiRequest(`/loads/${load.loadId}/pod`, { method: 'POST', body });
+      // Spoken acknowledgement (English only — regional voices out of scope).
+      if (tts.supported) {
+        tts.speak(`Load ${load.loadId} delivered. Payment pending.`);
+      }
       onSubmitted();
     } catch (err) {
       setError(err.message);
@@ -127,13 +170,26 @@ function PodModal({ load, onClose, onSubmitted }) {
         </header>
 
         <div>
-          <label className="block text-xs font-semibold text-slate-300 mb-1">Receiver name *</label>
+          <div className="flex items-center justify-between mb-1">
+            <label className="block text-xs font-semibold text-slate-300">Receiver name *</label>
+            <MicButton
+              dictation={nameDictation}
+              targetLabel="receiver name"
+              onCommit={(t) => setReceiverName((prev) => (prev ? `${prev} ${t}` : t).slice(0, 120))}
+            />
+          </div>
           <input
             type="text" value={receiverName} onChange={(e) => setReceiverName(e.target.value)}
             required minLength={2} maxLength={120}
             className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
             placeholder="Who signed for the load?"
           />
+          {nameDictation.interim && (
+            <p className="mt-1 text-[10px] italic text-sky-300/70">…{nameDictation.interim}</p>
+          )}
+          {nameDictation.error && (
+            <p className="mt-1 text-[10px] text-orange-300">Mic: {nameDictation.error}</p>
+          )}
         </div>
 
         <div>
@@ -147,12 +203,27 @@ function PodModal({ load, onClose, onSubmitted }) {
         </div>
 
         <div>
-          <label className="block text-xs font-semibold text-slate-300 mb-1">Note</label>
+          <div className="flex items-center justify-between mb-1">
+            <label className="block text-xs font-semibold text-slate-300">Note</label>
+            <MicButton
+              dictation={noteDictation}
+              targetLabel="note"
+              onCommit={(t) => setNote((prev) => (prev ? `${prev} ${t}` : t).slice(0, 1000))}
+            />
+          </div>
           <textarea
             value={note} onChange={(e) => setNote(e.target.value)} rows={2} maxLength={1000}
             className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
             placeholder="Condition of goods, delays, anything to remember"
           />
+          {noteDictation.interim && (
+            <p className="mt-1 text-[10px] italic text-sky-300/70">…{noteDictation.interim}</p>
+          )}
+          {(nameDictation.supported || noteDictation.supported) && (
+            <p className="mt-1 text-[10px] text-slate-500">
+              🎙️ Voice dictation is English only. Regional languages need a paid ASR and are out of scope.
+            </p>
+          )}
         </div>
 
         <div>
@@ -526,8 +597,14 @@ export function DriverDashboard() {
             </button>
           ))}
           <a
+            href="/driver/live"
+            className="ml-auto rounded-full border border-emerald-400/40 bg-emerald-500/10 px-5 py-2 text-sm font-semibold text-emerald-300 transition hover:bg-emerald-500/20"
+          >
+            📍 Share Live GPS →
+          </a>
+          <a
             href="/tolls"
-            className="ml-auto rounded-full border border-orange-400/40 bg-orange-500/10 px-5 py-2 text-sm font-semibold text-orange-300 transition hover:bg-orange-500/20"
+            className="rounded-full border border-orange-400/40 bg-orange-500/10 px-5 py-2 text-sm font-semibold text-orange-300 transition hover:bg-orange-500/20"
           >
             ⚡ FASTag &amp; Tolls →
           </a>

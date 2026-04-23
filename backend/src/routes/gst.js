@@ -4,6 +4,7 @@ import { verifyJWT, requireRole } from '../middleware/authorize.js';
 import { requireGstEnabled } from '../middleware/platformControl.js';
 import { Joi, validateBody } from '../middleware/validation.js';
 import { generateGSTInvoice } from '../utils/pdfGenerator.js';
+import { generateEwayBill, generateIrn, getActiveProviderName, isGspConfigured } from '../utils/gspAdapter.js';
 import GstInvoice from '../schemas/GstInvoiceSchema.js';
 import fs from 'fs';
 import path from 'path';
@@ -167,6 +168,64 @@ router.get('/download/:id', async (req, res) => {
   } catch (error) {
     console.error('PDF generation error:', error.message);
     return res.status(500).json({ error: 'Failed to generate PDF' });
+  }
+});
+
+// ── GSP integration (e-way bill, IRN/e-invoice) ───────────────────────────────
+// These endpoints go through utils/gspAdapter.js.  When GSP_PROVIDER=none
+// (the default) they return 501 Not Implemented with a human-readable reason.
+// Wiring a real provider is a one-file change — see utils/gspAdapter.js.
+
+router.get('/gsp/status', (req, res) => {
+  res.json({
+    provider: getActiveProviderName(),
+    configured: isGspConfigured(),
+  });
+});
+
+router.post('/invoices/:id/eway-bill', async (req, res) => {
+  try {
+    const invoice = await GstInvoice.findOne({
+      _id: req.params.id,
+      userId: req.user.id,
+    }).lean();
+    if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+
+    const result = await generateEwayBill(invoice);
+    if (!result.configured) {
+      return res.status(501).json({
+        error: 'E-way bill generation is not configured',
+        provider: result.provider,
+        reason: result.reason,
+      });
+    }
+    return res.json({ ewayBill: result });
+  } catch (error) {
+    console.error('E-way bill error:', error.message);
+    return res.status(500).json({ error: 'Failed to generate e-way bill' });
+  }
+});
+
+router.post('/invoices/:id/irn', async (req, res) => {
+  try {
+    const invoice = await GstInvoice.findOne({
+      _id: req.params.id,
+      userId: req.user.id,
+    }).lean();
+    if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+
+    const result = await generateIrn(invoice);
+    if (!result.configured) {
+      return res.status(501).json({
+        error: 'IRN generation is not configured',
+        provider: result.provider,
+        reason: result.reason,
+      });
+    }
+    return res.json({ irn: result });
+  } catch (error) {
+    console.error('IRN error:', error.message);
+    return res.status(500).json({ error: 'Failed to generate IRN' });
   }
 });
 

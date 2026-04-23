@@ -262,6 +262,112 @@ function RateDriverModal({ load, onClose, onRated }) {
   );
 }
 
+function InsurancePanel({ load, onUpdated }) {
+  const [expanded, setExpanded] = useState(false);
+  const [existing, setExisting] = useState(load.insurance || null);
+  const [form, setForm] = useState({
+    carrierName: '', policyNumber: '', coverageAmount: '', premium: '',
+    brokerName: '', brokerEmail: '',
+  });
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
+  const [success, setSuccess] = useState(null);
+
+  useEffect(() => { setExisting(load.insurance || null); }, [load.insurance]);
+
+  const handleChange = (e) => setForm({ ...form, [e.target.name]: e.target.value });
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setSubmitting(true); setError(null); setSuccess(null);
+    try {
+      const body = {
+        carrierName: form.carrierName.trim(),
+        policyNumber: form.policyNumber.trim(),
+        coverageAmount: parseFloat(form.coverageAmount),
+      };
+      if (form.premium) body.premium = parseFloat(form.premium);
+      if (form.brokerName.trim()) body.brokerName = form.brokerName.trim();
+      if (form.brokerEmail.trim()) body.brokerEmail = form.brokerEmail.trim();
+      const data = await apiRequest(`/loads/${load.loadId}/insurance`, { method: 'POST', body });
+      setExisting(data.insurance);
+      setSuccess('Insurance declared');
+      onUpdated?.();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // External "Get a quote" link — a real carrier API integration would
+  // replace this with a bound policy flow.  Falls back to a mailto so it
+  // always does something useful even without env config.
+  const quoteUrl = import.meta.env.VITE_INSURANCE_QUOTE_URL
+    || `mailto:insurance@aptrucking.in?subject=Quote%20for%20load%20${encodeURIComponent(load.loadId)}`;
+
+  return (
+    <div className="mt-4 rounded-2xl border border-sky-400/20 bg-sky-500/5 p-3 text-xs text-sky-100">
+      <div className="flex items-center justify-between">
+        <p className="font-semibold uppercase tracking-wide text-sky-300">Insurance</p>
+        <div className="flex items-center gap-2">
+          <a
+            href={quoteUrl}
+            target="_blank" rel="noopener noreferrer"
+            className="rounded-full border border-sky-400/40 bg-sky-500/10 px-3 py-1 text-[11px] font-semibold text-sky-200 hover:bg-sky-500/20"
+          >
+            Get a quote ↗
+          </a>
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="rounded-full border border-white/15 bg-white/5 px-3 py-1 text-[11px] text-sky-100 hover:bg-white/10"
+          >
+            {existing ? (expanded ? 'Hide' : 'Update') : (expanded ? 'Cancel' : 'Declare policy')}
+          </button>
+        </div>
+      </div>
+
+      {existing && !expanded && (
+        <div className="mt-2 space-y-0.5 text-sky-100/90">
+          <p>Carrier: <span className="text-white">{existing.carrierName}</span></p>
+          <p>Policy #: <span className="text-white">{existing.policyNumber}</span></p>
+          <p>Coverage: <span className="text-white">₹{Number(existing.coverageAmount || 0).toLocaleString('en-IN')}</span></p>
+          {existing.brokerName && <p>Broker of record: {existing.brokerName}{existing.brokerEmail ? ` (${existing.brokerEmail})` : ''}</p>}
+          <p className="text-[10px] text-sky-300/70">
+            Source: {existing.source} — not an API-bound policy. See docs for carrier-API integration.
+          </p>
+        </div>
+      )}
+
+      {expanded && (
+        <form onSubmit={submit} className="mt-3 grid gap-2 sm:grid-cols-2">
+          <input name="carrierName" value={form.carrierName} onChange={handleChange} placeholder="Carrier name *" required minLength={2} maxLength={200}
+            className="rounded-xl border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] text-white" />
+          <input name="policyNumber" value={form.policyNumber} onChange={handleChange} placeholder="Policy number *" required minLength={1} maxLength={100}
+            className="rounded-xl border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] text-white" />
+          <input name="coverageAmount" type="number" min="0" step="0.01" value={form.coverageAmount} onChange={handleChange} placeholder="Coverage amount (₹) *" required
+            className="rounded-xl border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] text-white" />
+          <input name="premium" type="number" min="0" step="0.01" value={form.premium} onChange={handleChange} placeholder="Premium (₹, optional)"
+            className="rounded-xl border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] text-white" />
+          <input name="brokerName" value={form.brokerName} onChange={handleChange} placeholder="Broker name" maxLength={200}
+            className="rounded-xl border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] text-white" />
+          <input name="brokerEmail" type="email" value={form.brokerEmail} onChange={handleChange} placeholder="Broker email"
+            className="rounded-xl border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] text-white" />
+          <div className="sm:col-span-2 flex items-center gap-3">
+            <button type="submit" disabled={submitting}
+              className="rounded-full bg-sky-500 px-4 py-1.5 text-[11px] font-bold text-slate-950 disabled:opacity-50">
+              {submitting ? 'Saving…' : 'Save declaration'}
+            </button>
+            {error && <span className="text-[11px] text-orange-300">{error}</span>}
+            {success && <span className="text-[11px] text-emerald-300">{success}</span>}
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
+
 function LoadCard({ load, onStatusChange }) {
   const [expandBids, setExpandBids] = useState(false);
   const [updating, setUpdating] = useState(false);
@@ -456,6 +562,8 @@ function LoadCard({ load, onStatusChange }) {
       )}
 
       {error && <p className="mt-3 text-xs text-orange-300">{error}</p>}
+
+      <InsurancePanel load={load} onUpdated={onStatusChange} />
 
       {load.bids && load.bids.length > 0 && (
         <div className="mt-4">

@@ -1,7 +1,9 @@
+import crypto from 'crypto';
 import mongoose from 'mongoose';
 import { Router } from 'express';
-import { verifyJWT } from '../middleware/authorize.js';
+import { requireRole, verifyJWT } from '../middleware/authorize.js';
 import { requireTrackingEnabled } from '../middleware/platformControl.js';
+import { Joi, validateBody } from '../middleware/validation.js';
 import Load from '../schemas/LoadSchema.js';
 
 const router = Router();
@@ -72,6 +74,75 @@ router.get('/route/:vehicleId', async (req, res) => {
 router.get('/geofence', (req, res) => {
   res.json({ message: 'Geofence monitoring enabled' });
 });
+
+// ── Driver-owned vehicles ─────────────────────────────────────────────────────
+// Drivers need a vehicleId they *own* (vehicles.ownerId === user.id) so that
+// the socket.io `update-location` handler will accept their GPS pings.  The
+// existing /api/fleet routes are gated to truck_owner; this pair of endpoints
+// lets drivers (and truck_owners) manage their own driving vehicle directly
+// without signing up as a fleet operator.  Written against the loose
+// `vehicles` collection so schema stays compatible with fleet.js.
+
+function vehiclesCollection() {
+  return mongoose.connection.db.collection('vehicles');
+}
+
+const createMyVehicleSchema = Joi.object({
+  licensePlate: Joi.string().trim().min(2).max(32).required(),
+  type: Joi.string().trim().min(2).max(64).required(),
+  capacityTons: Joi.number().positive().max(200).optional(),
+});
+
+router.get(
+  '/my-vehicles',
+  requireRole(['driver', 'truck_owner']),
+  async (req, res) => {
+    try {
+      const ownerId = String(req.user.id);
+      const vehicles = await vehiclesCollection()
+        .find({ ownerId })
+        .project({ routeHistory: 0 })
+        .sort({ updatedAt: -1 })
+        .limit(50)
+        .toArray();
+      return res.json({ vehicles });
+    } catch (error) {
+      console.error('my-vehicles fetch error:', error.message);
+      return res.status(500).json({ error: 'Failed to fetch vehicles' });
+    }
+  }
+);
+
+router.post(
+  '/my-vehicles',
+  requireRole(['driver', 'truck_owner']),
+  validateBody(createMyVehicleSchema),
+  async (req, res) => {
+    try {
+      const ownerId = String(req.user.id);
+      const vehicleId = `V-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+      const now = new Date();
+      const doc = {
+        vehicleId,
+        ownerId,
+        licensePlate: req.body.licensePlate,
+        type: req.body.type,
+        capacityTons: req.body.capacityTons || null,
+        active: true,
+        currentLocation: null,
+        routeHistory: [],
+        createdAt: now,
+        updatedAt: now,
+      };
+      await vehiclesCollection().insertOne(doc);
+      const { _id, routeHistory, ...rest } = doc;
+      return res.status(201).json({ vehicle: rest });
+    } catch (error) {
+      console.error('my-vehicles create error:', error.message);
+      return res.status(500).json({ error: 'Failed to register vehicle' });
+    }
+  }
+);
 
 /**
  * Per-load tracking: returns the latest location + recent route path for

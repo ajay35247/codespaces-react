@@ -89,6 +89,27 @@ const LoadEscrowSchema = new mongoose.Schema({
   paidAt: { type: Date, default: null },
 }, { _id: false });
 
+// Insurance declaration — NOT an API-bound policy.  Until we integrate with a
+// carrier (Digit/ACKO/ICICI Lombard), this is a record of an existing policy
+// attached by the shipper at load-post time.  When a carrier partnership is
+// signed, the same schema will hold the carrier-issued policy number without
+// any consumer-side changes.
+const LoadInsuranceSchema = new mongoose.Schema({
+  carrierName: { type: String, default: '' },
+  policyNumber: { type: String, default: '' },
+  coverageAmount: { type: Number, default: 0 },
+  premium: { type: Number, default: 0 },
+  brokerName: { type: String, default: '' },
+  brokerEmail: { type: String, default: '' },
+  // Data URL of the policy document (PDF/image).  Same 350K char cap as POD
+  // photos to stay inline-storage friendly — enforced at the route layer.
+  documentDataUrl: { type: String, default: '' },
+  // 'declared' when the shipper entered an existing policy; 'api-bound' when
+  // created via a future carrier API integration; '' when absent.
+  source: { type: String, enum: ['', 'declared', 'api-bound'], default: '' },
+  declaredAt: { type: Date, default: null },
+}, { _id: false });
+
 const LoadSchema = new mongoose.Schema({
   loadId: { type: String, required: true, unique: true },
   origin: { type: String, required: true },
@@ -116,6 +137,7 @@ const LoadSchema = new mongoose.Schema({
   pod: { type: PodSchema, default: null },
   payment: { type: LoadPaymentSchema, default: () => ({}) },
   escrow: { type: LoadEscrowSchema, default: () => ({}) },
+  insurance: { type: LoadInsuranceSchema, default: null },
   ratings: { type: [LoadRatingSchema], default: [] },
   createdAt: { type: Date, default: Date.now },
 });

@@ -68,6 +68,16 @@ export function useSocket(event, handler) {
 }
 
 /**
+ * Return the shared socket, creating it if necessary.  Used by callers that
+ * need to *emit* events (e.g. the driver's live-GPS page firing
+ * `update-location` pings).  Prefer {@link useSocket} for subscribing to
+ * incoming events.
+ */
+export function getSharedSocket() {
+  return ensureSocket();
+}
+
+/**
  * Force-close the shared socket — call on logout so the next user doesn't
  * inherit the previous session's socket (which was authenticated via their
  * auth cookie).
