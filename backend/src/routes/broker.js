@@ -156,6 +156,7 @@ router.get('/deals', async (req, res) => {
     let totalWonAmount = 0;
     let totalLostAmount = 0;
     let totalQuotedAmount = 0;
+    let totalNegotiatingAmount = 0;
 
     for (const load of loads) {
       const myBid = (load.bids || []).find((b) => {
@@ -196,21 +197,24 @@ router.get('/deals', async (req, res) => {
       // pending
       if (load.status === 'posted') {
         categorized.quoted.push(enriched);
+        totalQuotedAmount += myBid.amount || 0;
       } else {
         categorized.negotiating.push(enriched);
+        totalNegotiatingAmount += myBid.amount || 0;
       }
-      totalQuotedAmount += myBid.amount || 0;
     }
 
     return res.json({
       totals: {
         quoted: categorized.quoted.length,
+        negotiating: categorized.negotiating.length,
         won: categorized.won.length,
         delivered: categorized.delivered.length,
         lost: categorized.lost.length,
         totalWonAmount,
         totalLostAmount,
         totalQuotedAmount,
+        totalNegotiatingAmount,
       },
       pipeline: categorized,
     });

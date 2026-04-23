@@ -60,6 +60,7 @@ export function Kyc() {
 
   const handleFile = (index, file) => {
     if (!file) return;
+    setError(null);
     if (file.size > MAX_FILE_BYTES) {
       setError(`File too large (max ${Math.floor(MAX_FILE_BYTES / 1024)} KB)`);
       return;

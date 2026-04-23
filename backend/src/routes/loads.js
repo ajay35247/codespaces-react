@@ -550,7 +550,14 @@ router.post(
           });
         }
       } else if (load.escrow?.status === 'none' || !load.escrow?.status) {
-        load.escrow.releaseMode = 'acknowledgement';
+        // Older loads written before the escrow sub-doc existed may have
+        // `load.escrow` as undefined; coerce to the default shape so we
+        // don't TypeError when annotating releaseMode below.
+        if (!load.escrow) {
+          load.escrow = { status: 'none', releaseMode: 'acknowledgement' };
+        } else {
+          load.escrow.releaseMode = 'acknowledgement';
+        }
       }
 
       load.payment = {
