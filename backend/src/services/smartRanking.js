@@ -121,6 +121,15 @@ export function scoreLoad(load, context = {}) {
   }
 
   // Weighted combination.  Weights sum to 1.0 so the final score is [0..1].
+  // Rationale (empirically tuned, NOT learned):
+  //   • freshness 0.40 — dominant signal; an available load that's been
+  //     sitting for 3 days is almost certainly already being bid on.
+  //   • rateDelta 0.35 — second-heaviest; pay is what drivers actually
+  //     care about once a load is within reach.
+  //   • overlap   0.25 — nice-to-have; without geodesic coords we can
+  //     only prove route-familiarity from text overlap, which is noisy.
+  // Change these weights in one place when you have outcome data that
+  // proves a different mix converts better.
   const score = 0.4 * freshness + 0.35 * rateDelta + 0.25 * overlap;
 
   return {

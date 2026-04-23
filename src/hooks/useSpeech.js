@@ -41,7 +41,14 @@ export function useSpeechDictation(lang = 'en-IN') {
         if (r.isFinal) finalText += r[0].transcript;
         else interimText += r[0].transcript;
       }
-      if (finalText) setTranscript((t) => (t ? `${t} ${finalText}` : finalText).trim());
+      if (finalText) {
+        // Known limitation: Web Speech recognisers emit each final chunk
+        // without surrounding punctuation, so we join with a single space.
+        // This produces acceptable results for short POD fields (names,
+        // one-line notes) but may read awkwardly around existing commas
+        // or periods — callers can edit the field afterwards.
+        setTranscript((t) => (t ? `${t} ${finalText}` : finalText).trim());
+      }
       setInterim(interimText);
     };
     rec.onerror = (event) => {
