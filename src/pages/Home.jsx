@@ -1,6 +1,12 @@
+import { lazy, Suspense } from 'react';
 import { motion } from 'framer-motion';
 import { ROLE_CARDS } from '../data/roles';
 import { RoleCard } from '../components/RoleCard';
+
+// Heavy (~500KB) three.js + fiber bundle — only parsed when the Home
+// page actually mounts, and further deferred via Suspense so it never
+// blocks the hero's text LCP.  Dashboard pages don't import this.
+const Hero3DScene = lazy(() => import('../components/Hero3DScene'));
 
 /* ── Static platform stats shown in the hero ticker ──────────────── */
 const PLATFORM_STATS = [
@@ -235,9 +241,13 @@ export function Home() {
               </div>
             </div>
 
-            {/* Right: 3D Command Center */}
+            {/* Right: 3D hero scene (lazy-loaded R3F).  Falls back to the
+                existing CSS 3D CommandCenter while the bundle loads —
+                ensures the hero never paints empty space. */}
             <div className="hidden lg:block">
-              <CommandCenter />
+              <Suspense fallback={<CommandCenter />}>
+                <Hero3DScene />
+              </Suspense>
             </div>
           </div>
         </div>
