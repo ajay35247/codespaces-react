@@ -19,6 +19,7 @@ import { FAQ } from '../pages/FAQ';
 import { AdminControlPanel } from '../pages/AdminControlPanel';
 import { ShipperWorkflow } from '../pages/ShipperWorkflow';
 import { DriverDashboard } from '../pages/DriverDashboard';
+import { TruckOwnerDashboard } from '../pages/TruckOwnerDashboard';
 import { TollDashboard } from '../pages/TollDashboard';
 import { Kyc } from '../pages/Kyc';
 import { ProtectedRoute } from '../components/ProtectedRoute';
@@ -35,7 +36,7 @@ export function AppRoutes() {
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/verify-email/:token" element={<VerifyEmail />} />
       <Route path="/tracking" element={
-        <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker']}>
+        <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker', 'truck_owner']}>
           <Tracking />
         </ProtectedRoute>
       } />
@@ -45,22 +46,22 @@ export function AppRoutes() {
         </ProtectedRoute>
       } />
       <Route path="/payment" element={
-        <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker']}>
+        <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker', 'truck_owner']}>
           <Payment />
         </ProtectedRoute>
       } />
       <Route path="/subscription" element={
-        <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker']}>
+        <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker', 'truck_owner']}>
           <Subscription />
         </ProtectedRoute>
       } />
       <Route path="/wallet" element={
-        <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker']}>
+        <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker', 'truck_owner']}>
           <Wallet />
         </ProtectedRoute>
       } />
       <Route path="/kyc" element={
-        <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker']}>
+        <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker', 'truck_owner']}>
           <Kyc />
         </ProtectedRoute>
       } />
@@ -72,6 +73,11 @@ export function AppRoutes() {
       <Route path="/driver" element={
         <ProtectedRoute allowedRoles={['driver']}>
           <DriverDashboard />
+        </ProtectedRoute>
+      } />
+      <Route path="/truck-owner" element={
+        <ProtectedRoute allowedRoles={['truck_owner']}>
+          <TruckOwnerDashboard />
         </ProtectedRoute>
       } />
       <Route path="/tolls" element={

@@ -1,12 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { GoogleMap, Marker, Polyline, useJsApiLoader } from '@react-google-maps/api';
 import { apiRequest } from '../utils/api';
+import { useSocket } from '../hooks/useSocket';
 
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAP_API_KEY || import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
 const mapContainerStyle = { width: '100%', height: '100%' };
 const defaultCenter = { lat: 19.076, lng: 72.8777 };
-const REFRESH_INTERVAL_MS = 15000;
 
 export function Tracking() {
   const [shipments, setShipments] = useState([]);
@@ -20,38 +20,58 @@ export function Tracking() {
     googleMapsApiKey: GOOGLE_MAPS_API_KEY,
   });
 
-  // Per-load focused tracking (used when ShipperWorkflow links here with
-  // ?loadId=…).  Falls back to the fleet-wide view if the load cannot be
-  // tracked yet (no vehicle bound, 403, etc).
-  useEffect(() => {
-    if (!loadId) return undefined;
-    let cancelled = false;
-    const fetchOnce = () => apiRequest(`/tracking/load/${encodeURIComponent(loadId)}`)
-      .then((data) => {
-        if (cancelled) return;
-        setError(null);
-        setLoadFocus(data);
-        if (data?.tracking?.currentLocation) {
-          const loc = data.tracking.currentLocation;
-          setShipments([{
-            id: data.tracking.vehicleId,
-            lat: loc.lat,
-            lon: loc.lng || loc.lon,
-            status: data.tracking.status || data.load.status,
-            eta: null,
-            distanceKm: null,
-          }]);
-          setRoutePath(data.tracking.path || []);
-        } else {
-          setShipments([]);
-          setRoutePath([]);
-        }
-      })
-      .catch((err) => { if (!cancelled) setError(err.message); });
-    fetchOnce();
-    const id = setInterval(fetchOnce, REFRESH_INTERVAL_MS);
-    return () => { cancelled = true; clearInterval(id); };
+  // Per-load focused tracking — refreshes on demand (initial mount + when
+  // a socket event tells us the load's state changed).  The old 15s
+  // polling loop has been replaced with `useSocket('load:status-changed')`.
+  const fetchLoadTracking = useCallback(async () => {
+    if (!loadId) return;
+    try {
+      const data = await apiRequest(`/tracking/load/${encodeURIComponent(loadId)}`);
+      setError(null);
+      setLoadFocus(data);
+      if (data?.tracking?.currentLocation) {
+        const loc = data.tracking.currentLocation;
+        setShipments([{
+          id: data.tracking.vehicleId,
+          lat: loc.lat,
+          lon: loc.lng || loc.lon,
+          status: data.tracking.status || data.load.status,
+          eta: null,
+          distanceKm: null,
+        }]);
+        setRoutePath(data.tracking.path || []);
+      } else {
+        setShipments([]);
+        setRoutePath([]);
+      }
+    } catch (err) {
+      setError(err.message);
+    }
   }, [loadId]);
+
+  useEffect(() => {
+    fetchLoadTracking();
+  }, [fetchLoadTracking]);
+
+  // Live vehicle location ping from the driver app (already emitted by the
+  // backend socket.io update-location handler as `vehicle-location-updated`).
+  // We join the vehicle-specific room on mount so only that vehicle's
+  // updates arrive.
+  const focusedVehicleId = loadFocus?.tracking?.vehicleId;
+  useSocket('vehicle-location-updated', (payload) => {
+    if (!focusedVehicleId || payload?.vehicleId !== focusedVehicleId) return;
+    setShipments((prev) => prev.map((s) => (s.id === payload.vehicleId
+      ? { ...s, lat: payload.location?.lat ?? s.lat, lon: payload.location?.lng ?? s.lon }
+      : s)));
+  });
+
+  // Status transitions (in-transit → delivered, etc.) push a hint — we
+  // re-fetch the authoritative load + tracking doc rather than trust the
+  // optimistic payload.
+  useSocket('load:status-changed', (payload) => {
+    if (!loadId || payload?.loadId !== loadId) return;
+    fetchLoadTracking();
+  });
 
   // Fleet-wide fallback when no loadId is specified.
   useEffect(() => {
