@@ -60,6 +60,35 @@ const LoadRatingSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
 });
 
+// Escrow lifecycle tied to a load.
+//   none       → no escrow created yet (legacy default)
+//   initiated  → Razorpay Order created, awaiting shipper payment
+//   funded     → shipper paid, funds held in platform account (webhook or verify endpoint)
+//   released   → payout attempted to driver's fund account (RazorpayX Payouts)
+//   paid       → payout processed (webhook confirmation)
+//   refunded   → shipper cancelled before delivery; funds returned
+const LoadEscrowSchema = new mongoose.Schema({
+  status: {
+    type: String,
+    enum: ['none', 'initiated', 'funded', 'released', 'paid', 'refunded', 'failed'],
+    default: 'none',
+  },
+  amount: { type: Number, default: 0 },
+  currency: { type: String, default: 'INR' },
+  razorpayOrderId: { type: String, default: '' },
+  razorpayPaymentId: { type: String, default: '' },
+  razorpayPayoutId: { type: String, default: '' },
+  // 'real' when RazorpayX Payouts is configured and the payout API was called
+  // successfully; 'acknowledgement' when we only flipped status without any
+  // money movement (documented fallback).
+  releaseMode: { type: String, enum: ['real', 'acknowledgement', ''], default: '' },
+  failureReason: { type: String, default: '' },
+  initiatedAt: { type: Date, default: null },
+  fundedAt: { type: Date, default: null },
+  releasedAt: { type: Date, default: null },
+  paidAt: { type: Date, default: null },
+}, { _id: false });
+
 const LoadSchema = new mongoose.Schema({
   loadId: { type: String, required: true, unique: true },
   origin: { type: String, required: true },
@@ -78,10 +107,15 @@ const LoadSchema = new mongoose.Schema({
   postedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
   postedByRole: { type: String },
   assignedDriver: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true, default: null },
+  // Vehicle the assigned driver is using for this load — drives live tracking
+  // for the shipper.  String form because `vehicles` collection keys off
+  // `vehicleId` (not ObjectId) — see socket.io `update-location` handler.
+  vehicleId: { type: String, default: null, index: true },
   acceptedBidId: { type: mongoose.Schema.Types.ObjectId, default: null },
   bids: [BidSchema],
   pod: { type: PodSchema, default: null },
   payment: { type: LoadPaymentSchema, default: () => ({}) },
+  escrow: { type: LoadEscrowSchema, default: () => ({}) },
   ratings: { type: [LoadRatingSchema], default: [] },
   createdAt: { type: Date, default: Date.now },
 });

@@ -9,6 +9,38 @@ const TruckSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
 });
 
+// KYC document submitted by the user for manual admin review.  We do not
+// integrate a third-party KYC API (Aadhaar/PAN vendors are paid + licensed);
+// instead we collect docs + number + holder name and rely on admin approval
+// via PATCH /admin/control/users/:id/kyc.  `fileDataUrl` is capped at
+// MAX_KYC_FILE_LENGTH in routes/auth.js.
+const KycDocumentSchema = new mongoose.Schema({
+  docType: {
+    type: String,
+    enum: ['pan', 'aadhaar', 'driving_license', 'rc_book', 'gstin'],
+    required: true,
+  },
+  number: { type: String, required: true },
+  holderName: { type: String, required: true },
+  fileDataUrl: { type: String, default: '' },
+  submittedAt: { type: Date, default: Date.now },
+}, { _id: false });
+
+// Payout destination the user registers for receiving money via RazorpayX
+// Payouts.  Either a UPI VPA, or a bank IFSC + account number.  Both are
+// stored as-is — the admin/ops flow is expected to register them with
+// RazorpayX Contacts + Fund Accounts on first real payout.
+const FundAccountSchema = new mongoose.Schema({
+  method: { type: String, enum: ['vpa', 'bank'], required: true },
+  vpa: { type: String, default: '' },
+  accountNumber: { type: String, default: '' },
+  ifsc: { type: String, default: '' },
+  beneficiaryName: { type: String, default: '' },
+  razorpayContactId: { type: String, default: '' },
+  razorpayFundAccountId: { type: String, default: '' },
+  updatedAt: { type: Date, default: Date.now },
+}, { _id: false });
+
 const UserSchema = new mongoose.Schema({
   name: { type: String, required: true },
   email: { type: String, required: true, unique: true },
@@ -48,6 +80,11 @@ const UserSchema = new mongoose.Schema({
   resetTokenExpires: { type: Date },
   refreshTokens: [{ type: String }],
   trucks: [TruckSchema],
+  kycDocuments: { type: [KycDocumentSchema], default: [] },
+  kycSubmittedAt: { type: Date, default: null },
+  kycReviewedAt: { type: Date, default: null },
+  kycRejectionReason: { type: String, default: '' },
+  fundAccount: { type: FundAccountSchema, default: null },
   createdAt: { type: Date, default: Date.now },
 });
 

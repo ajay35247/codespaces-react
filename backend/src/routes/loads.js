@@ -1,13 +1,30 @@
 import crypto from 'crypto';
 import mongoose from 'mongoose';
+import Razorpay from 'razorpay';
 import { Router } from 'express';
 import { requireRole, verifyJWT } from '../middleware/authorize.js';
 import { requireBookingsEnabled } from '../middleware/platformControl.js';
 import { requireActiveSubscription } from '../middleware/subscription.js';
 import { Joi, validateBody } from '../middleware/validation.js';
 import Load from '../schemas/LoadSchema.js';
+import User from '../schemas/UserSchema.js';
+import {
+  isRazorpayConfigured,
+  isRazorpayXConfigured,
+  verifyRazorpayOrderSignature,
+  registerFundAccount,
+  issuePayout,
+} from '../utils/razorpayClient.js';
 
 const router = Router();
+
+// Shared Razorpay SDK instance — only the Orders API is exercised here.
+// Payouts / Contacts / Fund Accounts go through utils/razorpayClient.js
+// which hits the REST endpoints directly (RazorpayX isn't wrapped by
+// the v2 SDK yet).
+const razorpay = isRazorpayConfigured()
+  ? new Razorpay({ key_id: process.env.RAZORPAY_KEY_ID, key_secret: process.env.RAZORPAY_KEY_SECRET })
+  : null;
 
 const createLoadSchema = Joi.object({
   origin: Joi.string().trim().min(2).max(200).required(),
@@ -352,6 +369,20 @@ router.post(
       // shows up under the driver's /loads/mine view and status transitions.
       if (bid.bidderRole === 'driver' && bid.bidderId) {
         load.assignedDriver = bid.bidderId;
+        // Best-effort: auto-bind the driver's most-recently-updated vehicle
+        // so the shipper immediately gets live tracking.  The driver can
+        // change it later via POST /:loadId/vehicle.
+        try {
+          const vehicle = await mongoose.connection.db.collection('vehicles').findOne(
+            { ownerId: String(bid.bidderId) },
+            { sort: { updatedAt: -1 }, projection: { vehicleId: 1 } }
+          );
+          if (vehicle?.vehicleId) {
+            load.vehicleId = String(vehicle.vehicleId);
+          }
+        } catch (lookupErr) {
+          console.warn('Auto-bind vehicle lookup failed:', lookupErr.message);
+        }
       }
       await load.save();
 
@@ -472,6 +503,56 @@ router.post(
       if (load.payment?.status !== 'pending') {
         return res.status(409).json({ error: `Payment already ${load.payment?.status}` });
       }
+
+      // Try a real RazorpayX Payout to the driver's registered fund account
+      // when the escrow has been funded and RazorpayX is configured.  Falls
+      // back to the plain acknowledgement flow (mode='acknowledgement')
+      // otherwise, so this endpoint never hard-fails for merchants who
+      // haven't enabled payouts yet.
+      let releaseMode = 'acknowledgement';
+      let payoutId = '';
+      if (
+        isRazorpayXConfigured()
+        && load.escrow?.status === 'funded'
+        && load.assignedDriver
+      ) {
+        try {
+          const driver = await User.findById(load.assignedDriver).select('fundAccount name email phone role');
+          if (!driver?.fundAccount?.razorpayFundAccountId) {
+            return res.status(409).json({
+              error: 'Driver has not registered a payout destination yet',
+              code: 'DRIVER_NO_FUND_ACCOUNT',
+            });
+          }
+          const payout = await issuePayout({
+            fundAccountId: driver.fundAccount.razorpayFundAccountId,
+            amountInPaise: Math.round(Number(load.escrow.amount) * 100),
+            mode: driver.fundAccount.method,
+            referenceId: load.loadId,
+            narration: `Load ${load.loadId}`.slice(0, 30),
+          });
+          if (payout.configured) {
+            releaseMode = 'real';
+            payoutId = payout.payoutId;
+            load.escrow.razorpayPayoutId = payout.payoutId;
+            load.escrow.status = 'released';
+            load.escrow.releasedAt = new Date();
+            load.escrow.releaseMode = 'real';
+          }
+        } catch (payoutErr) {
+          console.error('RazorpayX payout failed:', payoutErr.message);
+          load.escrow.failureReason = payoutErr.message;
+          // Do NOT silently succeed — surface the failure to the shipper so
+          // they can retry or fall back to an off-platform transfer.
+          return res.status(502).json({
+            error: `Payout failed: ${payoutErr.message}`,
+            code: 'PAYOUT_FAILED',
+          });
+        }
+      } else if (load.escrow?.status === 'none' || !load.escrow?.status) {
+        load.escrow.releaseMode = 'acknowledgement';
+      }
+
       load.payment = {
         status: 'released',
         releasedAt: new Date(),
@@ -480,7 +561,14 @@ router.post(
         receivedBy: null,
       };
       await load.save();
-      return res.json({ message: 'Payment marked released', loadId, payment: load.payment });
+      return res.json({
+        message: 'Payment marked released',
+        loadId,
+        payment: load.payment,
+        escrow: load.escrow,
+        releaseMode,
+        payoutId,
+      });
     } catch (error) {
       console.error('Payment release error:', error.message);
       return res.status(500).json({ error: 'Failed to release payment' });
@@ -509,8 +597,14 @@ router.post(
       load.payment.status = 'received';
       load.payment.receivedAt = new Date();
       load.payment.receivedBy = req.user.id;
+      // When a real payout was issued, driver-side acknowledgement also
+      // reconciles the escrow state to 'paid'.
+      if (load.escrow?.status === 'released') {
+        load.escrow.status = 'paid';
+        load.escrow.paidAt = new Date();
+      }
       await load.save();
-      return res.json({ message: 'Payment marked received', loadId, payment: load.payment });
+      return res.json({ message: 'Payment marked received', loadId, payment: load.payment, escrow: load.escrow });
     } catch (error) {
       console.error('Payment received error:', error.message);
       return res.status(500).json({ error: 'Failed to acknowledge payment' });
@@ -614,5 +708,176 @@ router.get('/users/:userId/rating-summary', verifyJWT, async (req, res) => {
     return res.status(500).json({ error: 'Failed to fetch rating summary' });
   }
 });
+
+// ── Escrow: real money hold via Razorpay Orders ───────────────────────────────
+// Flow:
+//   1. Shipper calls POST /:loadId/escrow/create — we create a Razorpay Order
+//      for the accepted-bid amount (or freightPrice) and persist orderId.
+//   2. Frontend opens Razorpay Checkout with the returned orderId + keyId.
+//      On success Checkout returns {razorpay_order_id, razorpay_payment_id,
+//      razorpay_signature}.
+//   3. Shipper calls POST /:loadId/escrow/verify with those fields — we verify
+//      the HMAC signature and mark escrow `funded`.
+// Release is triggered from POST /:loadId/payment/release above.
+//
+// When RAZORPAY_KEY_ID/SECRET are not set the create endpoint returns 501 so
+// the UI can gracefully show "Pay Offline" as the only option.  This is
+// intentional — we don't want to silently fake the hold.
+
+router.post(
+  '/:loadId/escrow/create',
+  verifyJWT,
+  requireRole(['shipper']),
+  requireBookingsEnabled(),
+  async (req, res) => {
+    try {
+      if (!razorpay) {
+        return res.status(501).json({
+          error: 'Escrow not configured — set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET',
+          code: 'RAZORPAY_NOT_CONFIGURED',
+        });
+      }
+      const loadId = String(req.params.loadId);
+      const load = await Load.findOne({ loadId });
+      if (!load) return res.status(404).json({ error: 'Load not found' });
+      if (String(load.postedBy) !== String(req.user.id)) {
+        return res.status(403).json({ error: 'You do not own this load' });
+      }
+      if (['funded', 'released', 'paid'].includes(load.escrow?.status)) {
+        return res.status(409).json({ error: `Escrow already ${load.escrow.status}` });
+      }
+
+      // Resolve escrow amount: prefer the accepted bid, fall back to freightPrice.
+      let amount = Number(load.freightPrice) || 0;
+      if (load.acceptedBidId) {
+        const accepted = load.bids.id(load.acceptedBidId);
+        if (accepted?.amount) amount = Number(accepted.amount);
+      }
+      if (!amount || amount <= 0) {
+        return res.status(409).json({ error: 'Load does not have a priced bid or freight price' });
+      }
+
+      const order = await razorpay.orders.create({
+        amount: Math.round(amount * 100),
+        currency: 'INR',
+        receipt: `escrow_${load.loadId}`.slice(0, 40),
+        notes: { loadId: load.loadId, shipperId: String(req.user.id), kind: 'escrow' },
+        payment_capture: 1,
+      });
+
+      load.escrow = {
+        status: 'initiated',
+        amount,
+        currency: 'INR',
+        razorpayOrderId: order.id,
+        razorpayPaymentId: '',
+        razorpayPayoutId: '',
+        releaseMode: '',
+        failureReason: '',
+        initiatedAt: new Date(),
+        fundedAt: null,
+        releasedAt: null,
+        paidAt: null,
+      };
+      await load.save();
+
+      return res.json({
+        loadId: load.loadId,
+        orderId: order.id,
+        amount,
+        currency: 'INR',
+        keyId: process.env.RAZORPAY_KEY_ID,
+        escrow: load.escrow,
+      });
+    } catch (error) {
+      console.error('Escrow create error:', error.message);
+      return res.status(500).json({ error: 'Failed to create escrow order' });
+    }
+  }
+);
+
+const escrowVerifySchema = Joi.object({
+  razorpay_order_id: Joi.string().trim().required(),
+  razorpay_payment_id: Joi.string().trim().required(),
+  razorpay_signature: Joi.string().trim().required(),
+});
+
+router.post(
+  '/:loadId/escrow/verify',
+  verifyJWT,
+  requireRole(['shipper']),
+  validateBody(escrowVerifySchema),
+  async (req, res) => {
+    try {
+      const loadId = String(req.params.loadId);
+      const load = await Load.findOne({ loadId });
+      if (!load) return res.status(404).json({ error: 'Load not found' });
+      if (String(load.postedBy) !== String(req.user.id)) {
+        return res.status(403).json({ error: 'You do not own this load' });
+      }
+      if (load.escrow?.status !== 'initiated') {
+        return res.status(409).json({ error: `Escrow is ${load.escrow?.status || 'none'}, cannot verify` });
+      }
+      if (load.escrow.razorpayOrderId !== req.body.razorpay_order_id) {
+        return res.status(400).json({ error: 'Order ID mismatch' });
+      }
+      const ok = verifyRazorpayOrderSignature(req.body);
+      if (!ok) {
+        return res.status(400).json({ error: 'Invalid payment signature' });
+      }
+
+      load.escrow.status = 'funded';
+      load.escrow.razorpayPaymentId = req.body.razorpay_payment_id;
+      load.escrow.fundedAt = new Date();
+      await load.save();
+
+      return res.json({ message: 'Escrow funded', loadId, escrow: load.escrow });
+    } catch (error) {
+      console.error('Escrow verify error:', error.message);
+      return res.status(500).json({ error: 'Failed to verify escrow payment' });
+    }
+  }
+);
+
+// ── Bind vehicle to load (driver-side) ────────────────────────────────────────
+// Lets the assigned driver set / switch the vehicle used for this load so
+// the shipper's live-tracking picks up the correct device.  Written as an
+// opt-in to the `vehicles` collection (owned by fleet.js) without coupling
+// to its schema — the endpoint only verifies the vehicle belongs to the
+// caller.
+
+const bindVehicleSchema = Joi.object({
+  vehicleId: Joi.string().trim().min(1).max(64).required(),
+});
+
+router.post(
+  '/:loadId/vehicle',
+  verifyJWT,
+  requireRole(['driver']),
+  validateBody(bindVehicleSchema),
+  async (req, res) => {
+    try {
+      const loadId = String(req.params.loadId);
+      const load = await Load.findOne({ loadId });
+      if (!load) return res.status(404).json({ error: 'Load not found' });
+      if (!load.assignedDriver || String(load.assignedDriver) !== String(req.user.id)) {
+        return res.status(403).json({ error: 'You are not assigned to this load' });
+      }
+      const owned = await mongoose.connection.db.collection('vehicles').findOne({
+        vehicleId: req.body.vehicleId,
+        ownerId: String(req.user.id),
+      });
+      if (!owned) {
+        return res.status(404).json({ error: 'Vehicle not found or not owned by you' });
+      }
+      load.vehicleId = String(req.body.vehicleId);
+      await load.save();
+      return res.json({ message: 'Vehicle bound to load', loadId, vehicleId: load.vehicleId });
+    } catch (error) {
+      console.error('Bind vehicle error:', error.message);
+      return res.status(500).json({ error: 'Failed to bind vehicle' });
+    }
+  }
+);
 
 export default router;

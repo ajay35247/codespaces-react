@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import { Router } from 'express';
 import { verifyJWT } from '../middleware/authorize.js';
 import { requireTrackingEnabled } from '../middleware/platformControl.js';
+import Load from '../schemas/LoadSchema.js';
 
 const router = Router();
 
@@ -70,6 +71,67 @@ router.get('/route/:vehicleId', async (req, res) => {
 
 router.get('/geofence', (req, res) => {
   res.json({ message: 'Geofence monitoring enabled' });
+});
+
+/**
+ * Per-load tracking: returns the latest location + recent route path for
+ * the vehicle currently bound to the given load.  Only the load's shipper
+ * or assigned driver may read; everyone else gets 403.  Used by the
+ * ShipperWorkflow "Track live" link to jump straight into tracking for a
+ * single load instead of the full fleet view.
+ */
+router.get('/load/:loadId', async (req, res) => {
+  try {
+    const loadId = String(req.params.loadId);
+    const load = await Load
+      .findOne({ loadId })
+      .select('postedBy assignedDriver vehicleId status origin destination');
+    if (!load) return res.status(404).json({ error: 'Load not found' });
+
+    const isShipper = String(load.postedBy) === String(req.user.id);
+    const isDriver = load.assignedDriver && String(load.assignedDriver) === String(req.user.id);
+    if (!isShipper && !isDriver) {
+      return res.status(403).json({ error: 'Not authorized to track this load' });
+    }
+    if (!load.vehicleId) {
+      return res.status(404).json({
+        error: 'No vehicle bound to this load yet',
+        code: 'NO_VEHICLE',
+        load: { loadId, status: load.status, origin: load.origin, destination: load.destination },
+      });
+    }
+
+    const vehicle = await mongoose.connection.db
+      .collection('vehicles')
+      .findOne(
+        { vehicleId: String(load.vehicleId) },
+        { projection: { vehicleId: 1, currentLocation: 1, routeHistory: 1, status: 1, updatedAt: 1 } }
+      );
+    const staleThreshold = new Date(Date.now() - STALE_THRESHOLD_MS);
+
+    return res.json({
+      load: {
+        loadId,
+        status: load.status,
+        origin: load.origin,
+        destination: load.destination,
+        vehicleId: load.vehicleId,
+      },
+      tracking: vehicle
+        ? {
+          vehicleId: vehicle.vehicleId,
+          status: vehicle.status,
+          currentLocation: vehicle.currentLocation || null,
+          isStale: vehicle.updatedAt ? vehicle.updatedAt < staleThreshold : true,
+          updatedAt: vehicle.updatedAt || null,
+          path: vehicle.routeHistory || [],
+        }
+        : null,
+    });
+  } catch (error) {
+    console.error('Tracking load error:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch load tracking' });
+  }
 });
 
 export default router;
