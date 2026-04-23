@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { apiRequest } from '../utils/api';
+import { RatingBadge, StarPicker } from '../components/RatingBadge';
 
 const TRUCK_TYPES = ['truck', 'mini-truck', 'trailer', 'container', 'tanker', 'flatbed', 'reefer'];
 
@@ -169,14 +170,24 @@ function BidRow({ bid, loadId, loadStatus, onAction }) {
     }
   };
 
+  const bidderId = bid.bidderId || bid.brokerId;
+
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-slate-800/50 px-4 py-3 text-sm">
-      <div>
-        <span className="text-slate-400">Bid amount: </span>
-        <span className="font-semibold text-white">₹{bid.amount?.toLocaleString('en-IN')}</span>
-        <span className={`ml-3 rounded-full px-2 py-0.5 text-xs ${bid.status === 'accepted' ? 'bg-emerald-800 text-emerald-200' : bid.status === 'rejected' ? 'bg-slate-700 text-slate-400' : 'bg-sky-800 text-sky-200'}`}>
-          {bid.status}
-        </span>
+      <div className="flex flex-wrap items-center gap-3">
+        <div>
+          <span className="text-slate-400">Bid amount: </span>
+          <span className="font-semibold text-white">₹{bid.amount?.toLocaleString('en-IN')}</span>
+          <span className={`ml-3 rounded-full px-2 py-0.5 text-xs ${bid.status === 'accepted' ? 'bg-emerald-800 text-emerald-200' : bid.status === 'rejected' ? 'bg-slate-700 text-slate-400' : 'bg-sky-800 text-sky-200'}`}>
+            {bid.status}
+          </span>
+        </div>
+        {bidderId && (
+          <span className="flex items-center gap-1.5">
+            <span className="text-[10px] uppercase tracking-wide text-slate-500">{bid.bidderRole || 'bidder'}</span>
+            <RatingBadge userId={bidderId} />
+          </span>
+        )}
       </div>
       {loadStatus === 'posted' && bid.status === 'pending' && (
         <div className="flex gap-2">
@@ -200,18 +211,88 @@ function BidRow({ bid, loadId, loadStatus, onAction }) {
   );
 }
 
+function RateDriverModal({ load, onClose, onRated }) {
+  const [stars, setStars] = useState(0);
+  const [comment, setComment] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (stars < 1) { setError('Please select a star rating'); return; }
+    setSubmitting(true); setError(null);
+    try {
+      const body = { stars };
+      if (comment.trim()) body.comment = comment.trim();
+      await apiRequest(`/loads/${load.loadId}/rate`, { method: 'POST', body });
+      onRated();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4" onClick={onClose}>
+      <form onClick={(e) => e.stopPropagation()} onSubmit={submit}
+        className="w-full max-w-sm space-y-4 rounded-3xl border border-white/10 bg-slate-900 p-6 shadow-2xl">
+        <header>
+          <p className="text-xs uppercase tracking-widest text-amber-300">Rate Driver</p>
+          <h3 className="mt-1 text-lg font-bold text-white">{load.loadId}</h3>
+        </header>
+        <div className="flex justify-center"><StarPicker value={stars} onChange={setStars} /></div>
+        <textarea
+          value={comment} onChange={(e) => setComment(e.target.value)} rows={3} maxLength={500}
+          placeholder="Optional comment"
+          className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+        />
+        {error && <p className="text-sm text-orange-300">{error}</p>}
+        <div className="flex items-center justify-end gap-2">
+          <button type="button" onClick={onClose} className="rounded-full border border-white/15 px-4 py-2 text-sm text-slate-300">Cancel</button>
+          <button type="submit" disabled={submitting || stars < 1}
+            className="rounded-full bg-amber-400 px-5 py-2 text-sm font-bold text-slate-950 disabled:opacity-50">
+            {submitting ? 'Saving…' : 'Submit rating'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function LoadCard({ load, onStatusChange }) {
   const [expandBids, setExpandBids] = useState(false);
   const [updating, setUpdating] = useState(false);
+  const [error, setError] = useState(null);
+  const [showRate, setShowRate] = useState(false);
+
+  const shipperHasRated = (load.ratings || []).some((r) => r.raterRole === 'shipper');
+  const paymentStatus = load.payment?.status || 'pending';
+  const driverId = typeof load.assignedDriver === 'object' && load.assignedDriver
+    ? load.assignedDriver._id
+    : load.assignedDriver;
 
   const handleCancel = async () => {
     if (!window.confirm('Cancel this load?')) return;
-    setUpdating(true);
+    setUpdating(true); setError(null);
     try {
       await apiRequest(`/loads/${load.loadId}/status`, { method: 'PATCH', body: { status: 'cancelled' } });
       onStatusChange();
     } catch (err) {
-      console.error('Cancel load error:', err.message);
+      setError(err.message);
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const releasePayment = async () => {
+    if (!window.confirm('Mark this freight payment as released to the driver?')) return;
+    setUpdating(true); setError(null);
+    try {
+      await apiRequest(`/loads/${load.loadId}/payment/release`, { method: 'POST', body: {} });
+      onStatusChange();
+    } catch (err) {
+      setError(err.message);
     } finally {
       setUpdating(false);
     }
@@ -231,6 +312,11 @@ function LoadCard({ load, onStatusChange }) {
           {load.pickupDate && (
             <p className="mt-1 text-xs text-slate-400">Pickup: {new Date(load.pickupDate).toLocaleDateString('en-IN')}</p>
           )}
+          {driverId && (
+            <p className="mt-2 flex items-center gap-2 text-xs text-slate-400">
+              Driver: <RatingBadge userId={driverId} />
+            </p>
+          )}
         </div>
         <div className="flex flex-col items-end gap-2">
           <span className={`rounded-full px-3 py-1 text-xs font-semibold uppercase ${STATUS_BADGE[load.status] || 'bg-slate-700 text-slate-300'}`}>
@@ -245,8 +331,46 @@ function LoadCard({ load, onStatusChange }) {
               Cancel
             </button>
           )}
+          {load.status === 'delivered' && paymentStatus === 'pending' && load.pod && (
+            <button
+              onClick={releasePayment}
+              disabled={updating}
+              className="rounded-full bg-emerald-500 px-3 py-1 text-xs font-bold text-slate-950 transition hover:bg-emerald-400 disabled:opacity-50"
+            >
+              💸 Release Payment
+            </button>
+          )}
+          {load.status === 'delivered' && paymentStatus !== 'pending' && (
+            <span className={`rounded-full px-3 py-1 text-xs ${paymentStatus === 'received' ? 'bg-emerald-800 text-emerald-200' : 'bg-amber-800 text-amber-200'}`}>
+              Payment {paymentStatus}
+            </span>
+          )}
+          {load.status === 'delivered' && !shipperHasRated && (
+            <button
+              onClick={() => setShowRate(true)}
+              className="rounded-full border border-amber-400/40 bg-amber-500/10 px-3 py-1 text-xs font-semibold text-amber-300 transition hover:bg-amber-500/20"
+            >
+              ★ Rate Driver
+            </button>
+          )}
         </div>
       </div>
+
+      {load.status === 'delivered' && load.pod && (
+        <div className="mt-4 rounded-2xl border border-emerald-400/20 bg-emerald-500/5 p-3 text-xs text-emerald-200">
+          <p className="font-semibold uppercase tracking-wide text-emerald-300">Proof of Delivery</p>
+          <p className="mt-1">Received by {load.pod.receiverName}{load.pod.receiverPhone ? ` (${load.pod.receiverPhone})` : ''}</p>
+          {load.pod.note && <p className="mt-1 italic text-emerald-200/80">“{load.pod.note}”</p>}
+          {load.pod.deliveredAt && (
+            <p className="mt-1 text-emerald-200/60">Delivered: {new Date(load.pod.deliveredAt).toLocaleString('en-IN')}</p>
+          )}
+          {load.pod.photoUrl && (
+            <img src={load.pod.photoUrl} alt="POD" className="mt-2 h-32 w-auto rounded-xl border border-emerald-400/20" />
+          )}
+        </div>
+      )}
+
+      {error && <p className="mt-3 text-xs text-orange-300">{error}</p>}
 
       {load.bids && load.bids.length > 0 && (
         <div className="mt-4">
@@ -273,7 +397,11 @@ function LoadCard({ load, onStatusChange }) {
       )}
 
       {load.bids && load.bids.length === 0 && load.status === 'posted' && (
-        <p className="mt-4 text-xs text-slate-500">No bids yet. Brokers will bid on this load.</p>
+        <p className="mt-4 text-xs text-slate-500">No bids yet. Drivers and brokers will bid on this load.</p>
+      )}
+
+      {showRate && (
+        <RateDriverModal load={load} onClose={() => setShowRate(false)} onRated={() => { setShowRate(false); onStatusChange(); }} />
       )}
     </div>
   );

@@ -30,6 +30,30 @@ const updateStatusSchema = Joi.object({
   status: Joi.string().valid('in-transit', 'delivered', 'cancelled').required(),
 });
 
+// Hard size cap on POD photo data URL (base64 ~ 4/3 of decoded bytes).
+// 350_000 chars ≈ 256 KB decoded — enough for a phone snapshot, small
+// enough to keep MongoDB documents reasonable without object storage.
+const MAX_POD_PHOTO_LENGTH = 350_000;
+
+const podSchema = Joi.object({
+  receiverName: Joi.string().trim().min(2).max(120).required(),
+  receiverPhone: Joi.string().trim().max(40).allow('').optional(),
+  note: Joi.string().trim().max(1000).allow('').optional(),
+  photoUrl: Joi.string()
+    .pattern(/^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/)
+    .max(MAX_POD_PHOTO_LENGTH)
+    .allow('')
+    .optional(),
+});
+
+const releasePaymentSchema = Joi.object({}).unknown(false);
+const receivedPaymentSchema = Joi.object({}).unknown(false);
+
+const rateSchema = Joi.object({
+  stars: Joi.number().integer().min(1).max(5).required(),
+  comment: Joi.string().trim().max(500).allow('').optional(),
+});
+
 /** Escape special regex characters to prevent regex injection. */
 function escapeRegex(str) {
   return String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -270,6 +294,13 @@ router.patch(
         if (load.status !== 'in-transit' || status !== 'delivered') {
           return res.status(409).json({ error: 'Drivers can only mark in-transit loads as delivered' });
         }
+        // Require Proof-of-Delivery before allowing the status transition.
+        // Drivers should use POST /:loadId/pod which submits POD and flips
+        // status atomically; this PATCH path remains as a safety net for
+        // loads that already have POD on file.
+        if (!load.pod || !load.pod.receiverName) {
+          return res.status(409).json({ error: 'Proof of Delivery required before marking delivered' });
+        }
       } else {
         if (String(load.postedBy) !== String(req.user.id)) {
           return res.status(403).json({ error: 'You do not own this load' });
@@ -367,5 +398,221 @@ router.post(
 // NOTE: Driver assignment was previously handled by the fleet-manager role,
 // which has been removed. Shippers now assign drivers implicitly by accepting
 // a driver's bid (see /:loadId/bids/:bidId/accept above).
+
+// ── Proof of Delivery (driver) ────────────────────────────────────────────────
+// Driver submits POD details (receiver name + optional phone/note/photo).
+// On success, transitions load to 'delivered' atomically so the loop is closed
+// in one round-trip instead of POD + separate PATCH /status.
+
+router.post(
+  '/:loadId/pod',
+  verifyJWT,
+  requireRole(['driver']),
+  validateBody(podSchema),
+  async (req, res) => {
+    try {
+      const loadId = String(req.params.loadId);
+      const load = await Load.findOne({ loadId });
+      if (!load) {
+        return res.status(404).json({ error: 'Load not found' });
+      }
+      if (!load.assignedDriver || String(load.assignedDriver) !== String(req.user.id)) {
+        return res.status(403).json({ error: 'You are not assigned to this load' });
+      }
+      if (load.status !== 'in-transit') {
+        return res.status(409).json({ error: 'POD can only be submitted for in-transit loads' });
+      }
+      if (load.pod && load.pod.receiverName) {
+        return res.status(409).json({ error: 'POD already submitted for this load' });
+      }
+      load.pod = {
+        receiverName: req.body.receiverName,
+        receiverPhone: req.body.receiverPhone || '',
+        note: req.body.note || '',
+        photoUrl: req.body.photoUrl || '',
+        submittedBy: req.user.id,
+        deliveredAt: new Date(),
+      };
+      load.status = 'delivered';
+      await load.save();
+      return res.json({ message: 'POD submitted, load marked delivered', loadId, pod: load.pod, status: load.status });
+    } catch (error) {
+      console.error('POD submit error:', error.message);
+      return res.status(500).json({ error: 'Failed to submit POD' });
+    }
+  }
+);
+
+// ── Payment release / acknowledge (closes the trust loop) ─────────────────────
+// release  : shipper acknowledges they paid the driver (off-platform or via
+//            their own gateway).  Requires load delivered + POD on file.
+// received : driver acknowledges they received the funds.
+
+router.post(
+  '/:loadId/payment/release',
+  verifyJWT,
+  requireRole(['shipper']),
+  validateBody(releasePaymentSchema),
+  async (req, res) => {
+    try {
+      const loadId = String(req.params.loadId);
+      const load = await Load.findOne({ loadId });
+      if (!load) {
+        return res.status(404).json({ error: 'Load not found' });
+      }
+      if (String(load.postedBy) !== String(req.user.id)) {
+        return res.status(403).json({ error: 'You do not own this load' });
+      }
+      if (load.status !== 'delivered') {
+        return res.status(409).json({ error: 'Load must be delivered before releasing payment' });
+      }
+      if (!load.pod || !load.pod.receiverName) {
+        return res.status(409).json({ error: 'POD required before releasing payment' });
+      }
+      if (load.payment?.status !== 'pending') {
+        return res.status(409).json({ error: `Payment already ${load.payment?.status}` });
+      }
+      load.payment = {
+        status: 'released',
+        releasedAt: new Date(),
+        releasedBy: req.user.id,
+        receivedAt: null,
+        receivedBy: null,
+      };
+      await load.save();
+      return res.json({ message: 'Payment marked released', loadId, payment: load.payment });
+    } catch (error) {
+      console.error('Payment release error:', error.message);
+      return res.status(500).json({ error: 'Failed to release payment' });
+    }
+  }
+);
+
+router.post(
+  '/:loadId/payment/received',
+  verifyJWT,
+  requireRole(['driver']),
+  validateBody(receivedPaymentSchema),
+  async (req, res) => {
+    try {
+      const loadId = String(req.params.loadId);
+      const load = await Load.findOne({ loadId });
+      if (!load) {
+        return res.status(404).json({ error: 'Load not found' });
+      }
+      if (!load.assignedDriver || String(load.assignedDriver) !== String(req.user.id)) {
+        return res.status(403).json({ error: 'You are not assigned to this load' });
+      }
+      if (load.payment?.status !== 'released') {
+        return res.status(409).json({ error: 'Payment has not been released yet' });
+      }
+      load.payment.status = 'received';
+      load.payment.receivedAt = new Date();
+      load.payment.receivedBy = req.user.id;
+      await load.save();
+      return res.json({ message: 'Payment marked received', loadId, payment: load.payment });
+    } catch (error) {
+      console.error('Payment received error:', error.message);
+      return res.status(500).json({ error: 'Failed to acknowledge payment' });
+    }
+  }
+);
+
+// ── Bilateral rating (shipper ↔ assigned driver) ──────────────────────────────
+// Only the load's shipper or assigned driver may rate, only after delivery,
+// at most once per role per load.  The ratee is inferred (shipper → driver,
+// driver → shipper) so the client can't target arbitrary users.
+
+router.post(
+  '/:loadId/rate',
+  verifyJWT,
+  requireRole(['shipper', 'driver']),
+  validateBody(rateSchema),
+  async (req, res) => {
+    try {
+      const loadId = String(req.params.loadId);
+      const load = await Load.findOne({ loadId });
+      if (!load) {
+        return res.status(404).json({ error: 'Load not found' });
+      }
+      if (load.status !== 'delivered') {
+        return res.status(409).json({ error: 'Ratings allowed only on delivered loads' });
+      }
+      if (!load.assignedDriver) {
+        return res.status(409).json({ error: 'Load has no assigned driver' });
+      }
+
+      const isShipper = String(load.postedBy) === String(req.user.id) && req.user.role === 'shipper';
+      const isDriver = String(load.assignedDriver) === String(req.user.id) && req.user.role === 'driver';
+      if (!isShipper && !isDriver) {
+        return res.status(403).json({ error: 'Only the shipper or assigned driver can rate this load' });
+      }
+
+      const raterRole = isShipper ? 'shipper' : 'driver';
+      const rateeId = isShipper ? load.assignedDriver : load.postedBy;
+
+      const already = (load.ratings || []).some((r) => r.raterRole === raterRole);
+      if (already) {
+        return res.status(409).json({ error: 'You have already rated this load' });
+      }
+
+      load.ratings.push({
+        raterId: req.user.id,
+        rateeId,
+        raterRole,
+        stars: req.body.stars,
+        comment: req.body.comment || '',
+      });
+      await load.save();
+      return res.status(201).json({ message: 'Rating recorded', loadId, raterRole, stars: req.body.stars });
+    } catch (error) {
+      console.error('Rate load error:', error.message);
+      return res.status(500).json({ error: 'Failed to record rating' });
+    }
+  }
+);
+
+// ── Public rating summary for a user ──────────────────────────────────────────
+// Aggregates all ratings where the given userId is the ratee.  Used by both
+// driver- and shipper-facing UI to display reputation badges.
+
+router.get('/users/:userId/rating-summary', verifyJWT, async (req, res) => {
+  try {
+    const userId = req.params.userId;
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({ error: 'Invalid user ID' });
+    }
+    const userObjectId = new mongoose.Types.ObjectId(userId);
+    const result = await Load.aggregate([
+      { $unwind: '$ratings' },
+      { $match: { 'ratings.rateeId': userObjectId } },
+      {
+        $group: {
+          _id: '$ratings.raterRole',
+          count: { $sum: 1 },
+          avgStars: { $avg: '$ratings.stars' },
+        },
+      },
+    ]);
+
+    let totalCount = 0;
+    let weightedSum = 0;
+    const byRole = {};
+    for (const row of result) {
+      byRole[row._id] = { count: row.count, avgStars: Math.round(row.avgStars * 10) / 10 };
+      totalCount += row.count;
+      weightedSum += row.avgStars * row.count;
+    }
+    return res.json({
+      userId,
+      totalCount,
+      avgStars: totalCount > 0 ? Math.round((weightedSum / totalCount) * 10) / 10 : null,
+      byRole,
+    });
+  } catch (error) {
+    console.error('Rating summary error:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch rating summary' });
+  }
+});
 
 export default router;
