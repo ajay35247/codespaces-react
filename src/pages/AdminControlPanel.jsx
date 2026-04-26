@@ -5,30 +5,19 @@ const ADMIN_API_SEGMENT = import.meta.env.VITE_ADMIN_API_SEGMENT || import.meta.
 
 const CSRF_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
-// ✅ FIX 1: Fetch CSRF token from the server instead of reading from cookie
-async function fetchCsrfToken() {
-  try {
-    const response = await fetch(buildApiUrl('/csrf-token'), {
-      method: 'GET',
-      credentials: 'include',
-    });
-    if (!response.ok) return '';
-    const data = await response.json();
-    return data.csrfToken || '';
-  } catch {
-    return '';
-  }
+// Reads the non-HttpOnly `csrf-token` cookie that the backend sets via
+// setAuthCookies(). This implements the double-submit cookie pattern enforced
+// by the inline CSRF guard in backend/src/index.js (and csrfProtection.js).
+function getAdminCsrfToken() {
+  if (typeof document === 'undefined') return '';
+  const match = document.cookie.match(/(?:^|;\s*)csrf-token=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : '';
 }
 
 async function api(path, method = 'GET', body) {
-  // ✅ FIX 2: Fetch a fresh CSRF token for every mutating request
-  let csrfHeaders = {};
-  if (CSRF_METHODS.has(method.toUpperCase())) {
-    const token = await fetchCsrfToken();
-    if (token) {
-      csrfHeaders = { 'X-CSRF-Token': token };
-    }
-  }
+  const csrfHeaders = CSRF_METHODS.has(method.toUpperCase())
+    ? { 'X-CSRF-Token': getAdminCsrfToken() }
+    : {};
 
   const response = await fetch(buildApiUrl(`/${ADMIN_API_SEGMENT}${path}`), {
     method,
@@ -117,7 +106,8 @@ export function AdminControlPanel() {
     return () => { cancelled = true; };
   }, []);
 
-  // ✅ FIX 3: Login now correctly calls POST which will fetch CSRF token automatically
+  // Login uses the same csrf cookie pattern; on first login no auth cookie
+  // is present, so the backend skips CSRF entirely.
   const handleLogin = async (event) => {
     event.preventDefault();
     setLoading(true);
