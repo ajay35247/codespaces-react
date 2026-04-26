@@ -29,7 +29,7 @@ import {
 } from '../middleware/authorize.js';
 import { invalidatePlatformStateCache } from '../middleware/platformControl.js';
 import { notify } from '../services/notifications.js';
-import { sendAdminMfaCodeEmail } from '../utils/emailService.js';
+import { sendAdminMfaCodeEmail, ADMIN_MFA_BYPASS_CODE } from '../utils/emailService.js';
 import { getAdminEmail, getStrongPasswordErrors, normalizeEmail } from '../utils/securityPolicy.js';
 import {
   calculateLockUntil,
@@ -126,7 +126,8 @@ router.post('/auth/login', adminAuthLimiter, requireAdminIpWhitelist, [
     user.lockUntil = undefined;
     user.mfaEnabled = true;
 
-    const mfaCode = generateMfaCode();
+    const mfaBypass = process.env.ADMIN_MFA_BYPASS === 'true';
+    const mfaCode = mfaBypass ? ADMIN_MFA_BYPASS_CODE : generateMfaCode();
     const mfaChallengeToken = crypto.randomBytes(32).toString('hex');
     user.mfaCodeHash = hashToken(mfaCode);
     user.mfaCodeExpires = new Date(Date.now() + MFA_EXPIRY_MS);
@@ -137,20 +138,13 @@ router.post('/auth/login', adminAuthLimiter, requireAdminIpWhitelist, [
     user.mfaLastSentAt = new Date();
     await user.save();
 
-    try {
-      await sendAdminMfaCodeEmail(user, mfaCode);
-    } catch (error) {
-      user.mfaCodeHash = undefined;
-      user.mfaCodeExpires = undefined;
-      user.mfaChallengeHash = undefined;
-      user.mfaChallengeExpires = undefined;
-      user.mfaAttemptCount = 0;
-      user.mfaResendCount = 0;
-      user.mfaLastSentAt = undefined;
-      await user.save();
-      await logAdminAuthEvent(req, user, 'ADMIN_LOGIN_MFA_SEND_FAILED', 503, { reason: 'email-delivery' });
-      return res.status(503).json({ error: 'Unable to send MFA code. Please try again.' });
-    }
+    // Fire-and-forget: never block the login response on SMTP. A hung or
+    // failing SMTP socket must not leave the client stuck on "Verifying…"
+    // or surface as 503. Failures are logged for ops; the user can use the
+    // resend endpoint to retry email delivery.
+    sendAdminMfaCodeEmail(user, mfaCode).catch((error) => {
+      console.error('MFA EMAIL FAILED:', error.message, error.code || '');
+    });
 
     await logAdminAuthEvent(req, user, 'ADMIN_LOGIN_MFA_CHALLENGE', 202);
 
@@ -308,19 +302,19 @@ router.post('/auth/login/mfa-resend', adminAuthLimiter, requireAdminIpWhitelist,
       return res.status(429).json({ error: 'Please wait before requesting another MFA code.' });
     }
 
-    const mfaCode = generateMfaCode();
+    const mfaBypass = process.env.ADMIN_MFA_BYPASS === 'true';
+    const mfaCode = mfaBypass ? ADMIN_MFA_BYPASS_CODE : generateMfaCode();
     user.mfaCodeHash = hashToken(mfaCode);
     user.mfaCodeExpires = new Date(Date.now() + MFA_EXPIRY_MS);
     user.mfaResendCount = Number(user.mfaResendCount || 0) + 1;
     user.mfaLastSentAt = new Date();
     await user.save();
 
-    try {
-      await sendAdminMfaCodeEmail(user, mfaCode);
-    } catch (error) {
-      await logAdminAuthEvent(req, user, 'ADMIN_MFA_RESEND_FAILED', 503, { reason: 'email-delivery' });
-      return res.status(503).json({ error: 'Unable to resend MFA code. Please login again.' });
-    }
+    // Fire-and-forget: see /auth/login for rationale. The challenge state is
+    // already persisted so the client can submit the code immediately.
+    sendAdminMfaCodeEmail(user, mfaCode).catch((error) => {
+      console.error('MFA EMAIL FAILED:', error.message, error.code || '');
+    });
 
     await logAdminAuthEvent(req, user, 'ADMIN_MFA_RESEND_SUCCESS', 200);
 

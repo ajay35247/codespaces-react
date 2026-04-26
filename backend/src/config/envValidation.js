@@ -49,6 +49,17 @@ export function validateStartupEnv() {
         `Admin MFA email delivery is required but missing: ${missing.join(', ')}.`
       );
     }
+
+    // Enforce SMTP port/secure pairing — wrong pairing causes the SMTP
+    // handshake to hang until socket timeout, blocking admin login.
+    const smtpPort = Number(process.env.EMAIL_PORT);
+    const smtpSecure = process.env.EMAIL_SECURE === 'true';
+    if (smtpPort === 465 && !smtpSecure) {
+      issues.push('EMAIL_PORT=465 requires EMAIL_SECURE=true.');
+    }
+    if (smtpPort === 587 && smtpSecure) {
+      issues.push('EMAIL_PORT=587 requires EMAIL_SECURE=false (STARTTLS).');
+    }
   }
 
   // Print warnings — never crash for these
