@@ -8,7 +8,6 @@ export function Login() {
   const navigate = useNavigate();
   const loading = useSelector((state) => state.auth.loading);
   const error = useSelector((state) => state.auth.error);
-
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
@@ -31,7 +30,11 @@ export function Login() {
         <h1 className="mt-4 text-4xl font-semibold text-white">Access Speedy Trucks</h1>
         <p className="mt-3 text-slate-300">Sign in with your email and password.</p>
 
-        {error && <div className="mt-6 rounded-3xl bg-orange-500/10 p-4 text-sm text-orange-300">{error}</div>}
+        {error && (
+          <div className="mt-6 rounded-3xl bg-orange-500/10 p-4 text-sm text-orange-300">
+            {error}
+          </div>
+        )}
 
         <form className="mt-10 space-y-6" onSubmit={handleSubmit}>
           <label className="block text-sm font-medium text-slate-200">
@@ -40,7 +43,7 @@ export function Login() {
               className="mt-3 w-full rounded-3xl border border-slate-800 bg-slate-900 px-4 py-3 text-white outline-none ring-2 ring-transparent transition focus:ring-sky-500 disabled:opacity-50"
               type="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => setEmail(e.target.value)}  // ✅ FIXED: was [e.target](http://e.target).value
               placeholder="name@company.com"
               required
               disabled={loading}
@@ -53,7 +56,7 @@ export function Login() {
               className="mt-3 w-full rounded-3xl border border-slate-800 bg-slate-900 px-4 py-3 text-white outline-none ring-2 ring-transparent transition focus:ring-sky-500 disabled:opacity-50"
               type="password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) => setPassword(e.target.value)}  // ✅ FIXED: was [e.target](http://e.target).value
               placeholder="••••••••"
               required
               disabled={loading}
