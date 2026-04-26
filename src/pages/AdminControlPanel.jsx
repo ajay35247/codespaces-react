@@ -5,16 +5,30 @@ const ADMIN_API_SEGMENT = import.meta.env.VITE_ADMIN_API_SEGMENT || import.meta.
 
 const CSRF_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
-function getAdminCsrfToken() {
-  if (typeof document === 'undefined') return '';
-  const match = document.cookie.match(/(?:^|;\s*)csrf-token=([^;]+)/);
-  return match ? decodeURIComponent(match[1]) : '';
+// ✅ FIX 1: Fetch CSRF token from the server instead of reading from cookie
+async function fetchCsrfToken() {
+  try {
+    const response = await fetch(buildApiUrl('/csrf-token'), {
+      method: 'GET',
+      credentials: 'include',
+    });
+    if (!response.ok) return '';
+    const data = await response.json();
+    return data.csrfToken || '';
+  } catch {
+    return '';
+  }
 }
 
 async function api(path, method = 'GET', body) {
-  const csrfHeaders = CSRF_METHODS.has(method.toUpperCase())
-    ? { 'X-CSRF-Token': getAdminCsrfToken() }
-    : {};
+  // ✅ FIX 2: Fetch a fresh CSRF token for every mutating request
+  let csrfHeaders = {};
+  if (CSRF_METHODS.has(method.toUpperCase())) {
+    const token = await fetchCsrfToken();
+    if (token) {
+      csrfHeaders = { 'X-CSRF-Token': token };
+    }
+  }
 
   const response = await fetch(buildApiUrl(`/${ADMIN_API_SEGMENT}${path}`), {
     method,
@@ -34,10 +48,6 @@ async function api(path, method = 'GET', body) {
   return data;
 }
 
-/**
- * All admin-controllable feature flags with display metadata.
- * The `key` must match the field names in the kill-switch document exactly.
- */
 const FEATURE_FLAGS = [
   { key: 'maintenanceMode',      label: 'Maintenance Mode',      description: 'Blocks ALL non-admin API endpoints',           danger: true  },
   { key: 'bookingsPaused',       label: 'Pause Bookings',        description: 'Prevents new loads from being created',        danger: false },
@@ -53,10 +63,8 @@ const FEATURE_FLAGS = [
 
 const DEFAULT_FLAGS = Object.fromEntries(FEATURE_FLAGS.map(({ key }) => [key, false]));
 
-/** Maximum number of users fetched from the admin API per dashboard load. */
 const USERS_FETCH_LIMIT = 100;
 
-/** Update a single item inside a React state list by its `_id` field. */
 function updateItemById(setter, id, updates) {
   setter((prev) => prev.map((item) => item._id === id ? { ...item, ...updates } : item));
 }
@@ -76,7 +84,6 @@ export function AdminControlPanel() {
   const [resendingMfa, setResendingMfa] = useState(false);
   const [bootstrapping, setBootstrapping] = useState(true);
 
-  // Dashboard data
   const [users, setUsers] = useState([]);
   const [pricingPlans, setPricingPlans] = useState([]);
   const [revenue, setRevenue] = useState(null);
@@ -86,21 +93,14 @@ export function AdminControlPanel() {
   const [payments, setPayments] = useState([]);
   const [supportTickets, setSupportTickets] = useState([]);
   const [gstInvoices, setGstInvoices] = useState([]);
-
-  // Feature flags (all 11 fields)
   const [featureFlags, setFeatureFlags] = useState(DEFAULT_FLAGS);
-
-  // Active dashboard tab
   const [activeTab, setActiveTab] = useState('overview');
-
-  // Per-user inline action states
-  const [userAction, setUserAction] = useState({}); // { [userId]: { loading, error } }
+  const [userAction, setUserAction] = useState({});
 
   const authenticated = useMemo(() => Boolean(admin), [admin]);
 
   useEffect(() => {
     let cancelled = false;
-
     async function bootstrapAdminSession() {
       try {
         const data = await api('/auth/me');
@@ -113,11 +113,11 @@ export function AdminControlPanel() {
         if (!cancelled) setBootstrapping(false);
       }
     }
-
     bootstrapAdminSession();
     return () => { cancelled = true; };
   }, []);
 
+  // ✅ FIX 3: Login now correctly calls POST which will fetch CSRF token automatically
   const handleLogin = async (event) => {
     event.preventDefault();
     setLoading(true);
@@ -177,16 +177,9 @@ export function AdminControlPanel() {
     setError('');
     try {
       const [
-        usersData,
-        plansData,
-        revenueData,
-        flagsData,
-        analyticsData,
-        auditData,
-        loadsData,
-        paymentsData,
-        ticketsData,
-        invoicesData,
+        usersData, plansData, revenueData, flagsData,
+        analyticsData, auditData, loadsData, paymentsData,
+        ticketsData, invoicesData,
       ] = await Promise.all([
         api(`/control/users?limit=${USERS_FETCH_LIMIT}`),
         api('/pricing/plans'),
@@ -266,8 +259,6 @@ export function AdminControlPanel() {
     }
   };
 
-  // ── Per-user inline actions ─────────────────────────────────────────────────
-
   const handleUserStatus = async (userId, status) => {
     setUserAction((prev) => ({ ...prev, [userId]: { loading: true, error: '' } }));
     try {
@@ -301,8 +292,6 @@ export function AdminControlPanel() {
 
   if (bootstrapping) return null;
 
-  // ── Login / MFA screens ─────────────────────────────────────────────────────
-
   if (!authenticated) {
     return (
       <main className="mx-auto min-h-screen max-w-2xl px-6 py-16 text-white">
@@ -314,18 +303,65 @@ export function AdminControlPanel() {
 
           {!mfaRequired && (
             <form className="mt-8 space-y-4" onSubmit={handleLogin}>
-              <input className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-4 py-3" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Admin email" required />
-              <input className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-4 py-3" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" required />
-              <button className="w-full rounded-2xl bg-emerald-500 px-4 py-3 font-semibold text-slate-950 disabled:opacity-50" disabled={loading} type="submit">{loading ? 'Verifying…' : 'Secure Sign In'}</button>
+              <input
+                className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-4 py-3"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="Admin email"
+                required
+              />
+              <input
+                className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-4 py-3"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Password"
+                required
+              />
+              <button
+                className="w-full rounded-2xl bg-emerald-500 px-4 py-3 font-semibold text-slate-950 disabled:opacity-50"
+                disabled={loading}
+                type="submit"
+              >
+                {loading ? 'Verifying…' : 'Secure Sign In'}
+              </button>
             </form>
           )}
 
           {mfaRequired && (
             <form className="mt-8 space-y-4" onSubmit={handleMfaVerify}>
-              <input className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-4 py-3" type="text" value={mfaCode} onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="6-digit MFA code" required />
-              <button className="w-full rounded-2xl bg-cyan-500 px-4 py-3 font-semibold text-slate-950 disabled:opacity-50" disabled={loading || mfaCode.length !== 6} type="submit">{loading ? 'Authorizing…' : 'Complete Login'}</button>
-              <button className="w-full rounded-2xl border border-cyan-400/50 px-4 py-3 text-sm text-cyan-200 disabled:opacity-50" disabled={loading || resendingMfa} type="button" onClick={handleMfaResend}>{resendingMfa ? 'Resending…' : 'Resend MFA Code'}</button>
-              {mfaExpiresInSeconds > 0 && <p className="text-center text-xs text-slate-400">Code expires in about {Math.max(1, Math.floor(mfaExpiresInSeconds / 60))} minute(s).</p>}
+              <p className="text-sm text-slate-300">
+                A 6-digit code has been sent to your admin email. Enter it below.
+              </p>
+              <input
+                className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-4 py-3 tracking-widest text-center text-xl"
+                type="text"
+                value={mfaCode}
+                onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                placeholder="000000"
+                required
+              />
+              <button
+                className="w-full rounded-2xl bg-cyan-500 px-4 py-3 font-semibold text-slate-950 disabled:opacity-50"
+                disabled={loading || mfaCode.length !== 6}
+                type="submit"
+              >
+                {loading ? 'Authorizing…' : 'Complete Login'}
+              </button>
+              <button
+                className="w-full rounded-2xl border border-cyan-400/50 px-4 py-3 text-sm text-cyan-200 disabled:opacity-50"
+                disabled={loading || resendingMfa}
+                type="button"
+                onClick={handleMfaResend}
+              >
+                {resendingMfa ? 'Resending…' : 'Resend MFA Code'}
+              </button>
+              {mfaExpiresInSeconds > 0 && (
+                <p className="text-center text-xs text-slate-400">
+                  Code expires in about {Math.max(1, Math.floor(mfaExpiresInSeconds / 60))} minute(s).
+                </p>
+              )}
             </form>
           )}
         </section>
@@ -333,27 +369,22 @@ export function AdminControlPanel() {
     );
   }
 
-  // ── Tab navigation helpers ──────────────────────────────────────────────────
-
   const TABS = [
-    { id: 'overview',  label: 'Overview'       },
-    { id: 'flags',     label: 'Feature Flags'  },
-    { id: 'users',     label: 'Users'          },
-    { id: 'loads',     label: 'Loads'          },
-    { id: 'payments',  label: 'Payments'       },
-    { id: 'support',   label: 'Support'        },
-    { id: 'gst',       label: 'GST Invoices'   },
-    { id: 'analytics', label: 'Analytics'      },
-    { id: 'audit',     label: 'Audit Log'      },
+    { id: 'overview',  label: 'Overview'      },
+    { id: 'flags',     label: 'Feature Flags' },
+    { id: 'users',     label: 'Users'         },
+    { id: 'loads',     label: 'Loads'         },
+    { id: 'payments',  label: 'Payments'      },
+    { id: 'support',   label: 'Support'       },
+    { id: 'gst',       label: 'GST Invoices'  },
+    { id: 'analytics', label: 'Analytics'     },
+    { id: 'audit',     label: 'Audit Log'     },
   ];
-
-  // ── Main dashboard ──────────────────────────────────────────────────────────
 
   return (
     <main className="mx-auto min-h-screen max-w-7xl px-4 py-8 text-white">
       <section className="rounded-[2rem] border border-white/10 bg-slate-950/95 p-6 shadow-2xl shadow-slate-900/40">
 
-        {/* Header */}
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <h1 className="text-3xl font-semibold">Control Tower</h1>
@@ -366,7 +397,6 @@ export function AdminControlPanel() {
           </div>
         </div>
 
-        {/* Maintenance-mode banner */}
         {featureFlags.maintenanceMode && (
           <div className="mt-4 rounded-2xl bg-red-600/30 border border-red-500/50 px-4 py-3 text-sm font-semibold text-red-200">
             ⚠ MAINTENANCE MODE IS ACTIVE — all user-facing API endpoints are returning 503
@@ -375,7 +405,6 @@ export function AdminControlPanel() {
 
         {error && <p className="mt-4 rounded-2xl bg-rose-600/20 px-4 py-3 text-sm text-rose-200">{error}</p>}
 
-        {/* Tab bar */}
         <div className="mt-6 flex flex-wrap gap-2 border-b border-white/10 pb-3">
           {TABS.map((tab) => (
             <button
@@ -393,7 +422,6 @@ export function AdminControlPanel() {
           ))}
         </div>
 
-        {/* ── OVERVIEW TAB ─────────────────────────────────────────────────── */}
         {activeTab === 'overview' && (
           <div className="mt-6 space-y-6">
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -402,7 +430,6 @@ export function AdminControlPanel() {
               <StatCard label="Successful Payments" value={`INR ${Math.round(revenue?.payments?.success || 0)}`} />
               <StatCard label="Active Loads" value={loads.filter((l) => l.status === 'open' || l.status === 'in-transit').length} />
             </div>
-
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <StatCard label="Open Tickets" value={supportTickets.filter((t) => t.status === 'open').length} />
               <StatCard label="GST Invoices" value={gstInvoices.length} />
@@ -412,23 +439,19 @@ export function AdminControlPanel() {
           </div>
         )}
 
-        {/* ── FEATURE FLAGS TAB ────────────────────────────────────────────── */}
         {activeTab === 'flags' && (
           <form className="mt-6" onSubmit={handleFeatureFlagsSave}>
             <h2 className="text-lg font-semibold">Platform Feature Flags</h2>
             <p className="mt-1 text-sm text-slate-400">
-              Toggle any feature on or off instantly. Changes take effect on the next API request (cache is invalidated server-side).
+              Toggle any feature on or off instantly. Changes take effect on the next API request.
             </p>
-
             <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {FEATURE_FLAGS.map(({ key, label, description, danger }) => (
                 <label
                   key={key}
                   className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-4 transition-colors ${
                     featureFlags[key]
-                      ? danger
-                        ? 'border-red-500/60 bg-red-600/10'
-                        : 'border-amber-400/60 bg-amber-500/10'
+                      ? danger ? 'border-red-500/60 bg-red-600/10' : 'border-amber-400/60 bg-amber-500/10'
                       : 'border-white/10 bg-slate-900/60'
                   }`}
                 >
@@ -445,13 +468,8 @@ export function AdminControlPanel() {
                 </label>
               ))}
             </div>
-
             <div className="mt-5 flex items-center gap-4">
-              <button
-                className="rounded-xl bg-amber-400 px-6 py-2.5 font-semibold text-slate-900 disabled:opacity-50"
-                disabled={loading}
-                type="submit"
-              >
+              <button className="rounded-xl bg-amber-400 px-6 py-2.5 font-semibold text-slate-900 disabled:opacity-50" disabled={loading} type="submit">
                 {loading ? 'Saving…' : 'Apply Feature Flags'}
               </button>
               <p className="text-xs text-slate-400">All changes are audit-logged with your IP address.</p>
@@ -459,7 +477,6 @@ export function AdminControlPanel() {
           </form>
         )}
 
-        {/* ── USERS TAB ────────────────────────────────────────────────────── */}
         {activeTab === 'users' && (
           <div className="mt-6">
             <h2 className="text-lg font-semibold">Users ({users.length})</h2>
@@ -493,7 +510,6 @@ export function AdminControlPanel() {
                         <td className="pr-4 text-xs text-slate-400">{user.kycStatus || 'pending'}</td>
                         <td className="py-1">
                           <div className="flex flex-wrap gap-1">
-                            {/* Account status */}
                             <select
                               className="rounded-lg bg-slate-800 px-2 py-1 text-xs disabled:opacity-50"
                               value={user.accountStatus || 'active'}
@@ -504,7 +520,6 @@ export function AdminControlPanel() {
                                 <option key={s} value={s}>{s}</option>
                               ))}
                             </select>
-                            {/* KYC status */}
                             <select
                               className="rounded-lg bg-slate-800 px-2 py-1 text-xs disabled:opacity-50"
                               value={user.kycStatus || 'pending'}
@@ -527,7 +542,6 @@ export function AdminControlPanel() {
           </div>
         )}
 
-        {/* ── LOADS TAB ────────────────────────────────────────────────────── */}
         {activeTab === 'loads' && (
           <div className="mt-6">
             <h2 className="text-lg font-semibold">Loads ({loads.length})</h2>
@@ -556,7 +570,6 @@ export function AdminControlPanel() {
           </div>
         )}
 
-        {/* ── PAYMENTS TAB ─────────────────────────────────────────────────── */}
         {activeTab === 'payments' && (
           <div className="mt-6">
             <h2 className="text-lg font-semibold">Payments ({payments.length})</h2>
@@ -585,7 +598,6 @@ export function AdminControlPanel() {
           </div>
         )}
 
-        {/* ── SUPPORT TICKETS TAB ──────────────────────────────────────────── */}
         {activeTab === 'support' && (
           <div className="mt-6">
             <h2 className="text-lg font-semibold">Support Tickets ({supportTickets.length})</h2>
@@ -629,7 +641,6 @@ export function AdminControlPanel() {
           </div>
         )}
 
-        {/* ── GST INVOICES TAB ─────────────────────────────────────────────── */}
         {activeTab === 'gst' && (
           <div className="mt-6">
             <h2 className="text-lg font-semibold">GST Invoices ({gstInvoices.length})</h2>
@@ -659,11 +670,9 @@ export function AdminControlPanel() {
           </div>
         )}
 
-        {/* ── ANALYTICS TAB ────────────────────────────────────────────────── */}
         {activeTab === 'analytics' && (
           <div className="mt-6 space-y-6">
             <h2 className="text-lg font-semibold">Analytics</h2>
-
             {analytics && (
               <>
                 <div>
@@ -677,7 +686,6 @@ export function AdminControlPanel() {
                     ))}
                   </div>
                 </div>
-
                 <div>
                   <h3 className="mb-2 text-sm font-medium text-slate-400">Load Status Breakdown</h3>
                   <div className="flex flex-wrap gap-3">
@@ -689,25 +697,13 @@ export function AdminControlPanel() {
                     ))}
                   </div>
                 </div>
-
-                <div>
-                  <h3 className="mb-2 text-sm font-medium text-slate-400">Payment Status Breakdown</h3>
-                  <div className="flex flex-wrap gap-3">
-                    {(analytics.paymentStatus || []).map((r) => (
-                      <div key={r._id} className="rounded-xl border border-white/10 bg-slate-900/60 px-4 py-2">
-                        <p className="text-xs text-slate-400">{r._id}</p>
-                        <p className="text-xl font-semibold">{r.count}</p>
-                        <p className="text-xs text-slate-500">INR {Math.round(r.amount || 0)}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
                 <div>
                   <h3 className="mb-2 text-sm font-medium text-slate-400">Top Routes</h3>
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-sm">
-                      <thead className="text-slate-400"><tr><th className="py-1 pr-4">Origin</th><th className="pr-4">Destination</th><th className="pr-4">Trips</th><th>Freight (INR)</th></tr></thead>
+                      <thead className="text-slate-400">
+                        <tr><th className="py-1 pr-4">Origin</th><th className="pr-4">Destination</th><th className="pr-4">Trips</th><th>Freight (INR)</th></tr>
+                      </thead>
                       <tbody>
                         {(analytics.topRoutes || []).slice(0, 10).map((r, i) => (
                           <tr key={i} className="border-t border-white/10">
@@ -726,7 +722,6 @@ export function AdminControlPanel() {
           </div>
         )}
 
-        {/* ── AUDIT LOG TAB ─────────────────────────────────────────────────── */}
         {activeTab === 'audit' && (
           <div className="mt-6">
             <h2 className="text-lg font-semibold">Audit Log (last 50 admin actions)</h2>
