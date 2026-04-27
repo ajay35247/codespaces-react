@@ -201,7 +201,10 @@ export async function apiFetch(path, options = {}) {
       const retryAfter = parseRetryAfter(response?.headers?.get?.('retry-after'));
       const backoff = retryAfter !== null ? Math.min(retryAfter, 10_000) : jitter(300 * (2 ** _attempt));
       await new Promise((r) => setTimeout(r, backoff));
-      return apiFetch(path, { ...options, _attempt: _attempt + 1 });
+      // Pass `_isRetry: true` so the retry doesn't trigger another silent
+      // token-refresh chain — the original 401 path handles refresh once and
+      // shouldn't repeat from inside a 5xx-retry loop.
+      return apiFetch(path, { ...options, _attempt: _attempt + 1, _isRetry: true });
     }
     reportFailedRequest(path, method, networkError ? networkError.message : `status ${status}`);
     if (networkError) throw networkError;

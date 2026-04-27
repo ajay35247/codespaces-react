@@ -85,14 +85,25 @@ export async function alertOnErrorEvent(errorEvent, { severityFloor = 'error' } 
   }
 
   // Optional webhook (Slack/Discord) — only the URL is read at fire time so
-  // operators can rotate it without restarting the process.
+  // operators can rotate it without restarting the process.  We validate
+  // the URL is HTTPS so a misconfigured env var can't downgrade alerts to
+  // plain HTTP or a `file:` / `javascript:` scheme.
   const webhookUrl = process.env.ALERT_WEBHOOK_URL;
-  if (webhookUrl) {
+  if (webhookUrl && isSafeWebhookUrl(webhookUrl)) {
     try {
       await postWebhook(webhookUrl, errorEvent, severity);
     } catch {
       // best-effort
     }
+  }
+}
+
+function isSafeWebhookUrl(url) {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:';
+  } catch {
+    return false;
   }
 }
 

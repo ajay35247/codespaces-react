@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch, apiRequest } from '../../utils/api';
 import { useSocket } from '../../hooks/useSocket';
 
@@ -67,11 +67,13 @@ function ErrorsTab() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Live updates from backend.
+  // Live updates from backend.  Throttled at most once per 5s — the backend
+  // can fire `admin:monitoring` frequently when an error spike is happening.
+  const throttleRef = useRef(0);
   useSocket('admin:monitoring', () => {
-    // Throttle ourselves at most once per 5s — the backend can fire frequently.
-    if (!load.__throttle || Date.now() - load.__throttle > 5000) {
-      load.__throttle = Date.now();
+    const now = Date.now();
+    if (now - throttleRef.current > 5000) {
+      throttleRef.current = now;
       load();
     }
   });

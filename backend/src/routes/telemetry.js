@@ -117,14 +117,11 @@ router.post(
         },
         $inc: { count: 1 },
       };
-      if (userId) {
-        update.$addToSet = { affectedUsers: userId };
-      }
-      if (event.sessionId) {
-        update.$addToSet = {
-          ...(update.$addToSet || {}),
-          affectedSessions: event.sessionId,
-        };
+      const addToSet = {};
+      if (userId) addToSet.affectedUsers = userId;
+      if (event.sessionId) addToSet.affectedSessions = event.sessionId;
+      if (Object.keys(addToSet).length > 0) {
+        update.$addToSet = addToSet;
       }
       try {
         const doc = await ErrorEvent.findOneAndUpdate(

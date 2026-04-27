@@ -154,7 +154,9 @@ async function replayQueue() {
           await deleteEntry(entry.id);
         } else {
           await tx('readwrite', (store) => {
-            store.put({ ...entry, attempts: entry.attempts + 1 });
+            // Explicit `id` makes the intent obvious and protects against
+            // future schema changes that might drop it from the spread.
+            store.put({ ...entry, id: entry.id, attempts: entry.attempts + 1 });
           });
         }
       } catch {

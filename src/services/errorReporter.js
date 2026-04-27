@@ -40,11 +40,31 @@ function safeNow() {
   try { return Date.now(); } catch { return 0; }
 }
 
+/**
+ * Generate a non-cryptographic random suffix for session IDs.  We prefer
+ * `crypto.getRandomValues` when available (which CodeQL recognises as a safe
+ * source) and fall back to `Math.random` only when the WebCrypto API is
+ * absent.  The session id never gates security decisions — it merely groups
+ * telemetry events from the same browser session.
+ */
+function randomToken(bytes = 12) {
+  try {
+    if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+      const buf = new Uint8Array(bytes);
+      crypto.getRandomValues(buf);
+      return Array.from(buf, (b) => b.toString(16).padStart(2, '0')).join('');
+    }
+  } catch { /* fall through */ }
+  // Fallback for very old environments — telemetry id, not a security boundary.
+  // eslint-disable-next-line sonarjs/pseudo-random
+  return Math.random().toString(36).slice(2);
+}
+
 function makeSessionId() {
   try {
     if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
   } catch { /* fall through */ }
-  return `s-${Math.random().toString(36).slice(2)}-${safeNow()}`;
+  return `s-${randomToken(8)}-${safeNow()}`;
 }
 
 function getSessionId() {
@@ -149,6 +169,13 @@ async function flush({ useBeacon = false } = {}) {
 
   // Drop events that exceed the beacon cap rather than partially send.
   if (payload.length > MAX_PAYLOAD_BYTES && useBeacon) {
+    // Surface the drop via console so operators investigating "missing
+    // telemetry" can spot the cause locally.  Production builds typically
+    // strip console.warn anyway; this is observability, not a leak.
+    try {
+      // eslint-disable-next-line no-console
+      console.warn(`[errorReporter] dropped ${events.length} events (${payload.length} bytes > ${MAX_PAYLOAD_BYTES})`);
+    } catch { /* swallow */ }
     return;
   }
 

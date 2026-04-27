@@ -42,8 +42,29 @@ export function globalErrorHandler(err, req, res, _next) { // eslint-disable-lin
     console.error(line);
   }
 
+  // For 4xx we still surface the message because callers (forms, validators)
+  // depend on it, but we only allow it through if the route handler set
+  // `err.publicMessage` *or* the error originates from express-validator/joi
+  // (`err.expose !== false`).  Library errors (mongoose, mongo driver) often
+  // leak schema details in their messages, so default to a generic message.
+  let clientMessage;
+  if (err.publicMessage) {
+    clientMessage = err.publicMessage;
+  } else if (status >= 500) {
+    clientMessage = 'Internal server error';
+  } else if (err.expose === true) {
+    clientMessage = err.message || 'Request failed';
+  } else if (err.message && /^[\w .,'":!?@/-]{0,200}$/.test(err.message)) {
+    // Allowlist-style: only forward short, ASCII-printable messages with no
+    // line breaks or unusual chars — defeats common library messages that
+    // embed schema/path info.
+    clientMessage = err.message;
+  } else {
+    clientMessage = 'Request failed';
+  }
+
   const body = {
-    error: err.publicMessage || (status >= 500 ? 'Internal server error' : (err.message || 'Request failed')),
+    error: clientMessage,
     code: err.code || undefined,
     requestId,
   };

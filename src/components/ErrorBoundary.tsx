@@ -70,8 +70,10 @@ class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundarySta
   resetError = () => {
     const now = Date.now();
     const { retryCount, lastErrorAt } = this.state;
-    // Reset retry count if last error was > window ago.
-    const newCount = (now - lastErrorAt) > RETRY_WINDOW_MS ? 1 : retryCount + 1;
+    // Reset the retry counter to 0 if the previous error was outside the
+    // retry window — the *next* error after a long quiet period should be
+    // counted as the first retry, not the second.
+    const newCount = (now - lastErrorAt) > RETRY_WINDOW_MS ? 0 : retryCount + 1;
     this.setState({
       hasError: false,
       error: undefined,

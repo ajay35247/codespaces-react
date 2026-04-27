@@ -65,7 +65,10 @@ async function applyAction(rule, errorEvent) {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 5000);
       try {
-        await fetch(url, { method: 'POST', signal: controller.signal });
+        const res = await fetch(url, { method: 'POST', signal: controller.signal });
+        if (!res.ok) {
+          return { applied: false, reason: `webhook responded ${res.status}` };
+        }
         return { applied: true, kind: 'rollback_release' };
       } catch (err) {
         return { applied: false, reason: err.message };

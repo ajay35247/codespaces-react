@@ -46,10 +46,10 @@ router.get(
     if (req.query.recurring) filter.recurring = true;
     if (req.query.fingerprint) filter.fingerprint = String(req.query.fingerprint).slice(0, 128);
     if (req.query.route) {
-      // Anchor the substring search and escape regex metacharacters so user
-      // input cannot inject a costly pattern (ReDoS).
-      const safe = String(req.query.route).slice(0, 200).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      filter.route = { $regex: safe, $options: 'i' };
+      // Escape regex metacharacters first so a hostile substring like `(.+)+`
+      // cannot inject a costly pattern (ReDoS), then cap to a safe length.
+      const escaped = String(req.query.route).replace(/[.*+?^${}()|[\]\\]/g, '\\$&').slice(0, 200);
+      filter.route = { $regex: escaped, $options: 'i' };
     }
 
     const { page, pageSize, skip } = parsePage(req);
