@@ -59,16 +59,28 @@ export function SearchResults() {
   const handlePageChange = (value) => updateParam('page', value);
 
   const handlePlaceBid = (load) => {
+    if (!user) {
+      navigate(`/login?next=${encodeURIComponent(`/search?q=${q}`)}`);
+      return;
+    }
     // Bidding flow lives on the per-role dashboards; deep-link with the
     // load id so the existing bid panel can pick it up.
-    navigate(`/dashboard/${user?.role || 'driver'}?load=${encodeURIComponent(load.loadId)}#bid`);
+    navigate(`/dashboard/${user.role}?load=${encodeURIComponent(load.loadId)}#bid`);
   };
 
   const handleAcceptLoad = (load) => {
+    if (!user) {
+      navigate(`/login?next=${encodeURIComponent(`/search?q=${q}`)}`);
+      return;
+    }
     navigate(`/driver?load=${encodeURIComponent(load.loadId)}#accept`);
   };
 
   const handleChat = (load) => {
+    if (!user) {
+      navigate(`/login?next=${encodeURIComponent(`/search?q=${q}`)}`);
+      return;
+    }
     navigate(`/tracking?load=${encodeURIComponent(load.loadId)}#chat`);
   };
 
