@@ -99,6 +99,11 @@ export async function resolvePrice({ planCode, originalPrice, couponCode = '', n
 
   if (!best) return baseResult;
 
+  // Defence-in-depth clamp.  Admin route validators already enforce
+  // 1 <= discountPercent <= 90 at write time, but we re-clamp here so a
+  // future schema change (or a manual DB edit) can never charge a negative
+  // amount or zero out revenue.  Upper bound 95 leaves a small safety
+  // margin without ever giving away the product for free.
   const discount = Math.max(0, Math.min(95, Number(best.discountPercent) || 0));
   // Round to 2 decimals to keep INR amounts clean (Razorpay accepts paise).
   const finalPrice = Math.round((baseResult.originalPrice * (100 - discount)) * 100 / 100) / 100;
