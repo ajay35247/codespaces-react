@@ -47,6 +47,7 @@ import fleetRoutes from './routes/fleet.js';
 import profileRoutes from './routes/profile.js';
 import chatRoutes from './routes/chat.js';
 import { setIo } from './utils/socketBus.js';
+import { startOfferScheduler } from './services/offersScheduler.js';
 
 const httpRequestsTotal = new promClient.Counter({
   name: 'speedy_trucks_http_requests_total',
@@ -323,6 +324,9 @@ const startWorker = async () => {
 
   // Expose io to route handlers (notify helper, load lifecycle push events).
   setIo(io);
+
+  // Start admin-offer auto-expiry scheduler now that DB + io are ready.
+  startOfferScheduler();
 
   let pubClient = null;
   let subClient = null;

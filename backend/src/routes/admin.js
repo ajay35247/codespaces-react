@@ -10,6 +10,7 @@ import AuditLog from '../schemas/AuditLogSchema.js';
 import AdminSession from '../schemas/AdminSessionSchema.js';
 import AdminControlState from '../schemas/AdminControlStateSchema.js';
 import SubscriptionPlan from '../schemas/SubscriptionPlanSchema.js';
+import Offer from '../schemas/OfferSchema.js';
 import LedgerEntry from '../schemas/LedgerEntrySchema.js';
 import FraudEvent from '../schemas/FraudEventSchema.js';
 import AutomationRule from '../schemas/AutomationRuleSchema.js';
@@ -28,6 +29,7 @@ import {
   requireAjayAdmin,
 } from '../middleware/authorize.js';
 import { invalidatePlatformStateCache } from '../middleware/platformControl.js';
+import { broadcast } from '../utils/socketBus.js';
 import { notify } from '../services/notifications.js';
 import { sendAdminMfaCodeEmail, ADMIN_MFA_BYPASS_CODE } from '../utils/emailService.js';
 import { getAdminEmail, getStrongPasswordErrors, normalizeEmail } from '../utils/securityPolicy.js';
@@ -688,6 +690,7 @@ const FEATURE_FLAG_DEFAULTS = {
   tollsPaused: false,
   brokersPaused: false,
   supportPaused: false,
+  offersPaused: false,
   maintenanceMode: false,
 };
 
@@ -701,6 +704,7 @@ router.post('/control/kill-switch', [
   body('tollsPaused').isBoolean(),
   body('brokersPaused').isBoolean(),
   body('supportPaused').isBoolean(),
+  body('offersPaused').isBoolean(),
   body('maintenanceMode').isBoolean(),
 ], async (req, res) => {
   if (!ensureValidRequest(req, res)) return;
@@ -715,6 +719,7 @@ router.post('/control/kill-switch', [
       tollsPaused: Boolean(req.body.tollsPaused),
       brokersPaused: Boolean(req.body.brokersPaused),
       supportPaused: Boolean(req.body.supportPaused),
+      offersPaused: Boolean(req.body.offersPaused),
       maintenanceMode: Boolean(req.body.maintenanceMode),
     };
 
@@ -914,6 +919,261 @@ router.post('/pricing/plans/:id/rollback', [
   } catch (error) {
     console.error('Pricing plan rollback error:', error.message);
     return res.status(500).json({ error: 'Failed to rollback pricing plan' });
+  }
+});
+
+// Hard-delete a subscription plan. Refuses if the plan is currently
+// referenced by any active offer's appliesToPlanCodes (would orphan offers).
+router.delete('/pricing/plans/:id', async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid plan ID' });
+    }
+    const plan = await SubscriptionPlan.findById(req.params.id);
+    if (!plan) return res.status(404).json({ error: 'Plan not found' });
+
+    const referencingOffer = await Offer.findOne({
+      enabled: true,
+      appliesToPlanCodes: plan.code,
+      endsAt: { $gt: new Date() },
+    }).lean();
+    if (referencingOffer) {
+      return res.status(409).json({
+        error: `Plan is referenced by an active offer ("${referencingOffer.name}"). Disable that offer first.`,
+      });
+    }
+
+    await SubscriptionPlan.deleteOne({ _id: plan._id });
+
+    await AuditLog.create({
+      userId: req.user.id,
+      userEmail: req.user.email,
+      userRole: req.user.role,
+      action: 'ADMIN_PLAN_DELETE',
+      resource: 'subscription-plan',
+      resourceId: String(plan._id),
+      ipAddress: getRequestIp(req),
+      userAgent: req.get('user-agent'),
+      method: req.method,
+      path: req.path,
+      statusCode: 200,
+      metadata: { code: plan.code, name: plan.name },
+    });
+
+    broadcast('offers:changed', { reason: 'plan-deleted', planCode: plan.code });
+    return res.json({ deleted: true });
+  } catch (error) {
+    console.error('Pricing plan delete error:', error.message);
+    return res.status(500).json({ error: 'Failed to delete pricing plan' });
+  }
+});
+
+// ── Admin offers (festival / flat / coupon) ───────────────────────────────
+//
+// All routes here are already guarded by router.use(verifyJWT,
+// requireAjayAdmin, requireAdminIpWhitelist) at the top of this file.
+// CSRF is enforced at the app level (index.js inline check + csrfProtection.js).
+
+function offerToJson(doc) {
+  if (!doc) return null;
+  const o = doc.toObject ? doc.toObject() : doc;
+  return {
+    id: String(o._id),
+    name: o.name,
+    type: o.type,
+    label: o.label || '',
+    tags: o.tags || [],
+    discountPercent: o.discountPercent,
+    appliesToPlanCodes: o.appliesToPlanCodes || [],
+    couponCode: o.couponCode || null,
+    startsAt: o.startsAt,
+    endsAt: o.endsAt,
+    enabled: Boolean(o.enabled),
+    usageLimit: o.usageLimit ?? null,
+    usageCount: o.usageCount || 0,
+    createdAt: o.createdAt,
+    updatedAt: o.updatedAt,
+  };
+}
+
+router.get('/offers', async (req, res) => {
+  try {
+    const offers = await Offer.find({}).sort({ createdAt: -1 }).limit(500);
+    return res.json({ offers: offers.map(offerToJson) });
+  } catch (error) {
+    console.error('Offer list error:', error.message);
+    return res.status(500).json({ error: 'Failed to list offers' });
+  }
+});
+
+router.post('/offers', [
+  body('name').isString().trim().isLength({ min: 2, max: 120 }),
+  body('type').isIn(['festival', 'flat', 'coupon']),
+  body('discountPercent').isFloat({ min: 1, max: 90 }),
+  body('startsAt').isISO8601(),
+  body('endsAt').isISO8601(),
+  body('label').optional().isString().isLength({ max: 80 }),
+  body('appliesToPlanCodes').optional().isArray(),
+  body('appliesToPlanCodes.*').optional().isString().isLength({ min: 1, max: 50 }),
+  body('couponCode').optional({ nullable: true, checkFalsy: true }).isString().trim().isLength({ min: 2, max: 50 }).matches(/^[A-Za-z0-9_-]+$/),
+  body('usageLimit').optional({ nullable: true }).isInt({ min: 1 }),
+  body('tags').optional().isArray(),
+  body('enabled').optional().isBoolean(),
+], async (req, res) => {
+  if (!ensureValidRequest(req, res)) return;
+  try {
+    const startsAt = new Date(req.body.startsAt);
+    const endsAt = new Date(req.body.endsAt);
+    if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime())) {
+      return res.status(400).json({ error: 'Invalid dates' });
+    }
+    if (endsAt <= startsAt) {
+      return res.status(400).json({ error: 'endsAt must be after startsAt' });
+    }
+    if (req.body.type === 'coupon' && !req.body.couponCode) {
+      return res.status(400).json({ error: 'couponCode is required for coupon offers' });
+    }
+    if (req.body.type !== 'coupon' && req.body.couponCode) {
+      return res.status(400).json({ error: 'couponCode is only allowed for offers of type "coupon"' });
+    }
+
+    const offer = await Offer.create({
+      name: req.body.name,
+      type: req.body.type,
+      label: req.body.label || '',
+      tags: Array.isArray(req.body.tags) ? req.body.tags.slice(0, 20) : [],
+      discountPercent: req.body.discountPercent,
+      appliesToPlanCodes: Array.isArray(req.body.appliesToPlanCodes) ? req.body.appliesToPlanCodes : [],
+      couponCode: req.body.couponCode ? String(req.body.couponCode).toUpperCase() : undefined,
+      startsAt,
+      endsAt,
+      enabled: req.body.enabled !== false,
+      usageLimit: req.body.usageLimit ?? undefined,
+      createdBy: req.user.id,
+      updatedBy: req.user.id,
+    });
+
+    await AuditLog.create({
+      userId: req.user.id,
+      userEmail: req.user.email,
+      userRole: req.user.role,
+      action: 'ADMIN_OFFER_CREATE',
+      resource: 'offer',
+      resourceId: String(offer._id),
+      ipAddress: getRequestIp(req),
+      userAgent: req.get('user-agent'),
+      method: req.method,
+      path: req.path,
+      statusCode: 201,
+      metadata: { name: offer.name, type: offer.type, discountPercent: offer.discountPercent },
+    });
+
+    broadcast('offers:changed', { reason: 'created', offerId: String(offer._id) });
+    return res.status(201).json({ offer: offerToJson(offer) });
+  } catch (error) {
+    if (error?.code === 11000) {
+      return res.status(409).json({ error: 'Coupon code already exists' });
+    }
+    console.error('Offer create error:', error.message);
+    return res.status(400).json({ error: error.message || 'Failed to create offer' });
+  }
+});
+
+router.patch('/offers/:id', [
+  body('name').optional().isString().trim().isLength({ min: 2, max: 120 }),
+  body('discountPercent').optional().isFloat({ min: 1, max: 90 }),
+  body('startsAt').optional().isISO8601(),
+  body('endsAt').optional().isISO8601(),
+  body('label').optional().isString().isLength({ max: 80 }),
+  body('appliesToPlanCodes').optional().isArray(),
+  body('appliesToPlanCodes.*').optional().isString().isLength({ min: 1, max: 50 }),
+  body('couponCode').optional({ nullable: true, checkFalsy: true }).isString().trim().isLength({ min: 2, max: 50 }).matches(/^[A-Za-z0-9_-]+$/),
+  body('usageLimit').optional({ nullable: true }).isInt({ min: 1 }),
+  body('enabled').optional().isBoolean(),
+  body('tags').optional().isArray(),
+], async (req, res) => {
+  if (!ensureValidRequest(req, res)) return;
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid offer ID' });
+    }
+    const offer = await Offer.findById(req.params.id);
+    if (!offer) return res.status(404).json({ error: 'Offer not found' });
+
+    const updatable = ['name', 'label', 'discountPercent', 'appliesToPlanCodes', 'usageLimit', 'enabled', 'tags'];
+    for (const key of updatable) {
+      if (req.body[key] !== undefined) offer[key] = req.body[key];
+    }
+    if (req.body.startsAt) offer.startsAt = new Date(req.body.startsAt);
+    if (req.body.endsAt) offer.endsAt = new Date(req.body.endsAt);
+    if (req.body.couponCode !== undefined) {
+      if (offer.type !== 'coupon') {
+        return res.status(400).json({ error: 'Cannot set couponCode on a non-coupon offer' });
+      }
+      offer.couponCode = req.body.couponCode ? String(req.body.couponCode).toUpperCase() : undefined;
+    }
+    if (offer.endsAt <= offer.startsAt) {
+      return res.status(400).json({ error: 'endsAt must be after startsAt' });
+    }
+    offer.updatedBy = req.user.id;
+
+    await offer.save();
+
+    await AuditLog.create({
+      userId: req.user.id,
+      userEmail: req.user.email,
+      userRole: req.user.role,
+      action: 'ADMIN_OFFER_UPDATE',
+      resource: 'offer',
+      resourceId: String(offer._id),
+      ipAddress: getRequestIp(req),
+      userAgent: req.get('user-agent'),
+      method: req.method,
+      path: req.path,
+      statusCode: 200,
+      metadata: { changedKeys: Object.keys(req.body) },
+    });
+
+    broadcast('offers:changed', { reason: 'updated', offerId: String(offer._id) });
+    return res.json({ offer: offerToJson(offer) });
+  } catch (error) {
+    if (error?.code === 11000) {
+      return res.status(409).json({ error: 'Coupon code already exists' });
+    }
+    console.error('Offer update error:', error.message);
+    return res.status(400).json({ error: error.message || 'Failed to update offer' });
+  }
+});
+
+router.delete('/offers/:id', async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid offer ID' });
+    }
+    const offer = await Offer.findById(req.params.id);
+    if (!offer) return res.status(404).json({ error: 'Offer not found' });
+    await Offer.deleteOne({ _id: offer._id });
+
+    await AuditLog.create({
+      userId: req.user.id,
+      userEmail: req.user.email,
+      userRole: req.user.role,
+      action: 'ADMIN_OFFER_DELETE',
+      resource: 'offer',
+      resourceId: String(offer._id),
+      ipAddress: getRequestIp(req),
+      userAgent: req.get('user-agent'),
+      method: req.method,
+      path: req.path,
+      statusCode: 200,
+      metadata: { name: offer.name, type: offer.type },
+    });
+
+    broadcast('offers:changed', { reason: 'deleted', offerId: String(offer._id) });
+    return res.json({ deleted: true });
+  } catch (error) {
+    console.error('Offer delete error:', error.message);
+    return res.status(500).json({ error: 'Failed to delete offer' });
   }
 });
 

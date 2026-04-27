@@ -36,3 +36,21 @@ export function emitToUser(userId, event, payload) {
     console.warn('emitToUser failed:', err.message);
   }
 }
+
+/**
+ * Broadcast `event` with `payload` to every connected socket.
+ * Used for global state changes (e.g. an offer expiring) so that all open
+ * pricing pages can refresh themselves without polling.
+ *
+ * Silently no-ops when io is not yet initialised so callers don't have to
+ * guard against the test/import-only case.
+ */
+export function broadcast(event, payload) {
+  if (!ioInstance || !event) return;
+  try {
+    ioInstance.emit(event, payload);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('broadcast failed:', err.message);
+  }
+}
