@@ -26,7 +26,7 @@ import { Kyc } from '../pages/Kyc';
 import { UserProfilePanel } from '../pages/UserProfilePanel';
 import { ProtectedRoute } from '../components/ProtectedRoute';
 
-const ADMIN_PANEL_PATH = (import.meta.env.VITE_ADMIN_PANEL_PATH || '/ops-bridge-93a1').replace(/^\//, '');
+const ADMIN_PANEL_PATH = (import.meta.env.VITE_ADMIN_PANEL_PATH || '').replace(/^\//, '');
 
 export function AppRoutes() {
   return (

@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { getRequestIp } from '../utils/requestIdentity.js';
 
-const ADMIN_PATH_SEGMENT = process.env.ADMIN_PRIVATE_PATH_SEGMENT || '_ops_console_f91b7c';
+const ADMIN_PATH_SEGMENT = process.env.ADMIN_PRIVATE_PATH_SEGMENT || 'admin';
 const IP_WHITELIST = (process.env.ADMIN_IP_WHITELIST || '')
   .split(',')
   .map((entry) => entry.trim())

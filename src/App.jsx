@@ -39,7 +39,7 @@ function AppWrapper() {
   const user = useSelector((s) => s.auth.user);
   const ready = useSelector((s) => s.auth.ready);
 
-  const adminPanelPath = (import.meta.env.VITE_ADMIN_PANEL_PATH || '/ops-bridge-93a1');
+  const adminPanelPath = (import.meta.env.VITE_ADMIN_PANEL_PATH || '');
   const normalizedAdminPath = adminPanelPath.startsWith('/') ? adminPanelPath : `/${adminPanelPath}`;
   const isAdminPanelRoute = location.pathname === normalizedAdminPath;
 
