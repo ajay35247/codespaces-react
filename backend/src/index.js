@@ -21,13 +21,16 @@ import promClient from 'prom-client';
 import connectDatabase from './config/db.js';
 import { validateStartupEnv } from './config/envValidation.js';
 import { getAllowedOriginsFromEnv } from './config/origins.js';
-import { globalErrorHandler } from './middleware/errorHandler.js';
+import { globalErrorHandler, correlationIdMiddleware } from './middleware/errorHandler.js';
 import { auditLogger } from './middleware/auditLogger.js';
 import { enforceTrustedOriginForCookieAuth } from './middleware/csrfProtection.js';
 import { getSocketAccessToken, verifyAccessToken } from './middleware/authorize.js';
 import { ensureAdminAccount } from './services/securityBootstrap.js';
 import { getAdminPathSegment } from './middleware/adminSecurity.js';
 import { requireNotMaintenance } from './middleware/platformControl.js';
+import { setRedisClient } from './utils/redisBus.js';
+import { startHealingScheduler } from './queues/healing.js';
+import { getAdminEmail, normalizeEmail } from './utils/securityPolicy.js';
 
 promClient.collectDefaultMetrics({ timeout: 5000 });
 import authRoutes from './routes/auth.js';
@@ -47,6 +50,8 @@ import fleetRoutes from './routes/fleet.js';
 import profileRoutes from './routes/profile.js';
 import chatRoutes from './routes/chat.js';
 import searchRoutes from './routes/search.js';
+import telemetryRoutes from './routes/telemetry.js';
+import adminMonitoringRoutes, { getCurrentReleaseSignal } from './routes/adminMonitoring.js';
 import { setIo } from './utils/socketBus.js';
 import { startOfferScheduler } from './services/offersScheduler.js';
 
@@ -145,6 +150,7 @@ const createApp = async () => {
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
   app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'tiny'));
+  app.use(correlationIdMiddleware);
 
   app.use((req, res, next) => {
     res.on('finish', () => {
@@ -157,6 +163,9 @@ const createApp = async () => {
   });
 
   const redisClient = await connectRedisClient(REDIS_URL);
+  // Expose the Redis client to other modules (alerts throttling, healing
+  // queue book-keeping) without forcing a circular import.
+  setRedisClient(redisClient);
 
   const apiLimiter = createLimiter({
     windowMs: parseInt(process.env.RATE_LIMIT_WINDOW || '900000', 10),
@@ -259,6 +268,27 @@ const createApp = async () => {
       uptime: process.uptime(),
       mongoState: mongoose.connection.readyState,
       redisConnected: redisClient?.isOpen ? 'connected' : 'disconnected',
+      releaseSignal: getCurrentReleaseSignal(),
+    });
+  });
+
+  /**
+   * /api/ready — readiness probe distinct from liveness.  A 200 means the
+   * process is fully ready to serve traffic (Mongo reachable, Redis is either
+   * absent-by-design or healthy).  Returns 503 with a structured `checks`
+   * payload otherwise so orchestrators (k8s readinessProbe, Render health
+   * checks) can route correctly.
+   */
+  app.get('/api/ready', async (req, res) => {
+    const checks = {
+      mongo: mongoose.connection.readyState === 1,
+      redis: redisClient?.isOpen ? true : !redisClient,
+    };
+    const ready = Object.values(checks).every(Boolean);
+    res.status(ready ? 200 : 503).json({
+      ready,
+      checks,
+      timestamp: new Date().toISOString(),
     });
   });
 
@@ -283,6 +313,13 @@ const createApp = async () => {
 
   app.use('/api/auth', authLimiter, authRoutes);
   app.use(`/api/${getAdminPathSegment()}`, adminRoutes);
+  // Admin monitoring (errors / health / healing rules / force-reload) sits
+  // under the same secret admin path segment as the rest of admin.js and
+  // re-applies verifyJWT + requireAjayAdmin + requireAdminIpWhitelist
+  // internally for defence-in-depth.
+  app.use(`/api/${getAdminPathSegment()}/monitoring`, adminMonitoringRoutes);
+  // Telemetry ingest — auth optional, IP-rate-limited inside the route.
+  app.use('/api/telemetry', telemetryRoutes);
   // Maintenance mode blocks all user-facing endpoints; admin routes above are exempt.
   app.use('/api/payments', paymentLimiter, requireNotMaintenance(), paymentRoutes);
   app.use('/api/loads', requireNotMaintenance(), loadsRoutes);
@@ -332,6 +369,12 @@ const startWorker = async () => {
 
   // Start admin-offer auto-expiry scheduler now that DB + io are ready.
   startOfferScheduler();
+  // Start the auto-healing scheduler (best-effort; quietly no-ops if Redis
+  // is unavailable — the queue itself will log the underlying error).
+  startHealingScheduler().catch((err) => {
+    // eslint-disable-next-line no-console
+    console.warn('[healing] scheduler start failed:', err.message);
+  });
 
   let pubClient = null;
   let subClient = null;
@@ -361,6 +404,13 @@ const startWorker = async () => {
   io.on('connection', (socket) => {
     // Auto-join personal room authenticated by JWT
     socket.join(socket.user.id);
+
+    // Admin-role sockets also join a shared `admins` room so the monitoring
+    // dashboard receives broadcast('admin:monitoring') / broadcast('admin:heal')
+    // events without each event being fanned out to every connected user.
+    if (socket.user.role === 'admin' && normalizeEmail(socket.user.email) === getAdminEmail()) {
+      socket.join('admins');
+    }
 
     socket.on('join-vehicle', (vehicleId) => {
       socket.join(`vehicle:${vehicleId}`);
