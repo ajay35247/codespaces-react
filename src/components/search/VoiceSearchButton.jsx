@@ -22,10 +22,17 @@ function getRecognition() {
  * server-side STT, no third-party dependency.  Hidden entirely when the
  * browser does not support recognition.
  */
-export function VoiceSearchButton({ onResult, lang = 'en-IN', className = '' }) {
+export function VoiceSearchButton({ onResult, lang, className = '' }) {
   const Ctor = getRecognition();
   const [listening, setListening] = useState(false);
   const recRef = useRef(null);
+
+  // Prefer the explicit prop; otherwise derive from the user agent so we
+  // don't ship an "en-IN-only" mic for users in other regions.
+  const effectiveLang =
+    lang
+    || (typeof navigator !== 'undefined' && (navigator.language || navigator.userLanguage))
+    || 'en-IN';
 
   // Stop any active session when the component unmounts so the mic LED
   // doesn't stay green after navigating away.
@@ -46,7 +53,7 @@ export function VoiceSearchButton({ onResult, lang = 'en-IN', className = '' }) 
     } catch {
       return;
     }
-    rec.lang = lang;
+    rec.lang = effectiveLang;
     rec.continuous = false;
     rec.interimResults = false;
     rec.maxAlternatives = 1;
