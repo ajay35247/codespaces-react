@@ -7,6 +7,7 @@ import { requirePaymentsEnabled } from '../middleware/platformControl.js';
 import { getSubscriptionFeatures } from '../middleware/subscription.js';
 import { Joi, validateBody } from '../middleware/validation.js';
 import Payment from '../schemas/PaymentSchema.js';
+import { resolvePrice, recordOfferUsage } from '../utils/pricing.js';
 
 const router = Router();
 const razorpayKeyId = process.env.RAZORPAY_KEY_ID || '';
@@ -24,6 +25,7 @@ const plans = [
 
 const subscribeSchema = Joi.object({
   planId: Joi.string().valid(...plans.map((plan) => plan.id)).required(),
+  couponCode: Joi.string().trim().min(2).max(50).pattern(/^[A-Za-z0-9_-]+$/).optional().allow(''),
 });
 
 const verifySchema = Joi.object({
@@ -150,23 +152,83 @@ router.get('/plans', (req, res) => {
   res.json({ plans });
 });
 
+/**
+ * Public pricing listing — returns each plan with its current effective
+ * price after admin-managed offers are applied. This is what the
+ * Subscription page renders.
+ *
+ * Optional `?couponCode=XYZ` query string lets the user preview a coupon
+ * discount without committing.  The same resolver is invoked again at
+ * /subscribe to prevent client-side tampering.
+ */
+router.get('/pricing', async (req, res) => {
+  try {
+    const couponCode = typeof req.query.couponCode === 'string' ? req.query.couponCode.slice(0, 50) : '';
+    const enriched = await Promise.all(plans.map(async (plan) => {
+      const resolved = await resolvePrice({
+        planCode: plan.id,
+        originalPrice: plan.price,
+        couponCode,
+      });
+      return {
+        ...plan,
+        originalPrice: resolved.originalPrice,
+        finalPrice: resolved.finalPrice,
+        discountPercent: resolved.discountPercent,
+        appliedOffer: resolved.appliedOffer,
+      };
+    }));
+    return res.json({ plans: enriched, couponApplied: Boolean(couponCode) });
+  } catch (error) {
+    console.error('Pricing fetch error:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch pricing' });
+  }
+});
+
 router.post('/subscribe', verifyJWT, requirePaymentsEnabled(), flagFraud, validateBody(subscribeSchema), async (req, res) => {
   if (!razorpay) {
     return res.status(500).json({ error: 'Payment gateway is not configured' });
   }
 
-  const { planId } = req.body;
+  const { planId, couponCode } = req.body;
   const plan = plans.find((item) => item.id === planId);
   if (!plan) {
     return res.status(400).json({ error: 'Invalid plan selected' });
   }
 
+  // Server-side price resolution. This is the only place the actual
+  // charge amount is computed — never trust a price coming from the client.
+  let resolved;
+  try {
+    resolved = await resolvePrice({
+      planCode: plan.id,
+      originalPrice: plan.price,
+      couponCode: couponCode || '',
+    });
+  } catch (err) {
+    console.warn('Price resolution failed, falling back to list price:', err.message);
+    resolved = { originalPrice: plan.price, finalPrice: plan.price, discountPercent: 0, appliedOffer: null };
+  }
+
+  // If the user typed a coupon but it produced no offer, reject explicitly
+  // so they don't silently pay full price thinking it applied.
+  if (couponCode && !resolved.appliedOffer) {
+    return res.status(400).json({ error: 'Coupon code is invalid, expired, or not applicable to this plan' });
+  }
+
+  const chargeAmount = Math.max(1, Math.round(resolved.finalPrice));
+
   try {
     const order = await razorpay.orders.create({
-      amount: plan.price * 100,
+      amount: chargeAmount * 100,
       currency: 'INR',
       receipt: `receipt_${crypto.randomUUID()}`,
-      notes: { planId: plan.id, userId: req.user.id },
+      notes: {
+        planId: plan.id,
+        userId: req.user.id,
+        offerId: resolved.appliedOffer?.id || '',
+        discountPercent: String(resolved.discountPercent || 0),
+      },
       payment_capture: 1,
     });
 
@@ -177,7 +239,7 @@ router.post('/subscribe', verifyJWT, requirePaymentsEnabled(), flagFraud, valida
         razorpayOrderId: order.id,
         planId: plan.id,
         userId: req.user.id,
-        amount: plan.price,
+        amount: chargeAmount,
         currency: 'INR',
         sender: req.user.id,
         status: 'pending',
@@ -186,12 +248,28 @@ router.post('/subscribe', verifyJWT, requirePaymentsEnabled(), flagFraud, valida
       console.warn('Payment record creation failed:', dbErr.message);
     }
 
+    // Best-effort usage-count bump. recordOfferUsage is atomic and skips the
+    // increment if the cap is already reached (defence against TOCTOU between
+    // resolvePrice and the actual charge). Log failures with context — a
+    // silent miss here would let usage drift past the cap unnoticed.
+    if (resolved.appliedOffer?.id) {
+      recordOfferUsage(resolved.appliedOffer.id).catch((err) => {
+        console.warn('recordOfferUsage failed', { offerId: resolved.appliedOffer.id, userId: req.user.id, error: err.message });
+      });
+    }
+
     return res.status(200).json({
       orderId: order.id,
       amount: order.amount,
       currency: order.currency,
       keyId: razorpayKeyId,
-      plan,
+      plan: {
+        ...plan,
+        originalPrice: resolved.originalPrice,
+        finalPrice: chargeAmount,
+        discountPercent: resolved.discountPercent,
+        appliedOffer: resolved.appliedOffer,
+      },
     });
   } catch (error) {
     console.error('Razorpay order creation error:', error.message);

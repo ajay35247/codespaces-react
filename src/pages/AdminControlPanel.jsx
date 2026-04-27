@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { buildApiUrl, getApiErrorMessage, parseApiBody } from '../utils/api';
+import { AdminShell } from '../components/admin/AdminShell';
+import { MissionControl } from '../components/admin/MissionControl';
+import { CommandPalette, useCommandPaletteShortcut } from '../components/admin/CommandPalette';
 
 const ADMIN_API_SEGMENT = import.meta.env.VITE_ADMIN_API_SEGMENT || import.meta.env.VITE_ADMIN_PRIVATE_PATH_SEGMENT || '';
 
@@ -48,6 +51,7 @@ const FEATURE_FLAGS = [
   { key: 'tollsPaused',          label: 'Pause Tolls',           description: 'Blocks FASTag wallet recharge orders',         danger: false },
   { key: 'brokersPaused',        label: 'Pause Brokers',         description: 'Disables all broker routes',                   danger: false },
   { key: 'supportPaused',        label: 'Pause Support',         description: 'Prevents new support ticket submissions',      danger: false },
+  { key: 'offersPaused',         label: 'Stop All Offers',       description: 'Disables every active subscription offer/coupon platform-wide', danger: true  },
 ];
 
 const DEFAULT_FLAGS = Object.fromEntries(FEATURE_FLAGS.map(({ key }) => [key, false]));
@@ -82,9 +86,19 @@ export function AdminControlPanel() {
   const [payments, setPayments] = useState([]);
   const [supportTickets, setSupportTickets] = useState([]);
   const [gstInvoices, setGstInvoices] = useState([]);
+  const [offers, setOffers] = useState([]);
+  const [offerForm, setOfferForm] = useState({
+    name: '', type: 'festival', label: '', discountPercent: 25,
+    startsAt: '', endsAt: '', appliesToPlanCodes: '', couponCode: '', usageLimit: '',
+  });
+  const [offerSaving, setOfferSaving] = useState(false);
   const [featureFlags, setFeatureFlags] = useState(DEFAULT_FLAGS);
   const [activeTab, setActiveTab] = useState('overview');
   const [userAction, setUserAction] = useState({});
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
+  // Global ⌘K / Ctrl+K / "/" shortcut for the command palette.
+  useCommandPaletteShortcut(useCallback(() => setPaletteOpen(true), []));
 
   const authenticated = useMemo(() => Boolean(admin), [admin]);
 
@@ -169,7 +183,7 @@ export function AdminControlPanel() {
       const [
         usersData, plansData, revenueData, flagsData,
         analyticsData, auditData, loadsData, paymentsData,
-        ticketsData, invoicesData,
+        ticketsData, invoicesData, offersData,
       ] = await Promise.all([
         api(`/control/users?limit=${USERS_FETCH_LIMIT}`),
         api('/pricing/plans'),
@@ -181,6 +195,7 @@ export function AdminControlPanel() {
         api('/control/payments'),
         api('/control/support/tickets?limit=50'),
         api('/control/gst/invoices?limit=50'),
+        api('/offers'),
       ]);
 
       setUsers(usersData.users || []);
@@ -193,6 +208,7 @@ export function AdminControlPanel() {
       setPayments(paymentsData.payments || []);
       setSupportTickets(ticketsData.tickets || []);
       setGstInvoices(invoicesData.invoices || []);
+      setOffers(offersData.offers || []);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -359,58 +375,220 @@ export function AdminControlPanel() {
     );
   }
 
+  const handleOfferCreate = async (e) => {
+    e.preventDefault();
+    setOfferSaving(true);
+    setError('');
+    try {
+      const planCodes = offerForm.appliesToPlanCodes
+        .split(',').map((s) => s.trim()).filter(Boolean);
+      const payload = {
+        name: offerForm.name.trim(),
+        type: offerForm.type,
+        label: offerForm.label.trim(),
+        discountPercent: Number(offerForm.discountPercent),
+        startsAt: new Date(offerForm.startsAt).toISOString(),
+        endsAt: new Date(offerForm.endsAt).toISOString(),
+        appliesToPlanCodes: planCodes,
+      };
+      if (offerForm.type === 'coupon') payload.couponCode = offerForm.couponCode.trim().toUpperCase();
+      if (offerForm.usageLimit) payload.usageLimit = Number(offerForm.usageLimit);
+      const res = await api('/offers', 'POST', payload);
+      setOffers((prev) => [res.offer, ...prev]);
+      setOfferForm({
+        name: '', type: 'festival', label: '', discountPercent: 25,
+        startsAt: '', endsAt: '', appliesToPlanCodes: '', couponCode: '', usageLimit: '',
+      });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setOfferSaving(false);
+    }
+  };
+
+  const handleOfferToggle = async (offer) => {
+    try {
+      const res = await api(`/offers/${offer.id}`, 'PATCH', { enabled: !offer.enabled });
+      setOffers((prev) => prev.map((o) => o.id === offer.id ? res.offer : o));
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleOfferDelete = async (offer) => {
+    if (!window.confirm(`Delete offer "${offer.name}"? This cannot be undone.`)) return;
+    try {
+      await api(`/offers/${offer.id}`, 'DELETE');
+      setOffers((prev) => prev.filter((o) => o.id !== offer.id));
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
   const TABS = [
-    { id: 'overview',  label: 'Overview'      },
-    { id: 'flags',     label: 'Feature Flags' },
-    { id: 'users',     label: 'Users'         },
-    { id: 'loads',     label: 'Loads'         },
-    { id: 'payments',  label: 'Payments'      },
-    { id: 'support',   label: 'Support'       },
-    { id: 'gst',       label: 'GST Invoices'  },
-    { id: 'analytics', label: 'Analytics'     },
-    { id: 'audit',     label: 'Audit Log'     },
+    { id: 'dashboard', label: 'Dashboard',     icon: '◉' },
+    { id: 'overview',  label: 'Overview',      icon: '▦' },
+    { id: 'users',     label: 'Users',         icon: '◌' },
+    { id: 'payments',  label: 'Payments',      icon: '₹' },
+    { id: 'offers',    label: 'Offers',        icon: '✦' },
+    { id: 'loads',     label: 'Loads',         icon: '⊟' },
+    { id: 'support',   label: 'Support',       icon: '◇' },
+    { id: 'gst',       label: 'GST Invoices',  icon: '⊜' },
+    { id: 'analytics', label: 'Analytics',     icon: '⊿' },
+    { id: 'flags',     label: 'Feature Flags', icon: '⚑' },
+    { id: 'audit',     label: 'Audit Log',     icon: '⊡' },
   ];
 
+  // Default landing tab is the new mission-control dashboard. Use a ref-style
+  // flag (init via useState) so this only runs once per mount; otherwise an
+  // admin navigating back to "overview" would be bounced to "dashboard" again.
+  const [didDefaultDashboard, setDidDefaultDashboard] = useState(false);
+  useEffect(() => {
+    if (!didDefaultDashboard && admin && activeTab === 'overview') {
+      setActiveTab('dashboard');
+      setDidDefaultDashboard(true);
+    }
+  }, [admin, activeTab, didDefaultDashboard]);
+
+  const handleQuickAction = useCallback(async (action) => {
+    if (action === 'stop-all') {
+      try {
+        const next = { ...featureFlags, offersPaused: true };
+        await api('/control/kill-switch', 'POST', next);
+        setFeatureFlags(next);
+      } catch (err) { setError(err.message); }
+    } else if (action === 'start-sale') {
+      setActiveTab('offers');
+    } else if (action === 'send-notification') {
+      setActiveTab('users');
+    }
+  }, [featureFlags]);
+
+  // Palette callbacks. Kept separate from `handleQuickAction` because the
+  // palette needs to await stop-all-offers (so it can show "Working…" and
+  // close on success) and seed the offer composer when the operator typed a
+  // discount percent like "50".
+  const handlePaletteStopAllOffers = useCallback(async () => {
+    const next = { ...featureFlags, offersPaused: true };
+    try {
+      await api('/control/kill-switch', 'POST', next);
+      setFeatureFlags(next);
+    } catch (err) { setError(err.message); }
+  }, [featureFlags]);
+
+  const handlePaletteStartSale = useCallback((percent) => {
+    if (percent != null) {
+      setOfferForm((prev) => ({ ...prev, discountPercent: percent }));
+    }
+    setActiveTab('offers');
+  }, []);
+
+  const topBar = ({ isDark }) => (
+    <>
+      <button
+        type="button"
+        onClick={() => setPaletteOpen(true)}
+        aria-label="Open command palette (Ctrl+K)"
+        className={`hidden md:flex w-72 items-center gap-2 rounded-lg border px-3 py-1.5 text-left text-sm transition-colors ${
+          isDark
+            ? 'bg-slate-900 border-white/10 text-slate-400 hover:border-cyan-400/50 hover:text-slate-200'
+            : 'bg-white border-slate-200 text-slate-500 hover:border-cyan-400 hover:text-slate-700'
+        }`}
+      >
+        <span aria-hidden className="text-base leading-none opacity-70">⌕</span>
+        <span className="flex-1 truncate">Search or run a command…</span>
+        <kbd className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${isDark ? 'bg-slate-800 text-slate-400' : 'bg-slate-100 text-slate-500'}`}>
+          Ctrl K
+        </kbd>
+      </button>
+      <span className={`hidden lg:inline text-xs px-2 py-1 rounded ${isDark ? 'bg-slate-800 text-slate-400' : 'bg-slate-100 text-slate-500'}`}>
+        {admin?.email}
+      </span>
+      <button type="button" onClick={() => loadDashboard()} disabled={loading}
+        className={`rounded-lg px-2.5 py-1.5 text-sm ${isDark ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100'}`}>
+        {loading ? '⟳' : '↻'}
+      </button>
+      <button type="button" onClick={handleLogoutAll} disabled={loading}
+        className={`rounded-lg px-2.5 py-1.5 text-xs font-medium ${isDark ? 'text-rose-300 hover:bg-rose-500/10' : 'text-rose-600 hover:bg-rose-50'}`}>
+        Logout all
+      </button>
+    </>
+  );
+
+  const rightPanel = () => (
+    <div className="space-y-3">
+      <div className="rounded-lg border border-current/10 p-3">
+        <p className="text-xs font-semibold uppercase tracking-wider opacity-70">Suggestions</p>
+        <ul className="mt-2 space-y-2 text-sm">
+          {liveOfferCount(offers) === 0 && (
+            <li className="rounded bg-current/[0.04] p-2">
+              No live offers. Consider scheduling a festival promotion to lift conversions.
+            </li>
+          )}
+          {(analytics?.openFraudAlerts || 0) > 0 && (
+            <li className="rounded bg-rose-500/10 p-2 text-rose-400">
+              {analytics.openFraudAlerts} fraud alert(s) open — review in Analytics.
+            </li>
+          )}
+          {featureFlags.maintenanceMode && (
+            <li className="rounded bg-amber-500/10 p-2 text-amber-400">
+              Maintenance mode is on — disable in Feature Flags when ready.
+            </li>
+          )}
+          {(supportTickets.filter((t) => t.status === 'open').length > 5) && (
+            <li className="rounded bg-current/[0.04] p-2">
+              {supportTickets.filter((t) => t.status === 'open').length} open support tickets.
+            </li>
+          )}
+        </ul>
+        <p className="mt-2 text-[10px] opacity-50">
+          Heuristics over live data. Predictive AI lands in Phase 4.
+        </p>
+      </div>
+    </div>
+  );
+
+  const fab = (
+    <button
+      type="button"
+      onClick={() => setActiveTab('offers')}
+      title="Create offer"
+      className="flex h-12 w-12 items-center justify-center rounded-full bg-cyan-500 text-2xl text-slate-950 shadow-xl shadow-cyan-500/30 hover:bg-cyan-400"
+    >
+      +
+    </button>
+  );
+
   return (
-    <main className="mx-auto min-h-screen max-w-7xl px-4 py-8 text-white">
-      <section className="rounded-[2rem] border border-white/10 bg-slate-950/95 p-6 shadow-2xl shadow-slate-900/40">
-
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <h1 className="text-3xl font-semibold">Control Tower</h1>
-            <p className="text-slate-300">Signed in as {admin?.email}</p>
-          </div>
-          <div className="flex flex-wrap gap-3">
-            <button className="rounded-xl bg-slate-700 px-4 py-2 text-sm" type="button" onClick={handleRefresh} disabled={loading}>Refresh Token</button>
-            <button className="rounded-xl bg-cyan-600 px-4 py-2 text-sm" type="button" onClick={() => loadDashboard()} disabled={loading}>{loading ? 'Loading…' : 'Reload Data'}</button>
-            <button className="rounded-xl bg-rose-500 px-4 py-2 text-sm text-slate-950" type="button" onClick={handleLogoutAll} disabled={loading}>Logout All Sessions</button>
-          </div>
+    <>
+    <AdminShell
+      nav={TABS.map((t) => ({ key: t.id, label: t.label, icon: t.icon }))}
+      activeKey={activeTab}
+      onNavigate={setActiveTab}
+      topBar={topBar}
+      rightPanel={rightPanel}
+      fab={fab}
+    >
+      {error && <p className="mb-4 rounded-2xl bg-rose-600/20 px-4 py-3 text-sm text-rose-200">{error}</p>}
+      {featureFlags.maintenanceMode && (
+        <div className="mb-4 rounded-2xl bg-red-600/20 border border-red-500/40 px-4 py-3 text-sm font-semibold text-red-200">
+          ⚠ MAINTENANCE MODE IS ACTIVE — all user-facing API endpoints are returning 503
         </div>
+      )}
 
-        {featureFlags.maintenanceMode && (
-          <div className="mt-4 rounded-2xl bg-red-600/30 border border-red-500/50 px-4 py-3 text-sm font-semibold text-red-200">
-            ⚠ MAINTENANCE MODE IS ACTIVE — all user-facing API endpoints are returning 503
-          </div>
-        )}
-
-        {error && <p className="mt-4 rounded-2xl bg-rose-600/20 px-4 py-3 text-sm text-rose-200">{error}</p>}
-
-        <div className="mt-6 flex flex-wrap gap-2 border-b border-white/10 pb-3">
-          {TABS.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setActiveTab(tab.id)}
-              className={`rounded-xl px-4 py-2 text-sm font-medium transition-colors ${
-                activeTab === tab.id
-                  ? 'bg-cyan-500 text-slate-950'
-                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
+      {activeTab === 'dashboard' && (
+        <MissionControl
+          users={users}
+          revenue={revenue}
+          loads={loads}
+          supportTickets={supportTickets}
+          analytics={analytics}
+          offers={offers}
+          auditLogs={auditLogs}
+          featureFlags={featureFlags}
+          onQuickAction={handleQuickAction}
+        />
+      )}
 
         {activeTab === 'overview' && (
           <div className="mt-6 space-y-6">
@@ -712,6 +890,142 @@ export function AdminControlPanel() {
           </div>
         )}
 
+        {activeTab === 'offers' && (
+          <div className="mt-6 space-y-6">
+            {featureFlags.offersPaused && (
+              <div className="rounded-2xl border border-red-500/50 bg-red-600/15 px-4 py-3 text-sm font-semibold text-red-200">
+                ⚠ STOP-ALL-OFFERS is ACTIVE — every active offer is currently inert. Disable the flag in "Feature Flags" to restore.
+              </div>
+            )}
+
+            <form onSubmit={handleOfferCreate} className="rounded-2xl border border-white/10 bg-slate-900/60 p-5">
+              <h3 className="text-base font-semibold">Create Offer</h3>
+              <p className="mt-1 text-xs text-slate-400">
+                Festival/flat offers apply automatically when active. Coupons require the user to enter the code at checkout.
+              </p>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <label className="text-xs">Name
+                  <input required maxLength={120} value={offerForm.name}
+                    onChange={(e) => setOfferForm((p) => ({ ...p, name: e.target.value }))}
+                    className="mt-1 w-full rounded-lg bg-slate-950 px-3 py-2 text-sm" placeholder="Diwali Sale" />
+                </label>
+                <label className="text-xs">Type
+                  <select value={offerForm.type}
+                    onChange={(e) => setOfferForm((p) => ({ ...p, type: e.target.value }))}
+                    className="mt-1 w-full rounded-lg bg-slate-950 px-3 py-2 text-sm">
+                    <option value="festival">Festival</option>
+                    <option value="flat">Flat</option>
+                    <option value="coupon">Coupon</option>
+                  </select>
+                </label>
+                <label className="text-xs">Label (banner text)
+                  <input maxLength={80} value={offerForm.label}
+                    onChange={(e) => setOfferForm((p) => ({ ...p, label: e.target.value }))}
+                    className="mt-1 w-full rounded-lg bg-slate-950 px-3 py-2 text-sm" placeholder="Limited Time Offer" />
+                </label>
+                <label className="text-xs">Discount %
+                  <input type="number" min={1} max={90} required value={offerForm.discountPercent}
+                    onChange={(e) => setOfferForm((p) => ({ ...p, discountPercent: e.target.value }))}
+                    className="mt-1 w-full rounded-lg bg-slate-950 px-3 py-2 text-sm" />
+                </label>
+                <label className="text-xs">Starts at
+                  <input type="datetime-local" required value={offerForm.startsAt}
+                    onChange={(e) => setOfferForm((p) => ({ ...p, startsAt: e.target.value }))}
+                    className="mt-1 w-full rounded-lg bg-slate-950 px-3 py-2 text-sm" />
+                </label>
+                <label className="text-xs">Ends at
+                  <input type="datetime-local" required value={offerForm.endsAt}
+                    onChange={(e) => setOfferForm((p) => ({ ...p, endsAt: e.target.value }))}
+                    className="mt-1 w-full rounded-lg bg-slate-950 px-3 py-2 text-sm" />
+                </label>
+                <label className="text-xs">Applies to plan codes (comma-separated; blank = all)
+                  <input value={offerForm.appliesToPlanCodes}
+                    onChange={(e) => setOfferForm((p) => ({ ...p, appliesToPlanCodes: e.target.value }))}
+                    className="mt-1 w-full rounded-lg bg-slate-950 px-3 py-2 text-sm" placeholder="basic, growth" />
+                </label>
+                {offerForm.type === 'coupon' && (
+                  <label className="text-xs">Coupon code
+                    <input required pattern="[A-Za-z0-9_-]{2,50}" maxLength={50} value={offerForm.couponCode}
+                      onChange={(e) => setOfferForm((p) => ({ ...p, couponCode: e.target.value.toUpperCase() }))}
+                      className="mt-1 w-full rounded-lg bg-slate-950 px-3 py-2 text-sm" placeholder="DIWALI50" />
+                  </label>
+                )}
+                <label className="text-xs">Usage limit (optional)
+                  <input type="number" min={1} value={offerForm.usageLimit}
+                    onChange={(e) => setOfferForm((p) => ({ ...p, usageLimit: e.target.value }))}
+                    className="mt-1 w-full rounded-lg bg-slate-950 px-3 py-2 text-sm" placeholder="e.g. 1000" />
+                </label>
+              </div>
+              <div className="mt-4 flex items-center gap-3">
+                <button disabled={offerSaving} className="rounded-xl bg-amber-400 px-5 py-2 text-sm font-semibold text-slate-900 disabled:opacity-50">
+                  {offerSaving ? 'Saving…' : 'Create Offer'}
+                </button>
+                <p className="text-xs text-slate-400">All offer mutations are audit-logged.</p>
+              </div>
+            </form>
+
+            <div>
+              <h3 className="text-base font-semibold">Active &amp; Past Offers ({offers.length})</h3>
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="text-slate-400">
+                    <tr>
+                      <th className="py-2 pr-4">Name</th>
+                      <th className="pr-4">Type</th>
+                      <th className="pr-4">Discount</th>
+                      <th className="pr-4">Window</th>
+                      <th className="pr-4">Plans</th>
+                      <th className="pr-4">Coupon</th>
+                      <th className="pr-4">Usage</th>
+                      <th className="pr-4">Status</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {offers.length === 0 && (
+                      <tr><td colSpan="9" className="py-4 text-center text-slate-500">No offers yet.</td></tr>
+                    )}
+                    {offers.map((offer) => {
+                      const now = Date.now();
+                      const expired = new Date(offer.endsAt).getTime() <= now;
+                      const upcoming = new Date(offer.startsAt).getTime() > now;
+                      const live = offer.enabled && !expired && !upcoming;
+                      return (
+                        <tr key={offer.id} className="border-t border-white/10 align-top">
+                          <td className="py-2 pr-4">{offer.name}{offer.label ? <div className="text-xs text-slate-400">{offer.label}</div> : null}</td>
+                          <td className="pr-4 text-xs">{offer.type}</td>
+                          <td className="pr-4 font-mono text-xs">{offer.discountPercent}%</td>
+                          <td className="pr-4 text-xs text-slate-400">
+                            {new Date(offer.startsAt).toLocaleString()}
+                            <div>→ {new Date(offer.endsAt).toLocaleString()}</div>
+                          </td>
+                          <td className="pr-4 text-xs">{offer.appliesToPlanCodes?.length ? offer.appliesToPlanCodes.join(', ') : 'ALL'}</td>
+                          <td className="pr-4 font-mono text-xs">{offer.couponCode || '—'}</td>
+                          <td className="pr-4 text-xs">{offer.usageCount}{offer.usageLimit ? ` / ${offer.usageLimit}` : ''}</td>
+                          <td className="pr-4 text-xs">
+                            {!offer.enabled && <span className="text-slate-500">disabled</span>}
+                            {offer.enabled && expired && <span className="text-rose-300">expired</span>}
+                            {offer.enabled && upcoming && <span className="text-sky-300">scheduled</span>}
+                            {live && <span className="text-emerald-300">live</span>}
+                          </td>
+                          <td className="flex gap-2">
+                            <button onClick={() => handleOfferToggle(offer)} className="rounded bg-slate-700 px-2 py-1 text-xs">
+                              {offer.enabled ? 'Disable' : 'Enable'}
+                            </button>
+                            <button onClick={() => handleOfferDelete(offer)} className="rounded bg-rose-600/80 px-2 py-1 text-xs">
+                              Delete
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
         {activeTab === 'audit' && (
           <div className="mt-6">
             <h2 className="text-lg font-semibold">Audit Log (last 50 admin actions)</h2>
@@ -736,9 +1050,31 @@ export function AdminControlPanel() {
           </div>
         )}
 
-      </section>
-    </main>
+    </AdminShell>
+    <CommandPalette
+      open={paletteOpen}
+      onClose={() => setPaletteOpen(false)}
+      // Mirror the theme key AdminShell persists so the palette matches even
+      // before the user toggles theme this session.
+      isDark={(typeof window !== 'undefined' ? window.localStorage.getItem('admin.shell.theme') : 'dark') !== 'light'}
+      nav={TABS.map((t) => ({ key: t.id, label: t.label, icon: t.icon }))}
+      users={users}
+      offers={offers}
+      plans={pricingPlans}
+      auditLogs={auditLogs}
+      onNavigate={setActiveTab}
+      onStopAllOffers={handlePaletteStopAllOffers}
+      onStartSale={handlePaletteStartSale}
+    />
+    </>
   );
+}
+
+function liveOfferCount(offers) {
+  const now = Date.now();
+  return (offers || []).filter((o) => o.enabled
+    && new Date(o.startsAt).getTime() <= now
+    && new Date(o.endsAt).getTime() > now).length;
 }
 
 function StatCard({ label, value }) {

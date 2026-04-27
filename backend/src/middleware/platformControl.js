@@ -21,6 +21,10 @@ const DEFAULT_STATE = {
   tollsPaused: false,
   brokersPaused: false,
   supportPaused: false,
+  // "Stop All Offers" — when true the pricing resolver ignores every active
+  // offer and the user pays the original list price. Admin/plan CRUD is
+  // unaffected so the offers stay configured for when admin re-enables.
+  offersPaused: false,
   // ── Maintenance mode — when true ALL non-admin API returns 503 ─────────────
   maintenanceMode: false,
 };
