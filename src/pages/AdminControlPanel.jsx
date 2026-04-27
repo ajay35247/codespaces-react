@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { buildApiUrl, getApiErrorMessage, parseApiBody } from '../utils/api';
+import { AdminShell } from '../components/admin/AdminShell';
+import { MissionControl } from '../components/admin/MissionControl';
 
 const ADMIN_API_SEGMENT = import.meta.env.VITE_ADMIN_API_SEGMENT || import.meta.env.VITE_ADMIN_PRIVATE_PATH_SEGMENT || '';
 
@@ -419,58 +421,138 @@ export function AdminControlPanel() {
   };
 
   const TABS = [
-    { id: 'overview',  label: 'Overview'      },
-    { id: 'flags',     label: 'Feature Flags' },
-    { id: 'users',     label: 'Users'         },
-    { id: 'loads',     label: 'Loads'         },
-    { id: 'payments',  label: 'Payments'      },
-    { id: 'support',   label: 'Support'       },
-    { id: 'gst',       label: 'GST Invoices'  },
-    { id: 'offers',    label: 'Offers'        },
-    { id: 'analytics', label: 'Analytics'     },
-    { id: 'audit',     label: 'Audit Log'     },
+    { id: 'dashboard', label: 'Dashboard',     icon: '◉' },
+    { id: 'overview',  label: 'Overview',      icon: '▦' },
+    { id: 'users',     label: 'Users',         icon: '◌' },
+    { id: 'payments',  label: 'Payments',      icon: '₹' },
+    { id: 'offers',    label: 'Offers',        icon: '✦' },
+    { id: 'loads',     label: 'Loads',         icon: '⊟' },
+    { id: 'support',   label: 'Support',       icon: '◇' },
+    { id: 'gst',       label: 'GST Invoices',  icon: '⊜' },
+    { id: 'analytics', label: 'Analytics',     icon: '⊿' },
+    { id: 'flags',     label: 'Feature Flags', icon: '⚑' },
+    { id: 'audit',     label: 'Audit Log',     icon: '⊡' },
   ];
 
+  // Default landing tab is the new mission-control dashboard.
+  useEffect(() => {
+    if (activeTab === 'overview' && admin) setActiveTab('dashboard');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [admin]);
+
+  const handleQuickAction = useCallback(async (action) => {
+    if (action === 'stop-all') {
+      try {
+        const next = { ...featureFlags, offersPaused: true };
+        await api('/control/kill-switch', 'POST', next);
+        setFeatureFlags(next);
+      } catch (err) { setError(err.message); }
+    } else if (action === 'start-sale') {
+      setActiveTab('offers');
+    } else if (action === 'send-notification') {
+      setActiveTab('users');
+    }
+  }, [featureFlags]);
+
+  const topBar = ({ isDark }) => (
+    <>
+      <input
+        type="search"
+        placeholder="Search users, offers, payments…"
+        className={`hidden md:block w-72 rounded-lg border px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-400 ${
+          isDark ? 'bg-slate-900 border-white/10 text-slate-100 placeholder-slate-500' : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'
+        }`}
+        aria-label="Global search (visual only — Phase 9)"
+        disabled
+        title="Global search lands in Phase 9"
+      />
+      <span className={`hidden lg:inline text-xs px-2 py-1 rounded ${isDark ? 'bg-slate-800 text-slate-400' : 'bg-slate-100 text-slate-500'}`}>
+        {admin?.email}
+      </span>
+      <button type="button" onClick={() => loadDashboard()} disabled={loading}
+        className={`rounded-lg px-2.5 py-1.5 text-sm ${isDark ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100'}`}>
+        {loading ? '⟳' : '↻'}
+      </button>
+      <button type="button" onClick={handleLogoutAll} disabled={loading}
+        className={`rounded-lg px-2.5 py-1.5 text-xs font-medium ${isDark ? 'text-rose-300 hover:bg-rose-500/10' : 'text-rose-600 hover:bg-rose-50'}`}>
+        Logout all
+      </button>
+    </>
+  );
+
+  const rightPanel = () => (
+    <div className="space-y-3">
+      <div className="rounded-lg border border-current/10 p-3">
+        <p className="text-xs font-semibold uppercase tracking-wider opacity-70">Suggestions</p>
+        <ul className="mt-2 space-y-2 text-sm">
+          {liveOfferCount(offers) === 0 && (
+            <li className="rounded bg-current/[0.04] p-2">
+              No live offers. Consider scheduling a festival promotion to lift conversions.
+            </li>
+          )}
+          {(analytics?.openFraudAlerts || 0) > 0 && (
+            <li className="rounded bg-rose-500/10 p-2 text-rose-400">
+              {analytics.openFraudAlerts} fraud alert(s) open — review in Analytics.
+            </li>
+          )}
+          {featureFlags.maintenanceMode && (
+            <li className="rounded bg-amber-500/10 p-2 text-amber-400">
+              Maintenance mode is on — disable in Feature Flags when ready.
+            </li>
+          )}
+          {(supportTickets.filter((t) => t.status === 'open').length > 5) && (
+            <li className="rounded bg-current/[0.04] p-2">
+              {supportTickets.filter((t) => t.status === 'open').length} open support tickets.
+            </li>
+          )}
+        </ul>
+        <p className="mt-2 text-[10px] opacity-50">
+          Heuristics over live data. Predictive AI lands in Phase 4.
+        </p>
+      </div>
+    </div>
+  );
+
+  const fab = (
+    <button
+      type="button"
+      onClick={() => setActiveTab('offers')}
+      title="Create offer"
+      className="flex h-12 w-12 items-center justify-center rounded-full bg-cyan-500 text-2xl text-slate-950 shadow-xl shadow-cyan-500/30 hover:bg-cyan-400"
+    >
+      +
+    </button>
+  );
+
   return (
-    <main className="mx-auto min-h-screen max-w-7xl px-4 py-8 text-white">
-      <section className="rounded-[2rem] border border-white/10 bg-slate-950/95 p-6 shadow-2xl shadow-slate-900/40">
-
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <h1 className="text-3xl font-semibold">Control Tower</h1>
-            <p className="text-slate-300">Signed in as {admin?.email}</p>
-          </div>
-          <div className="flex flex-wrap gap-3">
-            <button className="rounded-xl bg-slate-700 px-4 py-2 text-sm" type="button" onClick={handleRefresh} disabled={loading}>Refresh Token</button>
-            <button className="rounded-xl bg-cyan-600 px-4 py-2 text-sm" type="button" onClick={() => loadDashboard()} disabled={loading}>{loading ? 'Loading…' : 'Reload Data'}</button>
-            <button className="rounded-xl bg-rose-500 px-4 py-2 text-sm text-slate-950" type="button" onClick={handleLogoutAll} disabled={loading}>Logout All Sessions</button>
-          </div>
+    <AdminShell
+      nav={TABS.map((t) => ({ key: t.id, label: t.label, icon: t.icon }))}
+      activeKey={activeTab}
+      onNavigate={setActiveTab}
+      topBar={topBar}
+      rightPanel={rightPanel}
+      fab={fab}
+    >
+      {error && <p className="mb-4 rounded-2xl bg-rose-600/20 px-4 py-3 text-sm text-rose-200">{error}</p>}
+      {featureFlags.maintenanceMode && (
+        <div className="mb-4 rounded-2xl bg-red-600/20 border border-red-500/40 px-4 py-3 text-sm font-semibold text-red-200">
+          ⚠ MAINTENANCE MODE IS ACTIVE — all user-facing API endpoints are returning 503
         </div>
+      )}
 
-        {featureFlags.maintenanceMode && (
-          <div className="mt-4 rounded-2xl bg-red-600/30 border border-red-500/50 px-4 py-3 text-sm font-semibold text-red-200">
-            ⚠ MAINTENANCE MODE IS ACTIVE — all user-facing API endpoints are returning 503
-          </div>
-        )}
-
-        {error && <p className="mt-4 rounded-2xl bg-rose-600/20 px-4 py-3 text-sm text-rose-200">{error}</p>}
-
-        <div className="mt-6 flex flex-wrap gap-2 border-b border-white/10 pb-3">
-          {TABS.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setActiveTab(tab.id)}
-              className={`rounded-xl px-4 py-2 text-sm font-medium transition-colors ${
-                activeTab === tab.id
-                  ? 'bg-cyan-500 text-slate-950'
-                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
+      {activeTab === 'dashboard' && (
+        <MissionControl
+          users={users}
+          revenue={revenue}
+          loads={loads}
+          supportTickets={supportTickets}
+          analytics={analytics}
+          offers={offers}
+          auditLogs={auditLogs}
+          featureFlags={featureFlags}
+          onQuickAction={handleQuickAction}
+        />
+      )}
 
         {activeTab === 'overview' && (
           <div className="mt-6 space-y-6">
@@ -932,9 +1014,15 @@ export function AdminControlPanel() {
           </div>
         )}
 
-      </section>
-    </main>
+    </AdminShell>
   );
+}
+
+function liveOfferCount(offers) {
+  const now = Date.now();
+  return (offers || []).filter((o) => o.enabled
+    && new Date(o.startsAt).getTime() <= now
+    && new Date(o.endsAt).getTime() > now).length;
 }
 
 function StatCard({ label, value }) {
