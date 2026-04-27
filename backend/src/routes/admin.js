@@ -28,6 +28,9 @@ import {
   hashToken,
   requireAjayAdmin,
 } from '../middleware/authorize.js';
+import SearchEvent from '../schemas/SearchEventSchema.js';
+import { invalidateSearchConfigCache } from './search.js';
+import { sanitiseSearchConfig, SEARCH_CONFIG_DEFAULTS } from '../services/searchService.js';
 import { invalidatePlatformStateCache } from '../middleware/platformControl.js';
 import { broadcast } from '../utils/socketBus.js';
 import { notify } from '../services/notifications.js';
@@ -768,6 +771,177 @@ router.get('/control/kill-switch', async (req, res) => {
   } catch (error) {
     console.error('Kill-switch fetch error:', error.message);
     return res.status(500).json({ error: 'Failed to fetch kill-switch state' });
+  }
+});
+
+// ── Universal-search admin controls ─────────────────────────────────────────
+//
+// All endpoints under /control/search/* read & write a single
+// `AdminControlState` doc with key 'search-control' (mirroring the kill-switch
+// pattern).  The public /search route picks up changes via a 30 s in-process
+// cache invalidated by `invalidateSearchConfigCache()` after every write.
+
+router.get('/control/search/config', async (_req, res) => {
+  try {
+    const item = await AdminControlState.findOne({ key: 'search-control' }).lean();
+    const value = sanitiseSearchConfig({ ...SEARCH_CONFIG_DEFAULTS, ...(item?.value || {}) });
+    return res.json({ value });
+  } catch (error) {
+    console.error('Search config fetch error:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch search config' });
+  }
+});
+
+router.put('/control/search/config', async (req, res) => {
+  try {
+    const value = sanitiseSearchConfig(req.body || {});
+    await AdminControlState.findOneAndUpdate(
+      { key: 'search-control' },
+      {
+        $set: {
+          value,
+          updatedBy: req.user.id,
+          updatedFromIp: getRequestIp(req),
+        },
+      },
+      { upsert: true, new: true }
+    );
+    invalidateSearchConfigCache();
+
+    await AuditLog.create({
+      userId: req.user.id,
+      userEmail: req.user.email,
+      userRole: req.user.role,
+      action: 'ADMIN_SEARCH_CONFIG_UPDATE',
+      resource: 'search-control',
+      ipAddress: getRequestIp(req),
+      userAgent: req.get('user-agent'),
+      method: req.method,
+      path: req.path,
+      statusCode: 200,
+      metadata: { value },
+    });
+
+    return res.json({ value });
+  } catch (error) {
+    console.error('Search config update error:', error.message);
+    return res.status(500).json({ error: 'Failed to update search config' });
+  }
+});
+
+// Pin / unpin an individual loadId in the sponsoredLoadIds list.  Kept as
+// dedicated endpoints so the admin UI can toggle without sending the entire
+// config blob (and so the audit log records the specific delta).
+router.post('/control/search/sponsored', [
+  body('loadId').isString().isLength({ min: 1, max: 64 }),
+], async (req, res) => {
+  if (!ensureValidRequest(req, res)) return;
+  try {
+    const item = await AdminControlState.findOne({ key: 'search-control' });
+    const current = sanitiseSearchConfig({ ...SEARCH_CONFIG_DEFAULTS, ...(item?.value || {}) });
+    const next = sanitiseSearchConfig({
+      ...current,
+      sponsoredLoadIds: Array.from(new Set([...(current.sponsoredLoadIds || []), req.body.loadId])),
+    });
+
+    await AdminControlState.findOneAndUpdate(
+      { key: 'search-control' },
+      { $set: { value: next, updatedBy: req.user.id, updatedFromIp: getRequestIp(req) } },
+      { upsert: true, new: true }
+    );
+    invalidateSearchConfigCache();
+
+    await AuditLog.create({
+      userId: req.user.id,
+      userEmail: req.user.email,
+      userRole: req.user.role,
+      action: 'ADMIN_SEARCH_SPONSOR_ADD',
+      resource: req.body.loadId,
+      ipAddress: getRequestIp(req),
+      userAgent: req.get('user-agent'),
+      method: req.method,
+      path: req.path,
+      statusCode: 200,
+    });
+
+    return res.status(201).json({ sponsoredLoadIds: next.sponsoredLoadIds });
+  } catch (error) {
+    console.error('Sponsor add error:', error.message);
+    return res.status(500).json({ error: 'Failed to pin sponsored load' });
+  }
+});
+
+router.delete('/control/search/sponsored/:loadId', async (req, res) => {
+  try {
+    const loadId = String(req.params.loadId || '').slice(0, 64);
+    const item = await AdminControlState.findOne({ key: 'search-control' });
+    const current = sanitiseSearchConfig({ ...SEARCH_CONFIG_DEFAULTS, ...(item?.value || {}) });
+    const next = sanitiseSearchConfig({
+      ...current,
+      sponsoredLoadIds: (current.sponsoredLoadIds || []).filter((id) => id !== loadId),
+    });
+    await AdminControlState.findOneAndUpdate(
+      { key: 'search-control' },
+      { $set: { value: next, updatedBy: req.user.id, updatedFromIp: getRequestIp(req) } },
+      { upsert: true, new: true }
+    );
+    invalidateSearchConfigCache();
+
+    await AuditLog.create({
+      userId: req.user.id,
+      userEmail: req.user.email,
+      userRole: req.user.role,
+      action: 'ADMIN_SEARCH_SPONSOR_REMOVE',
+      resource: loadId,
+      ipAddress: getRequestIp(req),
+      userAgent: req.get('user-agent'),
+      method: req.method,
+      path: req.path,
+      statusCode: 200,
+    });
+
+    return res.json({ sponsoredLoadIds: next.sponsoredLoadIds });
+  } catch (error) {
+    console.error('Sponsor remove error:', error.message);
+    return res.status(500).json({ error: 'Failed to unpin sponsored load' });
+  }
+});
+
+router.get('/control/search/trending', async (req, res) => {
+  const days = Math.min(30, Math.max(1, parseInt(String(req.query.days || '7'), 10) || 7));
+  const limit = Math.min(50, Math.max(1, parseInt(String(req.query.limit || '20'), 10) || 20));
+  try {
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const rows = await SearchEvent.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: since },
+          fromNormalised: { $ne: '' },
+          toNormalised: { $ne: '' },
+        },
+      },
+      {
+        $group: {
+          _id: { from: '$fromNormalised', to: '$toNormalised' },
+          count: { $sum: 1 },
+          lastAt: { $max: '$createdAt' },
+        },
+      },
+      { $sort: { count: -1, lastAt: -1 } },
+      { $limit: limit },
+    ]);
+    return res.json({
+      trending: rows.map((r) => ({
+        from: r._id.from,
+        to: r._id.to,
+        count: r.count,
+        lastAt: r.lastAt,
+      })),
+      windowDays: days,
+    });
+  } catch (error) {
+    console.error('Admin trending error:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch trending routes' });
   }
 });
 

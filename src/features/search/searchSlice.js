@@ -47,6 +47,81 @@ export const fetchSearchSuggestions = createAsyncThunk(
   }
 );
 
+export const fetchSavedSearches = createAsyncThunk(
+  'search/fetchSaved',
+  async (_arg, { rejectWithValue }) => {
+    try {
+      return await apiRequest('/search/saved');
+    } catch (err) {
+      return rejectWithValue(err.message);
+    }
+  }
+);
+
+export const createSavedSearch = createAsyncThunk(
+  'search/createSaved',
+  async ({ name, query, filters }, { rejectWithValue }) => {
+    try {
+      return await apiRequest('/search/saved', {
+        method: 'POST',
+        body: { name, query: query || '', filters: filters || {} },
+      });
+    } catch (err) {
+      return rejectWithValue(err.message);
+    }
+  }
+);
+
+export const deleteSavedSearch = createAsyncThunk(
+  'search/deleteSaved',
+  async (id, { rejectWithValue }) => {
+    try {
+      await apiRequest(`/search/saved/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      return { id };
+    } catch (err) {
+      return rejectWithValue(err.message);
+    }
+  }
+);
+
+export const fetchSearchHistory = createAsyncThunk(
+  'search/fetchHistory',
+  async (limit = 20, { rejectWithValue }) => {
+    try {
+      return await apiRequest(`/search/history?limit=${encodeURIComponent(limit)}`);
+    } catch (err) {
+      return rejectWithValue(err.message);
+    }
+  }
+);
+
+export const fetchTrending = createAsyncThunk(
+  'search/fetchTrending',
+  async (_arg, { rejectWithValue }) => {
+    try {
+      return await apiRequest('/search/trending');
+    } catch (err) {
+      return rejectWithValue(err.message);
+    }
+  }
+);
+
+export const recordSearchEvent = createAsyncThunk(
+  'search/recordEvent',
+  async ({ loadId, query }, { rejectWithValue }) => {
+    try {
+      await apiRequest('/search/event', {
+        method: 'POST',
+        body: { loadId, query: query || '' },
+      });
+      return { loadId };
+    } catch (err) {
+      // Best-effort; never surface as a user-facing error.
+      return rejectWithValue(err.message);
+    }
+  }
+);
+
 const initialState = {
   query: '',
   results: [],
@@ -56,6 +131,30 @@ const initialState = {
   suggestions: [],
   suggestionsStatus: 'idle',
   sort: 'latest',
+  filters: {
+    from: '',
+    to: '',
+    vehicle: '',
+    loadType: '',
+    minPrice: '',
+    maxPrice: '',
+    dateFrom: '',
+    dateTo: '',
+    distancePreference: '',
+  },
+  filtersEnabled: {
+    from: true, to: true, vehicle: true, loadType: true,
+    price: true, date: true, distancePreference: true,
+  },
+  filtersPanelOpen: false,
+  // Saved searches + history
+  saved: [],
+  savedStatus: 'idle',
+  history: [],
+  historyStatus: 'idle',
+  // Trending routes (Phase 3)
+  trending: [],
+  trendingStatus: 'idle',
 };
 
 const searchSlice = createSlice({
@@ -75,6 +174,17 @@ const searchSlice = createSlice({
       state.suggestions = [];
       state.suggestionsStatus = 'idle';
     },
+    filtersPanelToggled(state, action) {
+      state.filtersPanelOpen = typeof action.payload === 'boolean'
+        ? action.payload
+        : !state.filtersPanelOpen;
+    },
+    filtersChanged(state, action) {
+      state.filters = { ...state.filters, ...(action.payload || {}) };
+    },
+    filtersCleared(state) {
+      state.filters = { ...initialState.filters };
+    },
   },
   extraReducers: (builder) => {
     builder
@@ -86,6 +196,9 @@ const searchSlice = createSlice({
         state.status = 'succeeded';
         state.results = Array.isArray(action.payload?.results) ? action.payload.results : [];
         state.pagination = action.payload?.pagination || initialState.pagination;
+        if (action.payload?.filtersEnabled && typeof action.payload.filtersEnabled === 'object') {
+          state.filtersEnabled = { ...state.filtersEnabled, ...action.payload.filtersEnabled };
+        }
       })
       .addCase(fetchSearchResults.rejected, (state, action) => {
         state.status = 'failed';
@@ -103,7 +216,38 @@ const searchSlice = createSlice({
       .addCase(fetchSearchSuggestions.rejected, (state) => {
         state.suggestionsStatus = 'failed';
         state.suggestions = [];
-      });
+      })
+      // Saved searches
+      .addCase(fetchSavedSearches.pending, (state) => { state.savedStatus = 'loading'; })
+      .addCase(fetchSavedSearches.fulfilled, (state, action) => {
+        state.savedStatus = 'succeeded';
+        state.saved = Array.isArray(action.payload?.saved) ? action.payload.saved : [];
+      })
+      .addCase(fetchSavedSearches.rejected, (state) => { state.savedStatus = 'failed'; })
+      .addCase(createSavedSearch.fulfilled, (state, action) => {
+        const next = action.payload?.saved;
+        if (!next) return;
+        const idx = state.saved.findIndex((s) => s.id === next.id);
+        if (idx >= 0) state.saved[idx] = next;
+        else state.saved.unshift(next);
+      })
+      .addCase(deleteSavedSearch.fulfilled, (state, action) => {
+        state.saved = state.saved.filter((s) => s.id !== action.payload?.id);
+      })
+      // History
+      .addCase(fetchSearchHistory.pending, (state) => { state.historyStatus = 'loading'; })
+      .addCase(fetchSearchHistory.fulfilled, (state, action) => {
+        state.historyStatus = 'succeeded';
+        state.history = Array.isArray(action.payload?.history) ? action.payload.history : [];
+      })
+      .addCase(fetchSearchHistory.rejected, (state) => { state.historyStatus = 'failed'; })
+      // Trending
+      .addCase(fetchTrending.pending, (state) => { state.trendingStatus = 'loading'; })
+      .addCase(fetchTrending.fulfilled, (state, action) => {
+        state.trendingStatus = 'succeeded';
+        state.trending = Array.isArray(action.payload?.trending) ? action.payload.trending : [];
+      })
+      .addCase(fetchTrending.rejected, (state) => { state.trendingStatus = 'failed'; });
   },
 });
 
@@ -112,6 +256,9 @@ export const {
   searchSortChanged,
   searchReset,
   suggestionsCleared,
+  filtersPanelToggled,
+  filtersChanged,
+  filtersCleared,
 } = searchSlice.actions;
 
 export default searchSlice.reducer;

@@ -3,6 +3,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import { fetchSearchSuggestions, suggestionsCleared } from '../../features/search/searchSlice';
 import { SearchSuggestions } from './SearchSuggestions';
+import { VoiceSearchButton } from './VoiceSearchButton';
 
 const SUGGEST_DEBOUNCE_MS = 200;
 
@@ -172,6 +173,14 @@ export function GlobalSearchBar({ compact = false, autoFocus = false }) {
             ✕
           </button>
         )}
+        <VoiceSearchButton
+          onResult={(text) => {
+            setValue(text);
+            // Submit immediately on a successful voice transcript so the
+            // user lands on the results page without a second tap.
+            submit(text);
+          }}
+        />
         <button
           type="submit"
           className="rounded-full bg-white/15 px-4 py-1.5 text-xs font-semibold text-white transition hover:bg-white/25"

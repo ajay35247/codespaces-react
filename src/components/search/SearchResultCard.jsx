@@ -1,3 +1,16 @@
+const TAG_STYLES = {
+  urgent:        'bg-rose-500/20 text-rose-200 ring-rose-400/30',
+  'high-paying': 'bg-emerald-500/20 text-emerald-200 ring-emerald-400/30',
+  verified:      'bg-cyan-500/20 text-cyan-200 ring-cyan-400/30',
+  sponsored:     'bg-amber-500/20 text-amber-200 ring-amber-400/30',
+};
+const TAG_LABELS = {
+  urgent: 'Urgent',
+  'high-paying': 'High paying',
+  verified: 'KYC verified',
+  sponsored: 'Sponsored',
+};
+
 /**
  * Color-coded role badges used by the search result card to indicate who
  * posted the load.  Mirrors the role list in routes/AppRoutes.jsx.
@@ -108,6 +121,21 @@ export function SearchResultCard({ load, currentUserRole, onPlaceBid, onAcceptLo
           </div>
         )}
       </dl>
+
+      {Array.isArray(load.tags) && load.tags.length > 0 && (
+        <ul className="mb-3 flex flex-wrap gap-1.5" aria-label="Load tags">
+          {load.tags.map((t) => (
+            <li
+              key={t}
+              className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ring-1 ${
+                TAG_STYLES[t] || 'bg-slate-500/20 text-slate-200 ring-slate-400/30'
+              }`}
+            >
+              {TAG_LABELS[t] || t}
+            </li>
+          ))}
+        </ul>
+      )}
 
       <div className="mt-auto flex flex-wrap gap-2">
         {canBid && (
