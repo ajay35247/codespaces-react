@@ -39,9 +39,11 @@ function AppWrapper() {
   const user = useSelector((s) => s.auth.user);
   const ready = useSelector((s) => s.auth.ready);
 
-  const adminPanelPath = (import.meta.env.VITE_ADMIN_PANEL_PATH || '/ops-bridge-93a1');
-  const normalizedAdminPath = adminPanelPath.startsWith('/') ? adminPanelPath : `/${adminPanelPath}`;
-  const isAdminPanelRoute = location.pathname === normalizedAdminPath;
+  const adminPanelPath = import.meta.env.VITE_ADMIN_PANEL_PATH || null;
+  const normalizedAdminPath = adminPanelPath
+    ? (adminPanelPath.startsWith('/') ? adminPanelPath : `/${adminPanelPath}`)
+    : null;
+  const isAdminPanelRoute = normalizedAdminPath !== null && location.pathname === normalizedAdminPath;
 
   useEffect(() => {
     trackPageView(location.pathname);

@@ -4,7 +4,7 @@
 - [ ] Run `npm run test:security` in backend — Expect 50/50 tests passing
 - [ ] Run `npm run build` in root — Expect 0 errors, dist/ folder created
 - [ ] Run `npm run start` in backend — Expect server listening on port 5000, all routes loaded
-- [ ] Verify admin panel loads at `http://localhost:3000/ops-bridge-93a1`
+- [ ] Verify admin panel loads at `http://localhost:3000/<your-secret-admin-path>`
 - [ ] Verify public users cannot see admin role (not in register, login, dashboard)
 - [ ] Verify public `/api/auth/login` rejects admin username with 401 "Invalid credentials"
 
@@ -106,7 +106,7 @@ This prevents accidental admin account re-creation if env vars are accidentally 
 ```
 VITE_API_URL = https://your-backend.com/api
 VITE_ADMIN_PANEL_PATH = /ops-bridge-abc123def (secret path, keep different on each deployment)
-VITE_ADMIN_API_SEGMENT = _ops_console_f91b7c (must match backend)
+VITE_ADMIN_API_SEGMENT = <your-secret-segment> (must match backend)
 ```
 
 ### 2. Build & Deploy

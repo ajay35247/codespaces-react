@@ -11,8 +11,8 @@ Your logistics marketplace platform now has a **production-ready, completely hid
 
 ✅ **Complete Invisibility**
 - Admin role never appears in: login, register, role selection, dashboard, navigation, public APIs
-- Hidden admin route: `/api/_ops_console_f91b7c/**` (secret path segment via env var)
-- Hidden admin panel: `/ops-bridge-93a1` (secret URL via env var)
+- Hidden admin route: `/api/<your-secret-segment>/**` (secret path segment via env var)
+- Hidden admin panel: `/<your-secret-admin-path>` (secret URL via env var)
 - Only accessible via direct URL, no links in UI
 
 ✅ **Full Control Plane (CEO-Level)**
@@ -57,17 +57,17 @@ Your logistics marketplace platform now has a **production-ready, completely hid
 - AiDecisionLog — AI decision audit trail
 
 **NEW ROUTES:**
-- `/api/_ops_console_f91b7c/auth/login` — Admin MFA challenge
-- `/api/_ops_console_f91b7c/auth/login/mfa-verify` — MFA code verify
-- `/api/_ops_console_f91b7c/control/users/*` — User management
-- `/api/_ops_console_f91b7c/control/kill-switch` — Global pause controls
-- `/api/_ops_console_f91b7c/pricing/plans/*` — Subscription management
-- `/api/_ops_console_f91b7c/revenue/*` — Revenue and ledger
-- `/api/_ops_console_f91b7c/fraud/events` — Fraud tracking
-- `/api/_ops_console_f91b7c/automation/rules` — Rule engine
-- `/api/_ops_console_f91b7c/ai/decision-logs` — AI oversight
-- `/api/_ops_console_f91b7c/analytics/control-tower` — Dashboard
-- `/api/_ops_console_f91b7c/audit/actions` — Admin audit trail
+- `/api/<your-secret-segment>/auth/login` — Admin MFA challenge
+- `/api/<your-secret-segment>/auth/login/mfa-verify` — MFA code verify
+- `/api/<your-secret-segment>/control/users/*` — User management
+- `/api/<your-secret-segment>/control/kill-switch` — Global pause controls
+- `/api/<your-secret-segment>/pricing/plans/*` — Subscription management
+- `/api/<your-secret-segment>/revenue/*` — Revenue and ledger
+- `/api/<your-secret-segment>/fraud/events` — Fraud tracking
+- `/api/<your-secret-segment>/automation/rules` — Rule engine
+- `/api/<your-secret-segment>/ai/decision-logs` — AI oversight
+- `/api/<your-secret-segment>/analytics/control-tower` — Dashboard
+- `/api/<your-secret-segment>/audit/actions` — Admin audit trail
 
 **REMOVED FROM PUBLIC:**
 - Admin from role enum (register, login, dashboard)
@@ -123,8 +123,8 @@ cd backend && npm start
 npm run dev
 
 # 3. Access hidden admin panel
-# Frontend: http://localhost:3000/ops-bridge-93a1
-# Login with: ajay35247@gmail.com / Sharma@76210 (then MFA)
+# Frontend: http://localhost:3000/<your-secret-admin-path>
+# Login with: <your-admin-email@example.com> / <your-strong-admin-password> (then MFA)
 
 # 4. Verify security tests
 cd backend && npm run test:security
@@ -151,7 +151,7 @@ cd backend && npm run test:security
 
 3. **ADMIN IS INVISIBLE** — Normal users cannot discover admin role anywhere. Admin routes return 401-404 for non-admin access.
 
-4. **SECRET PATHS ARE SECRET** — Don't share `/ops-bridge-93a1` or `_ops_console_f91b7c` publicly. These should only go to authorized users.
+4. **SECRET PATHS ARE SECRET** — Don't share `/<your-secret-admin-path>` or `<your-secret-segment>` publicly. These should only go to authorized users.
 
 5. **BACKUP ADMIN CREDENTIALS** — Store ADMIN_EMAIL + ADMIN_BOOTSTRAP_PASSWORD in secure location (password manager, safe, etc.). If lost and password reset fails, you must delete admin user from MongoDB manually.
 

@@ -9,12 +9,12 @@ Set these environment variables to activate/configure the hidden admin system:
 
 ```bash
 # Admin identity (email must exist in ADMIN_EMAIL)
-export ADMIN_EMAIL="ajay35247@gmail.com"
-export ADMIN_BOOTSTRAP_PASSWORD="Sharma@76210"
+export ADMIN_EMAIL="<your-admin-email@example.com>"
+export ADMIN_BOOTSTRAP_PASSWORD="<your-strong-admin-password>"
 
 # Secret admin API path segment (SHA256 hashed as security through obscurity layer)
-# Default: "_ops_console_f91b7c"
-export ADMIN_PRIVATE_PATH_SEGMENT="_ops_console_f91b7c"
+# Default: "<your-secret-segment>"
+export ADMIN_PRIVATE_PATH_SEGMENT="<your-secret-segment>"
 
 # Optional: IP whitelisting for admin access
 # Comma-separated IPs: "192.168.1.10,10.0.0.5"
@@ -29,11 +29,11 @@ export JWT_REFRESH_SECRET="your-refresh-secret-key"
 Set these environment variables for the hidden admin panel URL:
 
 ```bash
-# Hidden admin panel route (default: /ops-bridge-93a1)
-export VITE_ADMIN_PANEL_PATH="/ops-bridge-93a1"
+# Hidden admin panel route (default: /<your-secret-admin-path>)
+export VITE_ADMIN_PANEL_PATH="/<your-secret-admin-path>"
 
 # Hidden admin API segment (must match backend ADMIN_PRIVATE_PATH_SEGMENT)
-export VITE_ADMIN_API_SEGMENT="_ops_console_f91b7c"
+export VITE_ADMIN_API_SEGMENT="<your-secret-segment>"
 
 export VITE_API_URL="http://localhost:5000"
 ```
@@ -54,7 +54,7 @@ export VITE_API_URL="http://localhost:5000"
 ## Hidden Admin Access Flow
 
 ### 1. Login to Hidden Admin Panel
-- Navigate to: `http://localhost:3000/{VITE_ADMIN_PANEL_PATH}` (e.g., `/ops-bridge-93a1`)
+- Navigate to: `http://localhost:3000/{VITE_ADMIN_PANEL_PATH}` (e.g., `/<your-secret-admin-path>`)
 - Not linked anywhere in the public UI
 - Enter admin email and password
 - Receive MFA code via email
@@ -361,7 +361,7 @@ npm start
 #    If multiple admin accounts detected, server crashes with error
 
 # 4. Access admin panel at hidden URL (never shared publicly)
-# Frontend: /ops-bridge-93a1
+# Frontend: /<your-secret-admin-path>
 # Backend: /api/{segment}/{endpoint}
 ```
 

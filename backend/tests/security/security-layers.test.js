@@ -22,6 +22,8 @@ import { sanitizeBody } from '../../src/middleware/auditLogger.js';
 
 process.env.JWT_SECRET = 'test-jwt-secret';
 process.env.JWT_REFRESH_SECRET = 'test-jwt-refresh-secret';
+process.env.ADMIN_EMAIL = 'ajay35247@gmail.com';
+process.env.ADMIN_BOOTSTRAP_PASSWORD = 'TestBootstrap@123!';
 
 const authorize = await import('../../src/middleware/authorize.js');
 const {
@@ -62,8 +64,8 @@ test('L1.1 normalizeEmail lowercases and trims', () => {
   assert.equal(normalizeEmail('  Ajay35247@GMAIL.COM  '), 'ajay35247@gmail.com');
 });
 
-test('L1.2 admin email is fixed to Ajay identity by default', () => {
-  assert.equal(getAdminEmail(), 'ajay35247@gmail.com');
+test('L1.2 admin email is read from ADMIN_EMAIL env var', () => {
+  assert.equal(getAdminEmail(), process.env.ADMIN_EMAIL.toLowerCase().trim());
 });
 
 test('L1.3 isAjayAdmin accepts Ajay admin role', () => {
@@ -123,7 +125,7 @@ test('L3.4 blocked checks are case-insensitive', () => {
 });
 
 test('L3.5 admin bootstrap password is configured', () => {
-  assert.equal(getAdminBootstrapPassword(), 'Sharma@76210');
+  assert.ok(getAdminBootstrapPassword().length > 0);
 });
 
 // Layer 4: Account lockout logic

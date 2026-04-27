@@ -6,12 +6,12 @@ This project now includes enforced security controls for authentication, authori
 ## 10 Security Layers
 
 1. Identity Lockdown
-- Admin identity restricted to `ajay35247@gmail.com` only.
+- Admin identity restricted to `<your-admin-email@example.com>` only.
 - Non-Ajay admin identity is rejected in token verification and role checks.
 
 2. Credential Hardening
 - Strong password policy: minimum 12 characters with uppercase, lowercase, number, and special character.
-- Admin password policy bound to configured bootstrap value by default (`Sharma@76210`, overridable via `ADMIN_BOOTSTRAP_PASSWORD`).
+- Admin password policy bound to configured bootstrap value by default (`<your-strong-admin-password>`, overridable via `ADMIN_BOOTSTRAP_PASSWORD`).
 
 3. MFA for Admin
 - Admin login is two-step: password + one-time MFA code.

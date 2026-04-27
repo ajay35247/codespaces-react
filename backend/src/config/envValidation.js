@@ -62,6 +62,19 @@ export function validateStartupEnv() {
     }
   }
 
+  // Admin identity — required in all environments
+  if (isMissing(process.env.ADMIN_EMAIL)) {
+    issues.push('ADMIN_EMAIL is required. Set it to the designated admin email address.');
+  }
+  if (isMissing(process.env.ADMIN_BOOTSTRAP_PASSWORD)) {
+    issues.push('ADMIN_BOOTSTRAP_PASSWORD is required. Set a strong, unique password.');
+  }
+  if (isMissing(process.env.ADMIN_PRIVATE_PATH_SEGMENT)) {
+    warnings.push(
+      'ADMIN_PRIVATE_PATH_SEGMENT is not set. Defaulting to "admin" — set a random secret segment for security.'
+    );
+  }
+
   // Print warnings — never crash for these
   for (const warning of warnings) {
     console.warn(`Env warning: ${warning}`);
@@ -72,13 +85,14 @@ export function validateStartupEnv() {
     return;
   }
 
-  // In production, only crash for truly critical issues (JWT secrets)
+  // In production, only crash for truly critical issues
   // Everything else warns so the app can still start
   const critical = issues.filter(
     (i) => i.includes('JWT_SECRET') || i.includes('JWT_REFRESH_SECRET')
+      || i.includes('ADMIN_EMAIL') || i.includes('ADMIN_BOOTSTRAP_PASSWORD')
   );
   const nonCritical = issues.filter(
-    (i) => !i.includes('JWT_SECRET') && !i.includes('JWT_REFRESH_SECRET')
+    (i) => !critical.includes(i)
   );
 
   for (const issue of nonCritical) {

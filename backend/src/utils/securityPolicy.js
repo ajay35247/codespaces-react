@@ -1,6 +1,3 @@
-const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'ajay35247@gmail.com').toLowerCase().trim();
-const ADMIN_BOOTSTRAP_PASSWORD = process.env.ADMIN_BOOTSTRAP_PASSWORD || 'Sharma@76210';
-
 const blockedEmails = new Set(
   (process.env.BLOCKED_ACCOUNT_EMAILS || 'guest@aptrucking.in,demo@aptrucking.in,admin@example.com')
     .split(',')
@@ -9,11 +6,11 @@ const blockedEmails = new Set(
 );
 
 export function getAdminEmail() {
-  return ADMIN_EMAIL;
+  return (process.env.ADMIN_EMAIL || '').toLowerCase().trim();
 }
 
 export function getAdminBootstrapPassword() {
-  return ADMIN_BOOTSTRAP_PASSWORD;
+  return process.env.ADMIN_BOOTSTRAP_PASSWORD || '';
 }
 
 export function normalizeEmail(email = '') {
@@ -25,7 +22,7 @@ export function isBlockedAccountEmail(email = '') {
 }
 
 export function isAjayAdmin(email = '', role = '') {
-  return normalizeEmail(email) === ADMIN_EMAIL && role === 'admin';
+  return normalizeEmail(email) === getAdminEmail() && role === 'admin';
 }
 
 export function getStrongPasswordErrors(password = '') {
