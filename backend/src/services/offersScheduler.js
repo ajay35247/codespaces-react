@@ -16,6 +16,9 @@ import { broadcast } from '../utils/socketBus.js';
  * nothing.
  */
 const CHECK_INTERVAL_MS = 60 * 1000;
+// Run the first scan shortly after startup so a freshly-restarted worker
+// catches up on offers that expired while it was down, without blocking boot.
+const INITIAL_DELAY_MS = 5000;
 
 let intervalHandle = null;
 
@@ -40,7 +43,7 @@ export function startOfferScheduler() {
   if (intervalHandle) return intervalHandle;
   // Run once shortly after startup so freshly-restarted workers catch up
   // on offers that expired while they were down.
-  setTimeout(expireDueOffers, 5000).unref();
+  setTimeout(expireDueOffers, INITIAL_DELAY_MS).unref();
   intervalHandle = setInterval(expireDueOffers, CHECK_INTERVAL_MS);
   intervalHandle.unref?.();
   return intervalHandle;

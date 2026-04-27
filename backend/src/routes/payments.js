@@ -250,9 +250,12 @@ router.post('/subscribe', verifyJWT, requirePaymentsEnabled(), flagFraud, valida
 
     // Best-effort usage-count bump. recordOfferUsage is atomic and skips the
     // increment if the cap is already reached (defence against TOCTOU between
-    // resolvePrice and the actual charge).
+    // resolvePrice and the actual charge). Log failures with context — a
+    // silent miss here would let usage drift past the cap unnoticed.
     if (resolved.appliedOffer?.id) {
-      recordOfferUsage(resolved.appliedOffer.id).catch(() => {});
+      recordOfferUsage(resolved.appliedOffer.id).catch((err) => {
+        console.warn('recordOfferUsage failed', { offerId: resolved.appliedOffer.id, userId: req.user.id, error: err.message });
+      });
     }
 
     return res.status(200).json({

@@ -10,6 +10,8 @@ import { MetricCard, PageHeader } from './AdminShell';
  * avoids waterfalls.
  */
 
+const EMPTY_REVENUE_BARS = Array.from({ length: 14 }, () => 0);
+
 function formatInr(n) {
   return `₹${Math.round(Number(n) || 0).toLocaleString('en-IN')}`;
 }
@@ -119,7 +121,7 @@ export function MissionControl({
           </div>
           <div className="mt-3 flex h-40 items-end gap-1">
             {/* Lightweight bar viz — real time-series chart lands in Phase 3 (Recharts) */}
-            {(analytics?.dailyRevenue || Array.from({ length: 14 }).map(() => 0)).slice(-14).map((v, i) => {
+            {(analytics?.dailyRevenue || EMPTY_REVENUE_BARS).slice(-14).map((v, i) => {
               const max = Math.max(...((analytics?.dailyRevenue || [1])), 1);
               const h = `${Math.max(4, Math.round((v / max) * 100))}%`;
               return (

@@ -434,11 +434,16 @@ export function AdminControlPanel() {
     { id: 'audit',     label: 'Audit Log',     icon: '⊡' },
   ];
 
-  // Default landing tab is the new mission-control dashboard.
+  // Default landing tab is the new mission-control dashboard. Use a ref-style
+  // flag (init via useState) so this only runs once per mount; otherwise an
+  // admin navigating back to "overview" would be bounced to "dashboard" again.
+  const [didDefaultDashboard, setDidDefaultDashboard] = useState(false);
   useEffect(() => {
-    if (activeTab === 'overview' && admin) setActiveTab('dashboard');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [admin]);
+    if (!didDefaultDashboard && admin && activeTab === 'overview') {
+      setActiveTab('dashboard');
+      setDidDefaultDashboard(true);
+    }
+  }, [admin, activeTab, didDefaultDashboard]);
 
   const handleQuickAction = useCallback(async (action) => {
     if (action === 'stop-all') {
