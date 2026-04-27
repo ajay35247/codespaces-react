@@ -4,11 +4,19 @@ import './index.css';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
 import ErrorBoundary from './components/ErrorBoundary';
+import { initErrorReporter, addBreadcrumb } from './services/errorReporter';
+import { initNetworkGuard } from './services/networkGuard';
+
+// Boot global error capture before React mounts so even initial render
+// failures are reported.
+initErrorReporter();
+initNetworkGuard();
+addBreadcrumb('app.boot', { ts: Date.now() });
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
   <React.StrictMode>
-    <ErrorBoundary>
+    <ErrorBoundary scope="root">
       <App />
     </ErrorBoundary>
   </React.StrictMode>
