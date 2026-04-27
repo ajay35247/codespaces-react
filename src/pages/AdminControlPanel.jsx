@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { buildApiUrl, getApiErrorMessage, parseApiBody } from '../utils/api';
 import { AdminShell } from '../components/admin/AdminShell';
 import { MissionControl } from '../components/admin/MissionControl';
+import { CommandPalette, useCommandPaletteShortcut } from '../components/admin/CommandPalette';
 
 const ADMIN_API_SEGMENT = import.meta.env.VITE_ADMIN_API_SEGMENT || import.meta.env.VITE_ADMIN_PRIVATE_PATH_SEGMENT || '';
 
@@ -94,6 +95,10 @@ export function AdminControlPanel() {
   const [featureFlags, setFeatureFlags] = useState(DEFAULT_FLAGS);
   const [activeTab, setActiveTab] = useState('overview');
   const [userAction, setUserAction] = useState({});
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
+  // Global ⌘K / Ctrl+K / "/" shortcut for the command palette.
+  useCommandPaletteShortcut(useCallback(() => setPaletteOpen(true), []));
 
   const authenticated = useMemo(() => Boolean(admin), [admin]);
 
@@ -459,18 +464,43 @@ export function AdminControlPanel() {
     }
   }, [featureFlags]);
 
+  // Palette callbacks. Kept separate from `handleQuickAction` because the
+  // palette needs to await stop-all-offers (so it can show "Working…" and
+  // close on success) and seed the offer composer when the operator typed a
+  // discount percent like "50".
+  const handlePaletteStopAllOffers = useCallback(async () => {
+    const next = { ...featureFlags, offersPaused: true };
+    try {
+      await api('/control/kill-switch', 'POST', next);
+      setFeatureFlags(next);
+    } catch (err) { setError(err.message); }
+  }, [featureFlags]);
+
+  const handlePaletteStartSale = useCallback((percent) => {
+    if (percent != null) {
+      setOfferForm((prev) => ({ ...prev, discountPercent: percent }));
+    }
+    setActiveTab('offers');
+  }, []);
+
   const topBar = ({ isDark }) => (
     <>
-      <input
-        type="search"
-        placeholder="Search users, offers, payments…"
-        className={`hidden md:block w-72 rounded-lg border px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-400 ${
-          isDark ? 'bg-slate-900 border-white/10 text-slate-100 placeholder-slate-500' : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'
+      <button
+        type="button"
+        onClick={() => setPaletteOpen(true)}
+        aria-label="Open command palette (Ctrl+K)"
+        className={`hidden md:flex w-72 items-center gap-2 rounded-lg border px-3 py-1.5 text-left text-sm transition-colors ${
+          isDark
+            ? 'bg-slate-900 border-white/10 text-slate-400 hover:border-cyan-400/50 hover:text-slate-200'
+            : 'bg-white border-slate-200 text-slate-500 hover:border-cyan-400 hover:text-slate-700'
         }`}
-        aria-label="Global search (visual only — Phase 9)"
-        disabled
-        title="Global search lands in Phase 9"
-      />
+      >
+        <span aria-hidden className="text-base leading-none opacity-70">⌕</span>
+        <span className="flex-1 truncate">Search or run a command…</span>
+        <kbd className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${isDark ? 'bg-slate-800 text-slate-400' : 'bg-slate-100 text-slate-500'}`}>
+          Ctrl K
+        </kbd>
+      </button>
       <span className={`hidden lg:inline text-xs px-2 py-1 rounded ${isDark ? 'bg-slate-800 text-slate-400' : 'bg-slate-100 text-slate-500'}`}>
         {admin?.email}
       </span>
@@ -530,6 +560,7 @@ export function AdminControlPanel() {
   );
 
   return (
+    <>
     <AdminShell
       nav={TABS.map((t) => ({ key: t.id, label: t.label, icon: t.icon }))}
       activeKey={activeTab}
@@ -1020,6 +1051,22 @@ export function AdminControlPanel() {
         )}
 
     </AdminShell>
+    <CommandPalette
+      open={paletteOpen}
+      onClose={() => setPaletteOpen(false)}
+      // Mirror the theme key AdminShell persists so the palette matches even
+      // before the user toggles theme this session.
+      isDark={(typeof window !== 'undefined' ? window.localStorage.getItem('admin.shell.theme') : 'dark') !== 'light'}
+      nav={TABS.map((t) => ({ key: t.id, label: t.label, icon: t.icon }))}
+      users={users}
+      offers={offers}
+      plans={pricingPlans}
+      auditLogs={auditLogs}
+      onNavigate={setActiveTab}
+      onStopAllOffers={handlePaletteStopAllOffers}
+      onStartSale={handlePaletteStartSale}
+    />
+    </>
   );
 }
 
