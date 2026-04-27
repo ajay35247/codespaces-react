@@ -4,6 +4,7 @@ import { logoutUser } from '../features/auth/authSlice';
 import { notificationsReset } from '../features/notifications/notificationsSlice';
 import { closeSharedSocket } from '../hooks/useSocket';
 import { NotificationBell } from './NotificationBell';
+import { GlobalSearchBar } from './search/GlobalSearchBar';
 import { useTheme } from './ThemeProvider';
 
 const navItems = [
@@ -48,8 +49,12 @@ export function PrimaryNav() {
       ];
 
   return (
-    <nav className="mx-auto flex max-w-7xl flex-wrap items-center justify-center gap-3 px-6 py-4 sm:px-10">
-      {navItems.map((item) => (
+    <nav className="mx-auto flex max-w-7xl flex-col items-stretch gap-3 px-6 py-4 sm:px-10">
+      <div className="flex w-full justify-center">
+        <GlobalSearchBar />
+      </div>
+      <div className="flex flex-wrap items-center justify-center gap-3">
+        {navItems.map((item) => (
         <NavLink
           key={item.to}
           to={item.to}
@@ -96,6 +101,7 @@ export function PrimaryNav() {
         {theme === 'dark' ? '☀️' : '🌙'}
       </button>
       {user?.id && <NotificationBell />}
+      </div>
     </nav>
   );
 }

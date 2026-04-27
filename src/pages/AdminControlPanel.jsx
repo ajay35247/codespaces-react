@@ -3,6 +3,7 @@ import { buildApiUrl, getApiErrorMessage, parseApiBody } from '../utils/api';
 import { AdminShell } from '../components/admin/AdminShell';
 import { MissionControl } from '../components/admin/MissionControl';
 import { CommandPalette, useCommandPaletteShortcut } from '../components/admin/CommandPalette';
+import { AdminSearchPanel } from '../components/admin/AdminSearchPanel';
 
 const ADMIN_API_SEGMENT = import.meta.env.VITE_ADMIN_API_SEGMENT || import.meta.env.VITE_ADMIN_PRIVATE_PATH_SEGMENT || '';
 
@@ -436,6 +437,7 @@ export function AdminControlPanel() {
     { id: 'gst',       label: 'GST Invoices',  icon: '⊜' },
     { id: 'analytics', label: 'Analytics',     icon: '⊿' },
     { id: 'flags',     label: 'Feature Flags', icon: '⚑' },
+    { id: 'search',    label: 'Search',        icon: '⌕' },
     { id: 'audit',     label: 'Audit Log',     icon: '⊡' },
   ];
 
@@ -1025,6 +1027,8 @@ export function AdminControlPanel() {
             </div>
           </div>
         )}
+
+        {activeTab === 'search' && <AdminSearchPanel />}
 
         {activeTab === 'audit' && (
           <div className="mt-6">

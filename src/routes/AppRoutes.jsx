@@ -24,6 +24,7 @@ import { TruckOwnerDashboard } from '../pages/TruckOwnerDashboard';
 import { TollDashboard } from '../pages/TollDashboard';
 import { Kyc } from '../pages/Kyc';
 import { UserProfilePanel } from '../pages/UserProfilePanel';
+import { SearchResults } from '../pages/SearchResults';
 import { ProtectedRoute } from '../components/ProtectedRoute';
 
 const ADMIN_PANEL_PATH = (import.meta.env.VITE_ADMIN_PANEL_PATH || '').replace(/^\//, '') || null;
@@ -98,6 +99,7 @@ export function AppRoutes() {
         </ProtectedRoute>
       } />
       <Route path="/contact" element={<Contact />} />
+      <Route path="/search" element={<SearchResults />} />
       <Route path="/privacy" element={<PrivacyPolicy />} />
       <Route path="/terms" element={<Terms />} />
       <Route path="/faq" element={<FAQ />} />

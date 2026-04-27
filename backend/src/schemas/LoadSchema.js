@@ -142,4 +142,56 @@ const LoadSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
 });
 
+// Text index used by the universal search endpoint.  Weights bias ranking
+// toward exact load IDs and route endpoints, while still allowing matches
+// inside truckType / weight.  Diacritic-insensitive at query time via the
+// `$diacriticSensitive: false` option on $text.
+LoadSchema.index(
+  {
+    loadId: 'text',
+    origin: 'text',
+    destination: 'text',
+    truckType: 'text',
+    weight: 'text',
+  },
+  {
+    name: 'load_universal_text_idx',
+    weights: {
+      loadId: 20,
+      origin: 10,
+      destination: 10,
+      truckType: 4,
+      weight: 1,
+    },
+  }
+);
+
+// Common filter combinations used by /search route — keep aligned with
+// the field set surfaced in the UI filter panel.
+LoadSchema.index({ status: 1, createdAt: -1 });
+LoadSchema.index({ origin: 1, destination: 1 });
+
+// Real-time `search:invalidate` broadcast — every Load save (create / status
+// change / new bid pushed via $push + save) is a signal that the
+// marketplace has shifted, so any open `/search` tab should refetch.  The
+// broadcast is best-effort and silently no-ops when socket.io isn't
+// wired (e.g. during tests that import the schema in isolation).
+LoadSchema.post('save', function emitSearchInvalidate(doc) {
+  // Lazy require to avoid a hard dependency cycle between schemas/* and
+  // utils/socketBus during module bootstrap.
+  import('../utils/socketBus.js')
+    .then(({ broadcast }) => {
+      try {
+        broadcast('search:invalidate', {
+          loadId: doc?.loadId || null,
+          status: doc?.status || null,
+          at: Date.now(),
+        });
+      } catch {
+        /* never let a broadcast failure bubble up from a save */
+      }
+    })
+    .catch(() => { /* socket bus unavailable — skip silently */ });
+});
+
 export default mongoose.model('Load', LoadSchema);
