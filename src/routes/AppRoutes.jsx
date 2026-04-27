@@ -26,7 +26,7 @@ import { Kyc } from '../pages/Kyc';
 import { UserProfilePanel } from '../pages/UserProfilePanel';
 import { ProtectedRoute } from '../components/ProtectedRoute';
 
-const ADMIN_PANEL_PATH = (import.meta.env.VITE_ADMIN_PANEL_PATH || '').replace(/^\//, '');
+const ADMIN_PANEL_PATH = (import.meta.env.VITE_ADMIN_PANEL_PATH || '').replace(/^\//, '') || null;
 
 export function AppRoutes() {
   return (
@@ -117,7 +117,9 @@ export function AppRoutes() {
           </ProtectedRoute>
         }
       />
-      <Route path={`/${ADMIN_PANEL_PATH}`} element={<AdminControlPanel />} />
+      {ADMIN_PANEL_PATH !== null && (
+        <Route path={`/${ADMIN_PANEL_PATH}`} element={<AdminControlPanel />} />
+      )}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
