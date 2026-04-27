@@ -54,10 +54,11 @@ export function globalErrorHandler(err, req, res, _next) { // eslint-disable-lin
     clientMessage = 'Internal server error';
   } else if (err.expose === true) {
     clientMessage = err.message || 'Request failed';
-  } else if (err.message && /^[\w .,'":!?@/-]{0,200}$/.test(err.message)) {
-    // Allowlist-style: only forward short, ASCII-printable messages with no
-    // line breaks or unusual chars — defeats common library messages that
-    // embed schema/path info.
+  } else if (err.message && /^[\w .,'"!?/-]{0,200}$/.test(err.message)) {
+    // Allowlist-style: only forward short, ASCII messages with no line breaks,
+    // no `@` (emails), and no `:` (often appears in mongoose validation
+    // messages like `Cast to ObjectId failed for value "x" at path "y"`).
+    // This defeats common library messages that embed schema/PII info.
     clientMessage = err.message;
   } else {
     clientMessage = 'Request failed';

@@ -66,6 +66,8 @@ async function applyAction(rule, errorEvent) {
       const timeout = setTimeout(() => controller.abort(), 5000);
       try {
         const res = await fetch(url, { method: 'POST', signal: controller.signal });
+        // Consume body so undici can release/reuse the connection.
+        await res.text().catch(() => {});
         if (!res.ok) {
           return { applied: false, reason: `webhook responded ${res.status}` };
         }
