@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useSelector } from 'react-redux';
 import { SmartNav } from './SmartNav';
 import { LiveActivityRail } from './LiveActivityRail';
+import { GlobalSearchBar } from './search/GlobalSearchBar';
 
 /**
  * DashboardShell – Unified 3-column layout for all authenticated dashboard views.
@@ -111,6 +112,11 @@ export function DashboardShell({ children, hideLiveRail = false }) {
               </svg>
             </button>
           )}
+        </div>
+
+        {/* Sticky universal search bar — visible on every authenticated page. */}
+        <div className="sticky top-0 z-30 flex justify-center border-b border-white/5 bg-slate-950/85 px-4 py-3 backdrop-blur-md">
+          <GlobalSearchBar compact />
         </div>
 
         {/* Page content – independently scrollable */}

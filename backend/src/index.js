@@ -46,6 +46,7 @@ import notificationsRoutes from './routes/notifications.js';
 import fleetRoutes from './routes/fleet.js';
 import profileRoutes from './routes/profile.js';
 import chatRoutes from './routes/chat.js';
+import searchRoutes from './routes/search.js';
 import { setIo } from './utils/socketBus.js';
 import { startOfferScheduler } from './services/offersScheduler.js';
 
@@ -297,6 +298,10 @@ const createApp = async () => {
   app.use('/api/fleet', requireNotMaintenance(), fleetRoutes);
   app.use('/api/profile', requireNotMaintenance(), profileRoutes);
   app.use('/api/chat', requireNotMaintenance(), chatRoutes);
+  // Universal search panel — read-only endpoints exposed to all visitors.
+  // Role-aware filtering inside the route ensures unauthenticated callers
+  // only see the open marketplace (status: posted) loads.
+  app.use('/api/search', searchRoutes);
 
   app.use((req, res) => {
     res.status(404).json({ error: 'API endpoint not found' });
