@@ -59,6 +59,28 @@ const DEFAULT_FLAGS = Object.fromEntries(FEATURE_FLAGS.map(({ key }) => [key, fa
 
 const USERS_FETCH_LIMIT = 100;
 
+// Mirrors BILLING_CYCLES in backend/src/schemas/SubscriptionPlanSchema.js — keep
+// in sync if the backend list changes. The order here is the order rendered in
+// the pricing editor.
+const BILLING_CYCLES = [
+  { key: 'daily',      label: 'Daily' },
+  { key: 'weekly',     label: 'Weekly' },
+  { key: 'fifteenDay', label: '15-day' },
+  { key: 'monthly',    label: 'Monthly' },
+  { key: 'quarterly',  label: 'Quarterly' },
+  { key: 'halfYearly', label: 'Half-yearly' },
+  { key: 'yearly',     label: 'Yearly' },
+];
+
+const EMPTY_PRICING = BILLING_CYCLES.reduce((acc, c) => { acc[c.key] = ''; return acc; }, {});
+
+const EMPTY_PLAN_FORM = {
+  name: '', code: '', description: '',
+  pricing: { ...EMPTY_PRICING },
+  trialDays: 0, taxPercent: 0, platformFeePercent: 0,
+  active: true,
+};
+
 function updateItemById(setter, id, updates) {
   setter((prev) => prev.map((item) => item._id === id ? { ...item, ...updates } : item));
 }
@@ -93,6 +115,14 @@ export function AdminControlPanel() {
     startsAt: '', endsAt: '', appliesToPlanCodes: '', couponCode: '', usageLimit: '',
   });
   const [offerSaving, setOfferSaving] = useState(false);
+  const [pricingForm, setPricingForm] = useState(EMPTY_PLAN_FORM);
+  const [pricingCreating, setPricingCreating] = useState(false);
+  // Per-plan editable draft, keyed by plan._id. Populated lazily when an admin
+  // opens a plan's editor so the rendered values reflect server state until
+  // explicit edits are made.
+  const [pricingDrafts, setPricingDrafts] = useState({});
+  const [pricingSavingId, setPricingSavingId] = useState(null);
+  const [pricingRollbackTarget, setPricingRollbackTarget] = useState({});
   const [featureFlags, setFeatureFlags] = useState(DEFAULT_FLAGS);
   const [activeTab, setActiveTab] = useState('overview');
   const [userAction, setUserAction] = useState({});
@@ -473,11 +503,167 @@ export function AdminControlPanel() {
     }
   };
 
+  // ──────────────────────────────────────────────────────────────────────
+  // Pricing plan management
+  // Returns a draft for the given plan, falling back to the server snapshot.
+  // The draft mirrors the PATCH /pricing/plans/:id payload shape: a `pricing`
+  // object keyed by billing cycle plus plan-level fields.
+  const getPricingDraft = (plan) => {
+    if (pricingDrafts[plan._id]) return pricingDrafts[plan._id];
+    const pricing = { ...EMPTY_PRICING };
+    for (const c of BILLING_CYCLES) {
+      const v = plan.pricing?.[c.key];
+      pricing[c.key] = (v === undefined || v === null) ? '' : String(v);
+    }
+    return {
+      pricing,
+      trialDays: plan.trialDays ?? 0,
+      taxPercent: plan.taxPercent ?? 0,
+      platformFeePercent: plan.platformFeePercent ?? 0,
+      scheduleAt: '',
+      applyOnRenewalOnly: plan.nextRenewalPriceOnly !== false,
+    };
+  };
+
+  const updatePricingDraft = (plan, patch) => {
+    setPricingDrafts((prev) => ({
+      ...prev,
+      [plan._id]: { ...getPricingDraft(plan), ...patch },
+    }));
+  };
+
+  const updatePricingDraftCycle = (plan, cycle, value) => {
+    const draft = getPricingDraft(plan);
+    setPricingDrafts((prev) => ({
+      ...prev,
+      [plan._id]: { ...draft, pricing: { ...draft.pricing, [cycle]: value } },
+    }));
+  };
+
+  // Build the `pricing` payload from a draft. Empty strings drop the cycle
+  // from the plan (matches sanitisePricingPayload on the server).
+  const buildPricingPayload = (draftPricing) => {
+    const payload = {};
+    for (const c of BILLING_CYCLES) {
+      const v = draftPricing[c.key];
+      if (v === '' || v === null || v === undefined) continue;
+      const num = Number(v);
+      if (!Number.isFinite(num)) {
+        throw new Error(`pricing.${c.key} must be a number`);
+      }
+      payload[c.key] = num;
+    }
+    return payload;
+  };
+
+  const handlePricingCreate = async (e) => {
+    e.preventDefault();
+    setPricingCreating(true);
+    setError('');
+    try {
+      const pricingPayload = buildPricingPayload(pricingForm.pricing);
+      if (Object.keys(pricingPayload).length === 0) {
+        throw new Error('At least one billing cycle price is required');
+      }
+      const payload = {
+        name: pricingForm.name.trim(),
+        code: pricingForm.code.trim(),
+        description: pricingForm.description.trim(),
+        pricing: pricingPayload,
+        trialDays: Number(pricingForm.trialDays) || 0,
+        taxPercent: Number(pricingForm.taxPercent) || 0,
+        platformFeePercent: Number(pricingForm.platformFeePercent) || 0,
+        active: !!pricingForm.active,
+      };
+      const res = await api('/pricing/plans', 'POST', payload);
+      setPricingPlans((prev) => [res.plan, ...prev]);
+      setPricingForm(EMPTY_PLAN_FORM);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setPricingCreating(false);
+    }
+  };
+
+  const handlePricingSave = async (plan, { schedule } = { schedule: false }) => {
+    setPricingSavingId(plan._id);
+    setError('');
+    try {
+      const draft = getPricingDraft(plan);
+      const pricingPayload = buildPricingPayload(draft.pricing);
+      if (Object.keys(pricingPayload).length === 0) {
+        throw new Error('At least one billing cycle price is required');
+      }
+      const payload = {
+        pricing: pricingPayload,
+        applyOnRenewalOnly: !!draft.applyOnRenewalOnly,
+        trialDays: Number(draft.trialDays) || 0,
+        taxPercent: Number(draft.taxPercent) || 0,
+        platformFeePercent: Number(draft.platformFeePercent) || 0,
+      };
+      if (schedule) {
+        if (!draft.scheduleAt) throw new Error('Pick a date/time to schedule the change');
+        const scheduledAt = new Date(draft.scheduleAt);
+        if (Number.isNaN(scheduledAt.getTime())) throw new Error('Invalid scheduled date/time');
+        if (scheduledAt.getTime() <= Date.now()) throw new Error('Scheduled time must be in the future');
+        payload.scheduleAt = scheduledAt.toISOString();
+      }
+      const res = await api(`/pricing/plans/${plan._id}`, 'PATCH', payload);
+      updateItemById(setPricingPlans, plan._id, res.plan);
+      // Drop the draft so the UI re-syncs from the server response.
+      setPricingDrafts((prev) => {
+        const next = { ...prev };
+        delete next[plan._id];
+        return next;
+      });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setPricingSavingId(null);
+    }
+  };
+
+  // Plan-level toggle for the `active` flag. Bypasses the draft so admins can
+  // flip it inline without first opening the editor.
+  const handlePricingToggleActive = async (plan) => {
+    setPricingSavingId(plan._id);
+    setError('');
+    try {
+      const res = await api(`/pricing/plans/${plan._id}`, 'PATCH', { active: !plan.active });
+      updateItemById(setPricingPlans, plan._id, res.plan);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setPricingSavingId(null);
+    }
+  };
+
+  const handlePricingRollback = async (plan) => {
+    const target = Number(pricingRollbackTarget[plan._id]);
+    if (!Number.isInteger(target) || target < 1 || target >= plan.pricingVersion) {
+      setError('Pick a target version older than the current version');
+      return;
+    }
+    if (!window.confirm(`Roll back "${plan.name}" pricing to version ${target}? This creates a new version reverting to the prices in effect at v${target}.`)) return;
+    setPricingSavingId(plan._id);
+    setError('');
+    try {
+      const res = await api(`/pricing/plans/${plan._id}/rollback`, 'POST', { targetVersion: target });
+      updateItemById(setPricingPlans, plan._id, res.plan);
+      setPricingRollbackTarget((prev) => ({ ...prev, [plan._id]: '' }));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setPricingSavingId(null);
+    }
+  };
+
   const TABS = [
     { id: 'dashboard', label: 'Dashboard',     icon: '◉' },
     { id: 'overview',  label: 'Overview',      icon: '▦' },
     { id: 'users',     label: 'Users',         icon: '◌' },
     { id: 'payments',  label: 'Payments',      icon: '₹' },
+    { id: 'pricing',   label: 'Pricing',       icon: '⊞' },
     { id: 'offers',    label: 'Offers',        icon: '✦' },
     { id: 'loads',     label: 'Loads',         icon: '⊟' },
     { id: 'support',   label: 'Support',       icon: '◇' },
@@ -896,6 +1082,219 @@ export function AdminControlPanel() {
                 </div>
               </>
             )}
+          </div>
+        )}
+
+        {activeTab === 'pricing' && (
+          <div className="mt-6 space-y-6">
+            <form onSubmit={handlePricingCreate} className="rounded-2xl border border-white/10 bg-slate-900/60 p-5">
+              <h3 className="text-base font-semibold">Create Pricing Plan</h3>
+              <p className="mt-1 text-xs text-slate-400">
+                Set a price for any subset of billing cycles. Cycles left blank are not offered to subscribers. Prices are stored as INR (0 – 15000).
+              </p>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <label className="text-xs">Name
+                  <input required maxLength={120} value={pricingForm.name}
+                    onChange={(e) => setPricingForm((p) => ({ ...p, name: e.target.value }))}
+                    className="mt-1 w-full rounded-lg bg-slate-950 px-3 py-2 text-sm" placeholder="Growth" />
+                </label>
+                <label className="text-xs">Code
+                  <input required maxLength={50} value={pricingForm.code}
+                    onChange={(e) => setPricingForm((p) => ({ ...p, code: e.target.value }))}
+                    className="mt-1 w-full rounded-lg bg-slate-950 px-3 py-2 text-sm" placeholder="growth" />
+                </label>
+                <label className="text-xs sm:col-span-2 lg:col-span-1">Description
+                  <input maxLength={240} value={pricingForm.description}
+                    onChange={(e) => setPricingForm((p) => ({ ...p, description: e.target.value }))}
+                    className="mt-1 w-full rounded-lg bg-slate-950 px-3 py-2 text-sm" placeholder="Best for growing fleets" />
+                </label>
+                {BILLING_CYCLES.map((c) => (
+                  <label key={c.key} className="text-xs">{c.label} (₹)
+                    <input type="number" min={0} max={15000} step="0.01" value={pricingForm.pricing[c.key]}
+                      onChange={(e) => setPricingForm((p) => ({ ...p, pricing: { ...p.pricing, [c.key]: e.target.value } }))}
+                      className="mt-1 w-full rounded-lg bg-slate-950 px-3 py-2 text-sm" placeholder="—" />
+                  </label>
+                ))}
+                <label className="text-xs">Trial days
+                  <input type="number" min={0} max={365} value={pricingForm.trialDays}
+                    onChange={(e) => setPricingForm((p) => ({ ...p, trialDays: e.target.value }))}
+                    className="mt-1 w-full rounded-lg bg-slate-950 px-3 py-2 text-sm" />
+                </label>
+                <label className="text-xs">Tax %
+                  <input type="number" min={0} max={100} step="0.01" value={pricingForm.taxPercent}
+                    onChange={(e) => setPricingForm((p) => ({ ...p, taxPercent: e.target.value }))}
+                    className="mt-1 w-full rounded-lg bg-slate-950 px-3 py-2 text-sm" />
+                </label>
+                <label className="text-xs">Platform fee %
+                  <input type="number" min={0} max={100} step="0.01" value={pricingForm.platformFeePercent}
+                    onChange={(e) => setPricingForm((p) => ({ ...p, platformFeePercent: e.target.value }))}
+                    className="mt-1 w-full rounded-lg bg-slate-950 px-3 py-2 text-sm" />
+                </label>
+                <label className="text-xs flex items-center gap-2 mt-5">
+                  <input type="checkbox" checked={pricingForm.active}
+                    onChange={(e) => setPricingForm((p) => ({ ...p, active: e.target.checked }))} />
+                  Active on launch
+                </label>
+              </div>
+              <div className="mt-4 flex items-center gap-3">
+                <button disabled={pricingCreating} className="rounded-xl bg-amber-400 px-5 py-2 text-sm font-semibold text-slate-900 disabled:opacity-50">
+                  {pricingCreating ? 'Creating…' : 'Create Plan'}
+                </button>
+                <p className="text-xs text-slate-400">All pricing mutations are audit-logged.</p>
+              </div>
+            </form>
+
+            <div>
+              <h3 className="text-base font-semibold">Plans ({pricingPlans.length})</h3>
+              {pricingPlans.length === 0 && (
+                <p className="mt-3 text-sm text-slate-500">No pricing plans yet. Create one above.</p>
+              )}
+              <div className="mt-3 space-y-4">
+                {pricingPlans.map((plan) => {
+                  const draft = getPricingDraft(plan);
+                  const saving = pricingSavingId === plan._id;
+                  const pending = plan.pendingPriceChange && plan.pendingPriceChange.effectiveFrom
+                    ? plan.pendingPriceChange : null;
+                  const history = Array.isArray(plan.priceHistory) ? plan.priceHistory : [];
+                  const trackedVersions = Array.from(new Set(
+                    history
+                      .map((h) => h.pricingVersionAtChange)
+                      .filter((v) => Number.isInteger(v) && v < plan.pricingVersion)
+                  )).sort((a, b) => b - a);
+
+                  return (
+                    <div key={plan._id} className="rounded-2xl border border-white/10 bg-slate-900/60 p-5">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h4 className="text-base font-semibold">{plan.name}</h4>
+                            <code className="rounded bg-slate-800 px-2 py-0.5 text-xs text-slate-300">{plan.code}</code>
+                            <span className={`rounded px-2 py-0.5 text-xs ${plan.active ? 'bg-emerald-700/40 text-emerald-200' : 'bg-slate-700 text-slate-400'}`}>
+                              {plan.active ? 'active' : 'inactive'}
+                            </span>
+                            <span className="rounded bg-slate-800 px-2 py-0.5 font-mono text-xs text-slate-400">v{plan.pricingVersion}</span>
+                          </div>
+                          {plan.description && <p className="mt-1 text-xs text-slate-400">{plan.description}</p>}
+                        </div>
+                        <button onClick={() => handlePricingToggleActive(plan)} disabled={saving}
+                          className="rounded bg-slate-700 px-3 py-1 text-xs disabled:opacity-50">
+                          {plan.active ? 'Deactivate' : 'Activate'}
+                        </button>
+                      </div>
+
+                      {pending && (
+                        <div className="mt-3 rounded-lg border border-sky-500/40 bg-sky-600/10 px-3 py-2 text-xs text-sky-200">
+                          Pending price change effective {new Date(pending.effectiveFrom).toLocaleString()}
+                          {pending.applyOnRenewalOnly ? ' — applies on renewal only' : ' — applies immediately at effective time'}.
+                        </div>
+                      )}
+
+                      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                        {BILLING_CYCLES.map((c) => (
+                          <label key={c.key} className="text-xs">{c.label} (₹)
+                            <input type="number" min={0} max={15000} step="0.01" value={draft.pricing[c.key]}
+                              onChange={(e) => updatePricingDraftCycle(plan, c.key, e.target.value)}
+                              className="mt-1 w-full rounded-lg bg-slate-950 px-3 py-2 text-sm" placeholder="—" />
+                          </label>
+                        ))}
+                      </div>
+
+                      <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                        <label className="text-xs">Trial days
+                          <input type="number" min={0} max={365} value={draft.trialDays}
+                            onChange={(e) => updatePricingDraft(plan, { trialDays: e.target.value })}
+                            className="mt-1 w-full rounded-lg bg-slate-950 px-3 py-2 text-sm" />
+                        </label>
+                        <label className="text-xs">Tax %
+                          <input type="number" min={0} max={100} step="0.01" value={draft.taxPercent}
+                            onChange={(e) => updatePricingDraft(plan, { taxPercent: e.target.value })}
+                            className="mt-1 w-full rounded-lg bg-slate-950 px-3 py-2 text-sm" />
+                        </label>
+                        <label className="text-xs">Platform fee %
+                          <input type="number" min={0} max={100} step="0.01" value={draft.platformFeePercent}
+                            onChange={(e) => updatePricingDraft(plan, { platformFeePercent: e.target.value })}
+                            className="mt-1 w-full rounded-lg bg-slate-950 px-3 py-2 text-sm" />
+                        </label>
+                        <label className="text-xs">Schedule at (optional)
+                          <input type="datetime-local" value={draft.scheduleAt}
+                            onChange={(e) => updatePricingDraft(plan, { scheduleAt: e.target.value })}
+                            className="mt-1 w-full rounded-lg bg-slate-950 px-3 py-2 text-sm" />
+                        </label>
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap items-center gap-3">
+                        <label className="text-xs flex items-center gap-2">
+                          <input type="checkbox" checked={!!draft.applyOnRenewalOnly}
+                            onChange={(e) => updatePricingDraft(plan, { applyOnRenewalOnly: e.target.checked })} />
+                          Apply on renewal only
+                        </label>
+                        <button type="button" onClick={() => handlePricingSave(plan, { schedule: false })} disabled={saving}
+                          className="rounded-xl bg-amber-400 px-4 py-2 text-sm font-semibold text-slate-900 disabled:opacity-50">
+                          {saving ? 'Saving…' : 'Save now'}
+                        </button>
+                        <button type="button" onClick={() => handlePricingSave(plan, { schedule: true })} disabled={saving || !draft.scheduleAt}
+                          className="rounded-xl bg-sky-500 px-4 py-2 text-sm font-semibold text-slate-900 disabled:opacity-50">
+                          {saving ? 'Saving…' : 'Schedule change'}
+                        </button>
+                      </div>
+
+                      <div className="mt-4 flex flex-wrap items-end gap-3 border-t border-white/10 pt-4">
+                        <label className="text-xs">Roll back to version
+                          <select value={pricingRollbackTarget[plan._id] || ''}
+                            onChange={(e) => setPricingRollbackTarget((prev) => ({ ...prev, [plan._id]: e.target.value }))}
+                            className="mt-1 w-full rounded-lg bg-slate-950 px-3 py-2 text-sm">
+                            <option value="">—</option>
+                            {trackedVersions.map((v) => (
+                              <option key={v} value={v}>v{v}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <button type="button" onClick={() => handlePricingRollback(plan)}
+                          disabled={saving || !pricingRollbackTarget[plan._id] || trackedVersions.length === 0}
+                          className="rounded-xl bg-rose-600/80 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
+                          Roll back
+                        </button>
+                        {trackedVersions.length === 0 && (
+                          <span className="text-xs text-slate-500">No tracked prior versions yet.</span>
+                        )}
+                      </div>
+
+                      {history.length > 0 && (
+                        <details className="mt-4">
+                          <summary className="cursor-pointer text-xs text-slate-300">Price history ({history.length})</summary>
+                          <div className="mt-2 max-h-64 overflow-auto">
+                            <table className="w-full text-left text-xs">
+                              <thead className="text-slate-400">
+                                <tr>
+                                  <th className="py-1 pr-3">When</th>
+                                  <th className="pr-3">Cycle</th>
+                                  <th className="pr-3">Old → New</th>
+                                  <th className="pr-3">Type</th>
+                                  <th className="pr-3">v</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {[...history]
+                                  .sort((a, b) => new Date(b.effectiveFrom) - new Date(a.effectiveFrom))
+                                  .map((h, i) => (
+                                  <tr key={i} className="border-t border-white/10">
+                                    <td className="py-1 pr-3 text-slate-400">{new Date(h.effectiveFrom).toLocaleString()}</td>
+                                    <td className="pr-3">{h.billingCycle}</td>
+                                    <td className="pr-3 font-mono">₹{h.oldPrice} → ₹{h.newPrice}</td>
+                                    <td className="pr-3">{h.changeType}{h.rollbackFromVersion != null ? ` (from v${h.rollbackFromVersion})` : ''}</td>
+                                    <td className="pr-3 font-mono">{h.pricingVersionAtChange ?? '—'}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </details>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         )}
 
