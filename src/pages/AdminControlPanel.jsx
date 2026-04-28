@@ -81,6 +81,21 @@ const EMPTY_PLAN_FORM = {
   active: true,
 };
 
+// ── Offer quick-launch templates ────────────────────────────────────────────
+// Pre-fill the offer creation form for common promotion scenarios so the
+// admin doesn't have to type dates / discounts from scratch each time.
+const OFFER_TEMPLATES = [
+  { name: 'Diwali Bonanza',      type: 'festival', label: '🎉 Diwali Offer',       discountPercent: 25, durationDays: 7   },
+  { name: 'Flash Sale',          type: 'flat',     label: '⚡ 24-Hour Flash Sale',  discountPercent: 40, durationDays: 1   },
+  { name: 'Holi Spring Sale',    type: 'festival', label: '🎨 Holi Offer',         discountPercent: 20, durationDays: 2   },
+  { name: 'New Year Kickstart',  type: 'festival', label: '🎊 New Year Offer',     discountPercent: 30, durationDays: 5   },
+  { name: 'Independence Day',    type: 'festival', label: '🇮🇳 Independence Day',  discountPercent: 15, durationDays: 3   },
+  { name: 'Republic Day',        type: 'festival', label: '🇮🇳 Republic Day',      discountPercent: 20, durationDays: 3   },
+  { name: 'Loyalty Reward',      type: 'coupon',   label: '🏆 Loyal Customer',     discountPercent: 15, durationDays: 30, couponCode: 'LOYAL15'    },
+  { name: 'Win-back Campaign',   type: 'coupon',   label: '💔 We Miss You',        discountPercent: 50, durationDays: 7,  couponCode: 'COMEBACK50' },
+  { name: 'Early Adopter',       type: 'coupon',   label: '🚀 Early Adopter',      discountPercent: 35, durationDays: 14, couponCode: 'EARLY35'    },
+];
+
 function updateItemById(setter, id, updates) {
   setter((prev) => prev.map((item) => item._id === id ? { ...item, ...updates } : item));
 }
@@ -661,6 +676,54 @@ export function AdminControlPanel() {
     }
   };
 
+  // Pre-fill the offer form from a template and scroll the user to the form.
+  const handleOfferTemplate = (tpl) => {
+    // Format a Date as a datetime-local string in the browser's local timezone.
+    const toLocal = (d) =>
+      new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+    const start = new Date(Date.now() + 60_000); // 1 minute from now
+    const end   = new Date(start.getTime() + tpl.durationDays * 86_400_000);
+    setOfferForm({
+      name: tpl.name,
+      type: tpl.type,
+      label: tpl.label,
+      discountPercent: tpl.discountPercent,
+      startsAt: toLocal(start),
+      endsAt:   toLocal(end),
+      appliesToPlanCodes: '',
+      couponCode: tpl.couponCode || '',
+      usageLimit: '',
+    });
+  };
+
+  // Bulk-adjust: updates pricingDrafts for all matching plans so that the
+  // admin can preview the new prices on each card before saving individually.
+  const handleBulkPriceAdjust = (percent, category, cycle) => {
+    const pct = Number(percent);
+    if (!Number.isFinite(pct) || pct === 0) return;
+    const multiplier = 1 + pct / 100;
+    const targets = category === 'all'
+      ? pricingPlans
+      : pricingPlans.filter((p) => planCategory(p) === category);
+    const updates = {};
+    for (const plan of targets) {
+      const draft = getPricingDraft(plan);
+      const cyclesToAdjust = cycle === '_all'
+        ? BILLING_CYCLES.map((c) => c.key)
+        : [cycle];
+      const newPricing = { ...draft.pricing };
+      for (const ck of cyclesToAdjust) {
+        const v = newPricing[ck];
+        if (v !== '' && v != null) {
+          const adjusted = Math.round(Number(v) * multiplier);
+          newPricing[ck] = String(Math.min(15000, Math.max(0, adjusted)));
+        }
+      }
+      updates[plan._id] = { ...draft, pricing: newPricing };
+    }
+    setPricingDrafts((prev) => ({ ...prev, ...updates }));
+  };
+
   const TABS = [
     { id: 'dashboard',      label: 'Dashboard',         icon: '◉' },
     { id: 'overview',       label: 'Overview',          icon: '▦' },
@@ -676,6 +739,7 @@ export function AdminControlPanel() {
     { id: 'flags',          label: 'Feature Flags',     icon: '⚑' },
     { id: 'search',         label: 'Search',            icon: '⌕' },
     { id: 'audit',          label: 'Audit Log',         icon: '⊡' },
+    { id: 'retention',      label: 'Retention',         icon: '◎' },
   ];
 
   // Default landing tab logic and the Quick-Action / Palette callbacks are
@@ -1090,7 +1154,12 @@ export function AdminControlPanel() {
         )}
 
         {activeTab === 'subscriptions' && (
-          <SubscriptionPlansControl
+          <>
+            <SubscriptionIntelligenceDashboard
+              plans={pricingPlans}
+              onBulkAdjust={handleBulkPriceAdjust}
+            />
+            <SubscriptionPlansControl
             pricingPlans={pricingPlans}
             pricingSavingId={pricingSavingId}
             getPricingDraft={getPricingDraft}
@@ -1112,6 +1181,7 @@ export function AdminControlPanel() {
               }
             }}
           />
+          </>
         )}
 
         {activeTab === 'pricing' && (
@@ -1335,6 +1405,24 @@ export function AdminControlPanel() {
               </div>
             )}
 
+            {/* ── Quick-launch templates ──────────────────────────────── */}
+            <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wider text-orange-300 mb-3">⚡ Quick Launch Templates</p>
+              <p className="text-xs text-slate-400 mb-3">Click a template to pre-fill the form below — adjust dates or discount % before saving.</p>
+              <div className="flex flex-wrap gap-2">
+                {OFFER_TEMPLATES.map((tpl) => (
+                  <button
+                    key={tpl.name}
+                    type="button"
+                    onClick={() => handleOfferTemplate(tpl)}
+                    className="rounded-full border border-white/15 px-3 py-1.5 text-xs text-slate-300 transition hover:border-orange-400/50 hover:bg-orange-500/10 hover:text-orange-300"
+                  >
+                    {tpl.label} · {tpl.discountPercent}% · {tpl.durationDays}d
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <form onSubmit={handleOfferCreate} className="rounded-2xl border border-white/10 bg-slate-900/60 p-5">
               <h3 className="text-base font-semibold">Create Offer</h3>
               <p className="mt-1 text-xs text-slate-400">
@@ -1487,6 +1575,10 @@ export function AdminControlPanel() {
               </table>
             </div>
           </div>
+        )}
+
+        {activeTab === 'retention' && (
+          <RetentionDashboard plans={pricingPlans} />
         )}
 
     </AdminShell>
@@ -1840,6 +1932,374 @@ function SubscriptionPlansControl({
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Subscription Intelligence Dashboard
+// Shown at the top of the Subscriptions tab. Provides at-a-glance stats,
+// smart pricing gap alerts, and a bulk price-adjust tool.
+// ─────────────────────────────────────────────────────────────────────────────
+function SubscriptionIntelligenceDashboard({ plans, onBulkAdjust }) {
+  const [adjPct,      setAdjPct]      = useState('');
+  const [adjCategory, setAdjCategory] = useState('all');
+  const [adjCycle,    setAdjCycle]    = useState('monthly');
+
+  const activePlans   = plans.filter((p) => p.active);
+  const trialPlans    = plans.filter((p) => (p.trialDays ?? 0) > 0);
+  const fullyCovered  = plans.filter((p) =>
+    BILLING_CYCLES.every((c) => p.pricing?.[c.key] != null)
+  );
+  const monthlyRevCap = activePlans.reduce((s, p) => s + (p.pricing?.monthly ?? 0), 0);
+
+  // Smart suggestions derived from plan data
+  const suggestions = [];
+  const missingMonthly = activePlans.filter((p) => !p.pricing?.monthly);
+  if (missingMonthly.length > 0)
+    suggestions.push(`${missingMonthly.length} active plan(s) have no monthly price — subscribers can't choose monthly billing.`);
+  if (trialPlans.length === 0 && plans.length > 0)
+    suggestions.push('No plans offer a free trial. Trials typically boost paid conversions by 30–60%.');
+  if (fullyCovered.length < plans.length && plans.length > 0)
+    suggestions.push(`${plans.length - fullyCovered.length} plan(s) are missing some billing cycles — add them to reach more subscriber preferences.`);
+  if (plans.length > 0 && activePlans.length === 0)
+    suggestions.push('All plans are currently inactive — users cannot subscribe to any plan.');
+  if (plans.length === 0)
+    suggestions.push('No pricing plans yet. Create one in the Pricing (Advanced) tab.');
+
+  const handleApply = () => {
+    if (!adjPct || Number(adjPct) === 0) return;
+    onBulkAdjust(adjPct, adjCategory, adjCycle);
+    setAdjPct('');
+  };
+
+  return (
+    <div className="mt-6 space-y-5">
+      {/* ── Stat cards ──────────────────────────────────────────── */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <IntelCard label="Active Plans"    value={activePlans.length}   sub={`${plans.length} total`}          color="emerald" />
+        <IntelCard label="Trial Enabled"   value={trialPlans.length}    sub="plans with free trial"            color="sky"     />
+        <IntelCard label="Full Coverage"   value={fullyCovered.length}  sub="plans with all cycles priced"    color="violet"  />
+        <IntelCard
+          label="Monthly Rev Cap"
+          value={`₹${monthlyRevCap.toLocaleString('en-IN')}`}
+          sub="per subscriber · all active plans"
+          color="orange"
+        />
+      </div>
+
+      {/* ── Smart suggestions ────────────────────────────────────── */}
+      {suggestions.length > 0 && (
+        <div className="rounded-2xl border border-sky-500/30 bg-sky-600/10 p-4">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-sky-300">💡 Smart Suggestions</p>
+          <ul className="space-y-1.5">
+            {suggestions.map((s, i) => (
+              <li key={i} className="flex items-start gap-2 text-sm text-sky-200">
+                <span className="mt-0.5 text-sky-400">•</span>{s}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* ── Bulk price adjust ────────────────────────────────────── */}
+      <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-4">
+        <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-orange-300">⚡ Bulk Price Adjust</p>
+        <p className="mb-4 text-xs text-slate-400">
+          Apply a percentage change to draft prices across plan categories in one action. Review each card then save individually.
+        </p>
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="text-xs text-slate-300">
+            Category
+            <select
+              value={adjCategory}
+              onChange={(e) => setAdjCategory(e.target.value)}
+              className="mt-1 w-full rounded-lg bg-slate-950 px-3 py-2 text-sm text-white"
+            >
+              <option value="all">All plans</option>
+              <option value="starter">Starter</option>
+              <option value="growth">Growth</option>
+              <option value="enterprise">Enterprise</option>
+            </select>
+          </label>
+          <label className="text-xs text-slate-300">
+            Billing cycle
+            <select
+              value={adjCycle}
+              onChange={(e) => setAdjCycle(e.target.value)}
+              className="mt-1 w-full rounded-lg bg-slate-950 px-3 py-2 text-sm text-white"
+            >
+              <option value="_all">All cycles</option>
+              {BILLING_CYCLES.map((c) => (
+                <option key={c.key} value={c.key}>{c.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs text-slate-300">
+            % change (e.g. +10 or −5)
+            <input
+              type="number"
+              min={-90}
+              max={200}
+              value={adjPct}
+              onChange={(e) => setAdjPct(e.target.value)}
+              placeholder="0"
+              className="mt-1 w-28 rounded-lg bg-slate-950 px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-orange-400"
+            />
+          </label>
+          <button
+            type="button"
+            onClick={handleApply}
+            disabled={!adjPct || Number(adjPct) === 0}
+            className="rounded-full bg-orange-500 px-5 py-2 text-xs font-bold uppercase tracking-wider text-slate-950 transition hover:bg-orange-400 disabled:opacity-40"
+          >
+            Apply to Drafts
+          </button>
+        </div>
+        <p className="mt-2 text-[10px] text-slate-500">
+          ⚠ Updates draft values only — use Save on each plan card to persist the change to the server.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function IntelCard({ label, value, sub, color = 'orange' }) {
+  const styles = {
+    orange:  'border-orange-500/25  bg-orange-500/10  text-orange-300',
+    emerald: 'border-emerald-500/25 bg-emerald-500/10 text-emerald-300',
+    sky:     'border-sky-500/25     bg-sky-500/10     text-sky-300',
+    violet:  'border-violet-500/25  bg-violet-500/10  text-violet-300',
+  };
+  return (
+    <div className={`rounded-2xl border p-4 ${styles[color] || styles.orange}`}>
+      <p className="text-xs font-semibold uppercase tracking-wider opacity-70">{label}</p>
+      <p className="mt-2 text-2xl font-bold">{value}</p>
+      {sub && <p className="mt-1 text-[10px] opacity-60">{sub}</p>}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Retention Dashboard
+// Forward-looking analytics: revenue forecaster, pricing matrix, plan health
+// scores, and an AI-ready roadmap panel for features planned through 2040.
+// ─────────────────────────────────────────────────────────────────────────────
+function RetentionDashboard({ plans }) {
+  const [forecasterCounts, setForecasterCounts] = useState({});
+
+  const activePlans = plans.filter((p) => p.active);
+  const totalMrr = activePlans.reduce((sum, p) => {
+    const subs = Number(forecasterCounts[p._id] || 0);
+    return sum + subs * (p.pricing?.monthly ?? 0);
+  }, 0);
+  const totalArr = totalMrr * 12;
+
+  return (
+    <div className="mt-6 space-y-8">
+      {/* Header */}
+      <div>
+        <p className="text-xs uppercase tracking-[0.28em] text-orange-300">Intelligence</p>
+        <h2 className="mt-2 text-2xl font-semibold text-white">Retention &amp; Revenue Intelligence</h2>
+        <p className="mt-2 text-sm text-slate-400">
+          Forward-looking tools to forecast revenue, identify pricing gaps, and track plan health from today through 2040.
+        </p>
+      </div>
+
+      {/* ── Revenue Forecaster ──────────────────────────────────── */}
+      <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-5">
+        <h3 className="text-base font-semibold text-white">📈 Revenue Forecaster</h3>
+        <p className="mt-1 text-xs text-slate-400">
+          Enter projected subscriber counts per plan to model Monthly Recurring Revenue (MRR) and Annual Recurring Revenue (ARR).
+        </p>
+        <div className="mt-4 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-xs text-slate-400">
+                <th className="py-2 pr-4 text-left">Plan</th>
+                <th className="pr-4 text-left">Monthly ₹</th>
+                <th className="pr-4 text-left">Yearly ₹</th>
+                <th className="pr-4 text-left">Est. Subscribers</th>
+                <th className="text-left">Projected MRR</th>
+              </tr>
+            </thead>
+            <tbody>
+              {activePlans.length === 0 && (
+                <tr>
+                  <td colSpan="5" className="py-4 text-center text-slate-500">No active plans yet.</td>
+                </tr>
+              )}
+              {activePlans.map((plan) => {
+                const subs = Number(forecasterCounts[plan._id] || 0);
+                const mrr  = subs * (plan.pricing?.monthly ?? 0);
+                return (
+                  <tr key={plan._id} className="border-t border-white/10">
+                    <td className="py-2 pr-4 font-medium">{plan.name}</td>
+                    <td className="pr-4 text-slate-300">{plan.pricing?.monthly != null ? `₹${plan.pricing.monthly}` : '—'}</td>
+                    <td className="pr-4 text-slate-300">{plan.pricing?.yearly  != null ? `₹${plan.pricing.yearly}`  : '—'}</td>
+                    <td className="pr-4">
+                      <input
+                        type="number"
+                        min={0}
+                        max={1_000_000}
+                        value={forecasterCounts[plan._id] || ''}
+                        onChange={(e) =>
+                          setForecasterCounts((prev) => ({ ...prev, [plan._id]: e.target.value }))
+                        }
+                        placeholder="0"
+                        className="w-24 rounded-lg bg-slate-950 px-2 py-1.5 text-sm text-white focus:outline-none focus:ring-1 focus:ring-orange-400"
+                      />
+                    </td>
+                    <td className="font-semibold text-orange-300">₹{mrr.toLocaleString('en-IN')}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            {activePlans.length > 0 && (
+              <tfoot className="border-t-2 border-orange-500/40">
+                <tr>
+                  <td colSpan="4" className="py-2 pr-4 text-right text-sm font-semibold text-slate-300">Total MRR</td>
+                  <td className="text-lg font-bold text-orange-400">₹{totalMrr.toLocaleString('en-IN')}</td>
+                </tr>
+                <tr>
+                  <td colSpan="4" className="py-1 pr-4 text-right text-xs text-slate-400">Projected ARR (MRR × 12)</td>
+                  <td className="text-base font-semibold text-orange-300">₹{totalArr.toLocaleString('en-IN')}</td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+      </div>
+
+      {/* ── Pricing Coverage Matrix ──────────────────────────────── */}
+      <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-5">
+        <h3 className="text-base font-semibold text-white">🗂 Pricing Coverage Matrix</h3>
+        <p className="mt-1 text-xs text-slate-400">
+          At-a-glance view of every plan × billing cycle. Green = price set, grey = not offered.
+        </p>
+        <div className="mt-4 overflow-x-auto">
+          <table className="text-xs">
+            <thead>
+              <tr className="text-slate-400">
+                <th className="min-w-[8rem] py-2 pr-4 text-left">Plan</th>
+                {BILLING_CYCLES.map((c) => (
+                  <th key={c.key} className="whitespace-nowrap px-2 py-2 text-center">{c.label}</th>
+                ))}
+                <th className="px-2 py-2 text-center">Trial</th>
+                <th className="px-2 py-2 text-center">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {plans.length === 0 && (
+                <tr>
+                  <td colSpan={BILLING_CYCLES.length + 3} className="py-4 text-center text-slate-500">No plans yet.</td>
+                </tr>
+              )}
+              {plans.map((plan) => (
+                <tr key={plan._id} className="border-t border-white/10">
+                  <td className="pr-4 py-2 font-medium">{plan.name}</td>
+                  {BILLING_CYCLES.map((c) => {
+                    const price = plan.pricing?.[c.key];
+                    const set   = price !== undefined && price !== null;
+                    return (
+                      <td key={c.key} className="px-2 py-2 text-center">
+                        {set
+                          ? <span className="rounded px-1.5 py-0.5 bg-emerald-700/30 text-emerald-300">₹{price}</span>
+                          : <span className="rounded px-1.5 py-0.5 bg-slate-800 text-slate-600">—</span>
+                        }
+                      </td>
+                    );
+                  })}
+                  <td className="px-2 py-2 text-center">
+                    {(plan.trialDays ?? 0) > 0
+                      ? <span className="rounded px-1.5 py-0.5 bg-sky-700/30 text-sky-300">{plan.trialDays}d</span>
+                      : <span className="rounded px-1.5 py-0.5 bg-slate-800 text-slate-600">—</span>
+                    }
+                  </td>
+                  <td className="px-2 py-2 text-center">
+                    <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${plan.active ? 'bg-emerald-700/30 text-emerald-300' : 'bg-slate-700 text-slate-500'}`}>
+                      {plan.active ? '● on' : '● off'}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* ── Plan Health Scores ────────────────────────────────────── */}
+      <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-5">
+        <h3 className="text-base font-semibold text-white">🏥 Plan Health Scores</h3>
+        <p className="mt-1 text-xs text-slate-400">
+          Each plan is scored on pricing completeness (60 pts), trial coverage (20 pts), and active status (20 pts).
+        </p>
+        <div className="mt-4 space-y-3">
+          {plans.length === 0 && <p className="text-sm text-slate-500">No plans yet.</p>}
+          {plans.map((plan) => {
+            const cyclesCovered = BILLING_CYCLES.filter((c) => plan.pricing?.[c.key] != null).length;
+            const hasTrial      = (plan.trialDays ?? 0) > 0;
+            const score         = Math.round(
+              (cyclesCovered / BILLING_CYCLES.length) * 60
+              + (hasTrial     ? 20 : 0)
+              + (plan.active  ? 20 : 0)
+            );
+            const barColor  = score >= 80 ? 'bg-emerald-500' : score >= 50 ? 'bg-amber-500' : 'bg-rose-500';
+            const textColor = score >= 80 ? 'text-emerald-300' : score >= 50 ? 'text-amber-300' : 'text-rose-300';
+            const scoreLabel = score >= 80 ? 'Excellent' : score >= 50 ? 'Good' : 'Needs attention';
+            return (
+              <div key={plan._id} className="rounded-xl border border-white/10 bg-slate-950/60 p-4">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-sm font-medium">{plan.name}</span>
+                  <span className={`text-xs font-semibold ${textColor}`}>{score}% · {scoreLabel}</span>
+                </div>
+                <div className="h-2 w-full rounded-full bg-slate-800">
+                  <div className={`h-2 rounded-full transition-all ${barColor}`} style={{ width: `${score}%` }} />
+                </div>
+                <div className="mt-2 flex flex-wrap gap-4 text-[10px] text-slate-400">
+                  <span>{cyclesCovered}/{BILLING_CYCLES.length} cycles priced</span>
+                  <span className={hasTrial ? 'text-sky-300' : 'text-slate-600'}>
+                    Trial: {hasTrial ? `${plan.trialDays}d` : 'none'}
+                  </span>
+                  <span className={plan.active ? 'text-emerald-300' : 'text-rose-400'}>
+                    {plan.active ? '● Active' : '● Inactive'}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── AI-Ready Roadmap (2025–2040) ─────────────────────────── */}
+      <div className="rounded-2xl border border-violet-500/30 bg-violet-600/10 p-5">
+        <h3 className="text-base font-semibold text-violet-200">🤖 AI-Ready Roadmap · 2025 – 2040</h3>
+        <p className="mt-2 text-sm text-slate-400">
+          Intelligence features on the platform's long-term growth roadmap — building towards fully autonomous subscription management:
+        </p>
+        <ul className="mt-4 space-y-2 text-sm text-slate-300">
+          {[
+            'Churn prediction: flag subscribers likely to cancel in the next 30 days based on usage patterns',
+            'Dynamic pricing engine: auto-adjust daily / weekly rates based on real-time demand signals',
+            'Price elasticity modelling: simulate revenue impact of any price change before applying',
+            'Cohort retention analysis: track which sign-up cohort retains longest by plan tier',
+            'AI-timed offers: suggest the optimal day, discount %, and duration for maximum paid conversions',
+            'Subscriber LTV forecasting: lifetime value projection by plan × billing cycle × region',
+            'Personalised renewal nudges: auto-generate per-subscriber reminder copy and send via preferred channel',
+            'Regional dynamic pricing: automatically apply multipliers for high/low purchasing-power zones',
+            'Automated grace-period management: configurable post-expiry access window with usage throttling',
+            'Smart plan upgrade prompts: surface upgrade offers to users approaching feature limits',
+          ].map((item, i) => (
+            <li key={i} className="flex items-start gap-2">
+              <span className="mt-0.5 text-violet-400">◈</span>
+              {item}
+            </li>
+          ))}
+        </ul>
+        <p className="mt-4 text-[11px] text-slate-500">
+          Items listed are planned features, not yet implemented. Current data feeds into this roadmap as historical training data.
+        </p>
       </div>
     </div>
   );
