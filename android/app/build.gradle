@@ -1,5 +1,28 @@
 apply plugin: 'com.android.application'
 
+// Optional release signing — driven by env vars set in CI (or a local
+// `keystore.properties` file ignored from git). When the keystore file is
+// missing the release signing config is simply not registered, so the
+// debug build (and unsigned `assembleRelease`) keeps working locally
+// without any secrets.
+def releaseSigning = null
+def keystorePath = System.getenv('ANDROID_KEYSTORE_PATH')
+if (keystorePath == null || keystorePath.isEmpty()) {
+    keystorePath = "${rootDir}/app/release.keystore"
+}
+def keystoreFile = file(keystorePath)
+if (keystoreFile.exists()
+        && System.getenv('ANDROID_KEYSTORE_PASSWORD')
+        && System.getenv('ANDROID_KEY_ALIAS')
+        && System.getenv('ANDROID_KEY_PASSWORD')) {
+    releaseSigning = [
+        storeFile    : keystoreFile,
+        storePassword: System.getenv('ANDROID_KEYSTORE_PASSWORD'),
+        keyAlias     : System.getenv('ANDROID_KEY_ALIAS'),
+        keyPassword  : System.getenv('ANDROID_KEY_PASSWORD'),
+    ]
+}
+
 android {
     namespace = "com.speedytrucks.app"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -16,10 +39,23 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    if (releaseSigning != null) {
+        signingConfigs {
+            release {
+                storeFile     releaseSigning.storeFile
+                storePassword releaseSigning.storePassword
+                keyAlias      releaseSigning.keyAlias
+                keyPassword   releaseSigning.keyPassword
+            }
+        }
+    }
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            if (releaseSigning != null) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 }
