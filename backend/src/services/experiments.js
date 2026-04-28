@@ -50,7 +50,10 @@ export function pickVariant(experiment, userIdOrSalt) {
     .createHash('sha256')
     .update(`${String(userIdOrSalt || 'anon')}:${experiment.key}`)
     .digest();
-  // Use the first 4 bytes as an unsigned int → fold to [0, 1).
+  // First 4 bytes as an unsigned int folded onto totalWeight via modulo.
+  // The modulo introduces a tiny bias when totalWeight does not evenly
+  // divide 2^32 (~ totalWeight / 2^32 ≈ 1e-9 for typical weights), which
+  // is negligible compared to the noise floor of any A/B test we'd run.
   const intval = hash.readUInt32BE(0);
   const point = (intval % totalWeight);
 

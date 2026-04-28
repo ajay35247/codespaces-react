@@ -100,14 +100,18 @@ router.post('/purchase', verifyJWT, requirePaymentsEnabled(), validateBody(purch
 
   // If the buyer supplied a targetId, verify ownership of the load now so
   // we don't take their money for a load they cannot boost.
+  // Joi already validated the string against /^[0-9a-fA-F]{24}$/ so converting
+  // to ObjectId here is both safe and explicit (also satisfies static
+  // analysis that doesn't recognise Joi's regex as a sanitiser).
   let targetId = null;
   if (req.body.targetId) {
-    const load = await Load.findById(req.body.targetId).select('postedBy').lean();
+    const targetOid = new mongoose.Types.ObjectId(String(req.body.targetId));
+    const load = await Load.findById(targetOid).select('postedBy').lean();
     if (!load) return res.status(404).json({ error: 'Load not found' });
     if (String(load.postedBy) !== String(req.user.id)) {
       return res.status(403).json({ error: 'You can only boost your own loads' });
     }
-    targetId = req.body.targetId;
+    targetId = targetOid;
   }
 
   try {
@@ -181,14 +185,17 @@ router.post('/verify', verifyJWT, validateBody(verifySchema), async (req, res) =
   }
 
   // If the buyer is supplying targetId for the first time at verify, validate
-  // ownership before activating.
+  // ownership before activating.  Joi has already enforced the 24-char hex
+  // shape, so the explicit ObjectId cast here is both safe and analyser-
+  // friendly.
   if (targetId && !boost.targetId) {
-    const load = await Load.findById(targetId).select('postedBy').lean();
+    const targetOid = new mongoose.Types.ObjectId(String(targetId));
+    const load = await Load.findById(targetOid).select('postedBy').lean();
     if (!load) return res.status(404).json({ error: 'Load not found' });
     if (String(load.postedBy) !== String(req.user.id)) {
       return res.status(403).json({ error: 'You can only boost your own loads' });
     }
-    boost.targetId = new mongoose.Types.ObjectId(targetId);
+    boost.targetId = targetOid;
   }
 
   const now = new Date();
@@ -205,7 +212,8 @@ router.post('/:id/apply', verifyJWT, validateBody(applySchema), async (req, res)
   if (!/^[0-9a-fA-F]{24}$/.test(req.params.id)) {
     return res.status(400).json({ error: 'Invalid boost id' });
   }
-  const boost = await Boost.findOne({ _id: req.params.id, userId: req.user.id });
+  const boostOid = new mongoose.Types.ObjectId(String(req.params.id));
+  const boost = await Boost.findOne({ _id: boostOid, userId: req.user.id });
   if (!boost) return res.status(404).json({ error: 'Boost not found' });
   if (boost.status !== 'active') {
     return res.status(409).json({ error: 'Boost is not active', status: boost.status });
@@ -213,13 +221,16 @@ router.post('/:id/apply', verifyJWT, validateBody(applySchema), async (req, res)
   if (boost.targetId) {
     return res.status(409).json({ error: 'Boost is already attached to a load' });
   }
-  const load = await Load.findById(req.body.loadId).select('postedBy').lean();
+  // Joi already validated loadId as a 24-char hex string; cast to ObjectId
+  // for an explicit, analyser-visible sanitisation step.
+  const loadOid = new mongoose.Types.ObjectId(String(req.body.loadId));
+  const load = await Load.findById(loadOid).select('postedBy').lean();
   if (!load) return res.status(404).json({ error: 'Load not found' });
   if (String(load.postedBy) !== String(req.user.id)) {
     return res.status(403).json({ error: 'You can only boost your own loads' });
   }
 
-  boost.targetId = new mongoose.Types.ObjectId(req.body.loadId);
+  boost.targetId = loadOid;
   await boost.save();
   return res.json({ ok: true, boost });
 });

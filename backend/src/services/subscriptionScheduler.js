@@ -28,6 +28,12 @@ import { notify } from './notifications.js';
 
 const CHECK_INTERVAL_MS = 60 * 60 * 1000;     // hourly — usage signals are coarse-grained
 const INITIAL_DELAY_MS  = 30 * 1000;
+// 30-day "month" / 365-day "year" mirror the same approximation used by
+// middleware/subscription.getActiveSubscription (the system of record for
+// renewal windows). Using calendar-accurate durations here would create a
+// drift between the gate and the reminder ("you have 1 day left" / actually
+// gated already). When the gate switches to calendar-aware windows, update
+// both places together.
 const MONTH_MS = 30 * 24 * 60 * 60 * 1000;
 const YEAR_MS  = 365 * 24 * 60 * 60 * 1000;
 const ACTIVE_STATUSES = ['captured', 'success'];

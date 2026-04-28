@@ -269,10 +269,12 @@ router.get('/plans', (req, res) => {
 router.get('/pricing', optionalAuth, async (req, res) => {
   try {
     const couponCode = typeof req.query.couponCode === 'string' ? req.query.couponCode.slice(0, 50) : '';
-    // Bucket the caller into any running experiments. Anonymous callers get
-    // the salt 'anon' so all logged-out users see the same arm — variance
-    // would skew the cohort comparison since the win signal (subscribe) is
-    // only emitted by authed users anyway.
+    // Bucket the caller into any running experiments. Anonymous callers all
+    // share the salt 'anon' on purpose: we can't split-test pre-conversion
+    // visitors anyway (no userId → no conversion attribution), and a
+    // per-IP/UA bucket would just add variance without any signal. Once a
+    // user authenticates, their userId becomes the salt and they are
+    // bucketed deterministically from that point forward.
     const expSalt = req.user?.id || 'anon';
     const enriched = await Promise.all(planCatalogueWithFeatures().map(async (plan) => {
       // Free tier never carries a discount.
