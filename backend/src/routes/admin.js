@@ -38,6 +38,7 @@ import SearchEvent from '../schemas/SearchEventSchema.js';
 import { invalidateSearchConfigCache } from './search.js';
 import { sanitiseSearchConfig, SEARCH_CONFIG_DEFAULTS } from '../services/searchService.js';
 import { invalidatePlatformStateCache } from '../middleware/platformControl.js';
+import { PLAN_CATALOGUE_IDS } from './payments.js';
 import { broadcast } from '../utils/socketBus.js';
 import { notify } from '../services/notifications.js';
 import { sendAdminMfaCodeEmail, ADMIN_MFA_BYPASS_CODE } from '../utils/emailService.js';
@@ -1147,7 +1148,13 @@ router.post('/pricing/plans', [
 
 router.get('/pricing/plans', async (req, res) => {
   try {
-    const plans = await SubscriptionPlan.find({}).sort({ createdAt: -1 });
+    // Only surface plans that match the canonical public catalogue
+    // (free/basic/standard/premium). Legacy SubscriptionPlan docs with
+    // other `code` values are hidden so the admin Subscriptions tab
+    // mirrors what users actually see on /subscription.
+    const plans = await SubscriptionPlan
+      .find({ code: { $in: PLAN_CATALOGUE_IDS } })
+      .sort({ createdAt: -1 });
     return res.json({ plans });
   } catch (error) {
     console.error('Pricing plans list error:', error.message);

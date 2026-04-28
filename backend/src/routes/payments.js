@@ -89,6 +89,12 @@ function planCatalogueWithFeatures() {
 
 const PAID_PLAN_IDS = PLAN_CATALOGUE.filter((p) => p.monthlyPrice > 0).map((p) => p.id);
 
+// Canonical plan ids exposed to subscribers via GET /payments/pricing. The
+// admin pricing tab uses this list to filter out legacy SubscriptionPlan
+// documents whose `code` is no longer part of the public catalogue, so the
+// admin UI mirrors what shoppers actually see on /subscription.
+export const PLAN_CATALOGUE_IDS = PLAN_CATALOGUE.map((p) => p.id);
+
 const subscribeSchema = Joi.object({
   planId: Joi.string().valid(...PAID_PLAN_IDS).required(),
   billingCycle: Joi.string().valid('monthly', 'yearly').default('monthly'),
