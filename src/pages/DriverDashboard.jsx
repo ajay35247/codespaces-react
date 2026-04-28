@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { apiRequest } from '../utils/api';
 import { Card3D } from '../components/Card3D';
 import { RatingBadge, StarPicker } from '../components/RatingBadge';
+import BidSuggestionPanel from '../components/BidSuggestionPanel';
 import { useSpeechDictation, useSpeechSynthesis } from '../hooks/useSpeech';
 
 // Hard cap matches MAX_POD_PHOTO_LENGTH on the backend (≈260 KB decoded).
@@ -300,6 +301,10 @@ function BidModal({ load, onClose, onPlaced }) {
             className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
           />
         </div>
+        <BidSuggestionPanel
+          loadId={load.loadId}
+          onApply={(suggested) => setAmount(String(Math.round(suggested)))}
+        />
         {error && <p className="text-sm text-orange-300">{error}</p>}
         <div className="flex items-center justify-end gap-2">
           <button type="button" onClick={onClose} className="rounded-full border border-white/15 px-4 py-2 text-sm text-slate-300">Cancel</button>

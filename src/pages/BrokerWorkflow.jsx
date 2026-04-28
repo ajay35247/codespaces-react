@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { apiRequest } from '../utils/api';
+import BidSuggestionPanel from '../components/BidSuggestionPanel';
 
 const DEAL_COLUMNS = [
   { id: 'quoted', label: 'Quoted', accent: 'border-sky-500/40 text-sky-200', hint: 'Bid pending, load still open' },
@@ -228,6 +229,13 @@ export function BrokerWorkflow() {
                       >
                         Negotiate Rate
                       </button>
+                    </div>
+                    <div className="mt-3">
+                      <BidSuggestionPanel
+                        loadId={load.loadId}
+                        compact
+                        onApply={(suggested) => setBidAmounts({ ...bidAmounts, [load.loadId]: String(Math.round(suggested)) })}
+                      />
                     </div>
                     {st.error && <p className="mt-2 text-xs text-orange-300">{st.error}</p>}
                     {st.success && <p className="mt-2 text-xs text-emerald-300">{st.success}</p>}
