@@ -1,4 +1,5 @@
 import Payment from '../schemas/PaymentSchema.js';
+import User from '../schemas/UserSchema.js';
 
 /**
  * Subscription entitlement helpers.
@@ -9,12 +10,20 @@ import Payment from '../schemas/PaymentSchema.js';
  * as active when such a payment exists and the 30-day billing window from its
  * creation date has not yet elapsed.
  *
+ * In addition, every public user is entitled to a one-time 15-day free trial
+ * (User.trial.endsAt). While the trial window is active, the user is treated
+ * as having a `basic` subscription so the gating middleware lets them try
+ * advanced features. After the trial expires, normal 402 gating resumes
+ * unless they have purchased a paid plan.
+ *
  * Advanced features (placing bids, wallet withdrawals, AI matching triggers)
  * are gated behind {@link requireActiveSubscription}. Free users can still
  * register, browse loads, post loads, and accept bids on their own loads.
  */
 
 const SUBSCRIPTION_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+export const PUBLIC_TRIAL_DAYS = 15;
+export const PUBLIC_TRIAL_MS   = PUBLIC_TRIAL_DAYS * 24 * 60 * 60 * 1000;
 const ACTIVE_STATUSES = ['captured', 'success'];
 
 const PLAN_FEATURES = {
@@ -47,7 +56,32 @@ const PLAN_FEATURES = {
 const PLAN_RANK = { basic: 1, growth: 2, enterprise: 3 };
 
 /**
+ * Returns the user's trial state.
+ *   { state: 'never' | 'active' | 'expired', endsAt, daysLeft, planId }
+ */
+export async function getTrialStatus(userId) {
+  if (!userId) return { state: 'never', endsAt: null, daysLeft: 0, planId: null };
+  const user = await User.findById(userId).select('trial').lean();
+  const trial = user?.trial;
+  if (!trial?.startedAt || !trial?.endsAt) {
+    return { state: 'never', endsAt: null, daysLeft: 0, planId: null };
+  }
+  const endsAt = new Date(trial.endsAt).getTime();
+  if (Number.isNaN(endsAt) || endsAt <= Date.now()) {
+    return { state: 'expired', endsAt: trial.endsAt, daysLeft: 0, planId: trial.planId || 'basic' };
+  }
+  return {
+    state: 'active',
+    endsAt: trial.endsAt,
+    daysLeft: Math.max(0, Math.ceil((endsAt - Date.now()) / (24 * 60 * 60 * 1000))),
+    planId: trial.planId || 'basic',
+  };
+}
+
+/**
  * Returns the latest active paid subscription for a user, or `null`.
+ * Falls back to a synthetic subscription representing an active trial so
+ * gated features remain accessible during the trial window.
  */
 export async function getActiveSubscription(userId) {
   if (!userId) return null;
@@ -62,26 +96,42 @@ export async function getActiveSubscription(userId) {
     { sort: { createdAt: -1 } }
   ).lean();
 
-  if (!payment) return null;
-
-  const createdAt = payment.createdAt ? new Date(payment.createdAt).getTime() : 0;
-  const expiresAt = createdAt + SUBSCRIPTION_WINDOW_MS;
-  if (!createdAt || expiresAt < Date.now()) {
-    return null;
+  if (payment) {
+    const createdAt = payment.createdAt ? new Date(payment.createdAt).getTime() : 0;
+    const expiresAt = createdAt + SUBSCRIPTION_WINDOW_MS;
+    if (createdAt && expiresAt >= Date.now()) {
+      const planId = String(payment.planId);
+      const features = PLAN_FEATURES[planId] || PLAN_FEATURES.basic;
+      return {
+        planId,
+        amount: payment.amount,
+        currency: payment.currency,
+        status: payment.status,
+        createdAt: payment.createdAt,
+        expiresAt: new Date(expiresAt),
+        source: 'paid',
+        features,
+      };
+    }
   }
 
-  const planId = String(payment.planId);
-  const features = PLAN_FEATURES[planId] || PLAN_FEATURES.basic;
+  // No active paid subscription — fall back to active trial if any.
+  const trial = await getTrialStatus(userId);
+  if (trial.state === 'active') {
+    const planId = trial.planId || 'basic';
+    return {
+      planId,
+      amount: 0,
+      currency: 'INR',
+      status: 'trial',
+      createdAt: null,
+      expiresAt: new Date(trial.endsAt),
+      source: 'trial',
+      features: PLAN_FEATURES[planId] || PLAN_FEATURES.basic,
+    };
+  }
 
-  return {
-    planId,
-    amount: payment.amount,
-    currency: payment.currency,
-    status: payment.status,
-    createdAt: payment.createdAt,
-    expiresAt: new Date(expiresAt),
-    features,
-  };
+  return null;
 }
 
 /**
@@ -92,9 +142,10 @@ export async function getSubscriptionFeatures(userId) {
   const active = await getActiveSubscription(userId);
   return {
     active: Boolean(active),
-    planId: active?.planId || null,
+    planId:    active?.planId || null,
     expiresAt: active?.expiresAt || null,
-    features: active?.features || {
+    source:    active?.source || null, // 'paid' | 'trial' | null
+    features:  active?.features || {
       maxBidsPerMonth: 0,
       walletWithdrawals: false,
       aiMatching: false,

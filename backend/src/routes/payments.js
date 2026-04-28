@@ -389,4 +389,60 @@ router.get('/subscription/features', verifyJWT, async (req, res) => {
   }
 });
 
+// ── Public 15-day free trial ──────────────────────────────────────────────────
+//
+// Every authenticated public user (shipper / driver / broker / truck_owner) is
+// eligible for a one-time 15-day free trial. Starting it stamps trial.startedAt
+// and trial.endsAt on the User document. After endsAt, getActiveSubscription
+// returns null and the platform's existing 402 gating resumes (unless the user
+// has paid for a plan in the meantime).
+import User from '../schemas/UserSchema.js';
+import { PUBLIC_TRIAL_DAYS, PUBLIC_TRIAL_MS, getTrialStatus } from '../middleware/subscription.js';
+
+router.get('/trial/status', verifyJWT, async (req, res) => {
+  try {
+    const status = await getTrialStatus(req.user.id);
+    return res.json({ ...status, totalDays: PUBLIC_TRIAL_DAYS });
+  } catch (error) {
+    console.error('Trial status error:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch trial status' });
+  }
+});
+
+router.post('/trial/start', verifyJWT, requirePaymentsEnabled(), async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    if (user.trial?.startedAt) {
+      const ends = user.trial.endsAt ? new Date(user.trial.endsAt).getTime() : 0;
+      if (ends > Date.now()) {
+        return res.status(409).json({ error: 'Trial is already active', code: 'TRIAL_ACTIVE' });
+      }
+      return res.status(409).json({ error: 'Trial has already been used', code: 'TRIAL_USED' });
+    }
+
+    const now = new Date();
+    user.trial = {
+      startedAt: now,
+      endsAt: new Date(now.getTime() + PUBLIC_TRIAL_MS),
+      planId: 'basic',
+      grantedBy: 'self',
+    };
+    await user.save();
+
+    return res.json({
+      state: 'active',
+      startedAt: user.trial.startedAt,
+      endsAt: user.trial.endsAt,
+      planId: user.trial.planId,
+      daysLeft: PUBLIC_TRIAL_DAYS,
+      totalDays: PUBLIC_TRIAL_DAYS,
+    });
+  } catch (error) {
+    console.error('Trial start error:', error.message);
+    return res.status(500).json({ error: 'Failed to start trial' });
+  }
+});
+
 export default router;

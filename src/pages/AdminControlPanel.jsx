@@ -740,6 +740,7 @@ export function AdminControlPanel() {
     { id: 'search',         label: 'Search',            icon: '⌕' },
     { id: 'audit',          label: 'Audit Log',         icon: '⊡' },
     { id: 'retention',      label: 'Retention',         icon: '◎' },
+    { id: 'trials',         label: 'Trials',            icon: '🎁' },
   ];
 
   // Default landing tab logic and the Quick-Action / Palette callbacks are
@@ -1581,6 +1582,26 @@ export function AdminControlPanel() {
           <RetentionDashboard plans={pricingPlans} />
         )}
 
+        {activeTab === 'trials' && (
+          <TrialsDashboard
+            users={users}
+            onAction={async (userId, action, payload) => {
+              try {
+                const data = await api(
+                  `/admin/control/users/${userId}/trial/${action}`,
+                  'POST',
+                  payload || {},
+                );
+                setUsers((prev) => prev.map((u) =>
+                  String(u._id) === String(userId) ? { ...u, trial: data.trial } : u
+                ));
+              } catch (err) {
+                setError(err.message);
+              }
+            }}
+          />
+        )}
+
     </AdminShell>
     <CommandPalette
       open={paletteOpen}
@@ -2300,6 +2321,217 @@ function RetentionDashboard({ plans }) {
         <p className="mt-4 text-[11px] text-slate-500">
           Items listed are planned features, not yet implemented. Current data feeds into this roadmap as historical training data.
         </p>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Trials Dashboard
+// Shows trial-state stats across all users + per-user actions to grant /
+// extend / expire a 15-day public trial. Backed by the admin trial endpoints
+// in backend/src/routes/admin.js.
+// ─────────────────────────────────────────────────────────────────────────────
+function trialStateOf(user) {
+  const trial = user?.trial;
+  if (!trial?.startedAt || !trial?.endsAt) return 'never';
+  const ends = new Date(trial.endsAt).getTime();
+  if (Number.isNaN(ends)) return 'never';
+  return ends > Date.now() ? 'active' : 'expired';
+}
+
+function trialDaysLeft(user) {
+  const trial = user?.trial;
+  if (!trial?.endsAt) return 0;
+  const ms = new Date(trial.endsAt).getTime() - Date.now();
+  return ms <= 0 ? 0 : Math.ceil(ms / (24 * 60 * 60 * 1000));
+}
+
+function TrialsDashboard({ users, onAction }) {
+  const [filter, setFilter] = useState('all');
+  const [extendDays, setExtendDays] = useState({}); // { [userId]: number }
+
+  // Public users only — admin accounts are not eligible for the trial.
+  const publicUsers = users.filter((u) => u.role !== 'admin');
+
+  const counts = publicUsers.reduce(
+    (acc, u) => {
+      acc[trialStateOf(u)] += 1;
+      return acc;
+    },
+    { never: 0, active: 0, expired: 0 },
+  );
+  const total      = publicUsers.length;
+  const conversion = total === 0
+    ? 0
+    : Math.round(((counts.active + counts.expired) / total) * 100);
+
+  const filtered = filter === 'all'
+    ? publicUsers
+    : publicUsers.filter((u) => trialStateOf(u) === filter);
+
+  const handleExtend = (userId) => {
+    const days = Number(extendDays[userId] || 0);
+    if (!days || days < 1 || days > 90) return;
+    onAction(userId, 'extend', { days });
+    setExtendDays((prev) => ({ ...prev, [userId]: '' }));
+  };
+
+  return (
+    <div className="mt-6 space-y-6">
+      <div>
+        <p className="text-xs uppercase tracking-[0.28em] text-orange-300">Trials</p>
+        <h2 className="mt-2 text-2xl font-semibold text-white">15-Day Public Trial Control</h2>
+        <p className="mt-2 text-sm text-slate-400">
+          Every public user is eligible for a one-time 15-day free trial. After it expires, advanced features
+          return HTTP 402 until the user subscribes. From here you can grant a fresh trial, extend an active /
+          expired one by N days, or force-expire any trial immediately.
+        </p>
+      </div>
+
+      {/* ── Stat cards ──────────────────────────────────────────── */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <IntelCard label="Total Public Users" value={total}            sub="all roles except admin"     color="violet"  />
+        <IntelCard label="Trial Active"       value={counts.active}    sub="currently inside 15-day window" color="sky"     />
+        <IntelCard label="Trial Expired"      value={counts.expired}   sub="ended without conversion"   color="orange"  />
+        <IntelCard
+          label="Trial Reach"
+          value={`${conversion}%`}
+          sub={`${counts.active + counts.expired} / ${total} have started`}
+          color="emerald"
+        />
+      </div>
+
+      {/* ── Filter chips ────────────────────────────────────────── */}
+      <div className="flex flex-wrap items-center gap-2">
+        {[
+          { id: 'all',     label: `All (${total})` },
+          { id: 'active',  label: `Active (${counts.active})` },
+          { id: 'expired', label: `Expired (${counts.expired})` },
+          { id: 'never',   label: `Never started (${counts.never})` },
+        ].map((f) => (
+          <button
+            key={f.id}
+            type="button"
+            onClick={() => setFilter(f.id)}
+            className={`rounded-full px-4 py-1.5 text-sm font-semibold transition-colors ${
+              filter === f.id
+                ? 'bg-orange-500 text-slate-950'
+                : 'border border-white/15 text-slate-300 hover:border-orange-400/50 hover:text-orange-300'
+            }`}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Per-user list ───────────────────────────────────────── */}
+      <div className="overflow-x-auto rounded-2xl border border-white/10 bg-slate-900/60">
+        <table className="w-full text-left text-sm">
+          <thead className="text-slate-400">
+            <tr>
+              <th className="py-2 pl-4 pr-4">User</th>
+              <th className="pr-4">Role</th>
+              <th className="pr-4">Trial Status</th>
+              <th className="pr-4">Days Left</th>
+              <th className="pr-4">Ends</th>
+              <th className="pr-4">Granted By</th>
+              <th className="pr-4">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length === 0 && (
+              <tr>
+                <td colSpan="7" className="py-6 text-center text-slate-500">No users in this category.</td>
+              </tr>
+            )}
+            {filtered.map((u) => {
+              const state    = trialStateOf(u);
+              const daysLeft = trialDaysLeft(u);
+              const endsAt   = u.trial?.endsAt
+                ? new Date(u.trial.endsAt).toLocaleDateString()
+                : '—';
+              const stateBadge = {
+                active:  'bg-sky-700/40 text-sky-200',
+                expired: 'bg-rose-700/40 text-rose-200',
+                never:   'bg-slate-700 text-slate-400',
+              }[state];
+              return (
+                <tr key={u._id} className="border-t border-white/10 align-middle">
+                  <td className="py-2 pl-4 pr-4">
+                    <div className="font-medium">{u.name || '—'}</div>
+                    <div className="text-xs text-slate-400">{u.email}</div>
+                  </td>
+                  <td className="pr-4 text-xs">{u.role}</td>
+                  <td className="pr-4">
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${stateBadge}`}>
+                      {state}
+                    </span>
+                  </td>
+                  <td className="pr-4 font-mono text-xs">
+                    {state === 'active' ? `${daysLeft}d` : '—'}
+                  </td>
+                  <td className="pr-4 text-xs text-slate-400">{endsAt}</td>
+                  <td className="pr-4 text-xs text-slate-400">{u.trial?.grantedBy || '—'}</td>
+                  <td className="pr-4 py-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {state === 'never' && (
+                        <button
+                          type="button"
+                          onClick={() => onAction(u._id, 'start')}
+                          className="rounded bg-emerald-600/80 px-2 py-1 text-xs font-semibold text-white hover:bg-emerald-500"
+                        >
+                          Grant 15d
+                        </button>
+                      )}
+                      {state !== 'never' && (
+                        <>
+                          <input
+                            type="number"
+                            min={1}
+                            max={90}
+                            value={extendDays[u._id] || ''}
+                            onChange={(e) => setExtendDays((prev) => ({ ...prev, [u._id]: e.target.value }))}
+                            placeholder="days"
+                            className="w-16 rounded bg-slate-950 px-2 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-orange-400"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleExtend(u._id)}
+                            disabled={!extendDays[u._id]}
+                            className="rounded bg-sky-600/80 px-2 py-1 text-xs font-semibold text-white hover:bg-sky-500 disabled:opacity-40"
+                          >
+                            Extend
+                          </button>
+                        </>
+                      )}
+                      {state === 'active' && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (window.confirm(`Force-expire trial for ${u.email}?`)) onAction(u._id, 'expire');
+                          }}
+                          className="rounded bg-rose-600/80 px-2 py-1 text-xs font-semibold text-white hover:bg-rose-500"
+                        >
+                          Expire
+                        </button>
+                      )}
+                      {state === 'expired' && (
+                        <button
+                          type="button"
+                          onClick={() => onAction(u._id, 'start')}
+                          className="rounded bg-emerald-600/80 px-2 py-1 text-xs font-semibold text-white hover:bg-emerald-500"
+                        >
+                          Re-grant
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );

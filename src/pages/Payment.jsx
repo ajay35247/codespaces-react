@@ -75,17 +75,55 @@ export function Payment() {
   const [activeCategory, setActiveCategory] = useState('starter');
   // Billing cycle tab (which duration to price)
   const [activeCycle, setActiveCycle] = useState('monthly');
+  // Trial state from backend: { state: 'never'|'active'|'expired'|null, daysLeft, endsAt, totalDays }
+  const [trial, setTrial] = useState(null);
+  const [trialBusy, setTrialBusy] = useState(false);
   const user = useSelector((state) => state.auth.user);
 
   useEffect(() => {
     document.title = 'Payments | Speedy Trucks';
   }, []);
 
+  // Fetch the user's trial status on mount so the banner reflects reality.
+  // Failure is non-fatal: the banner falls back to the "start trial" CTA.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await apiRequest('/payments/trial/status');
+        if (!cancelled) setTrial(data);
+      } catch {
+        if (!cancelled) setTrial({ state: 'never', daysLeft: 0, totalDays: 15 });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleStartTrial = async () => {
+    setTrialBusy(true);
+    try {
+      const data = await apiRequest('/payments/trial/start', { method: 'POST', body: {} });
+      setTrial({ ...data, state: 'active' });
+      setStatus('success');
+    } catch (error) {
+      console.error('Trial start failed:', error);
+      setStatus('error');
+    } finally {
+      setTrialBusy(false);
+    }
+  };
+
   const selectedCycle = BILLING_CYCLES.find((c) => c.key === activeCycle) || BILLING_CYCLES[3];
 
   const handlePayment = async (planId) => {
-    if (selectedCycle.special === 'trial' || selectedCycle.special === 'free') {
-      // For trial / free, call subscribe without Razorpay checkout
+    if (selectedCycle.special === 'trial') {
+      // Trial uses the dedicated /payments/trial/start endpoint — there is
+      // a single 15-day trial per user regardless of which plan card they
+      // click, so planId is informational only.
+      await handleStartTrial();
+      return;
+    }
+    if (selectedCycle.special === 'free') {
       setStatus('processing');
       try {
         await apiRequest('/payments/subscribe', {
@@ -155,6 +193,9 @@ export function Payment() {
         <p className="text-sm uppercase tracking-[0.28em] text-orange-300">Payments</p>
         <h1 className="mt-4 text-4xl font-semibold text-white">Indian payments and subscriptions</h1>
         <p className="mt-3 text-slate-300">Choose a plan and complete the onboarding process for your logistics operations.</p>
+
+        {/* ── Global 15-day trial banner (visible to every user) ─────────── */}
+        <TrialBanner trial={trial} busy={trialBusy} onStart={handleStartTrial} />
 
         {/* ── Plan category tabs ─────────────────────────────────────────── */}
         <div className="mt-10 flex flex-wrap gap-2">
@@ -287,5 +328,85 @@ export function Payment() {
         {status === 'error'      && <p className="mt-6 text-orange-300">Payment failed. Please try again later.</p>}
       </div>
     </main>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TrialBanner — prominent always-visible banner showing the user's 15-day
+// free trial state. Three variants:
+//   never   → "Start your 15-day free trial" CTA
+//   active  → "N days left" countdown badge
+//   expired → "Trial expired — subscribe to keep features" warning
+// ─────────────────────────────────────────────────────────────────────────────
+function TrialBanner({ trial, busy, onStart }) {
+  // Until the status fetch settles we render a neutral placeholder so the
+  // page layout doesn't jump.
+  if (!trial) {
+    return (
+      <div className="mt-6 rounded-2xl border border-white/10 bg-slate-900/60 px-5 py-4 text-sm text-slate-400">
+        Loading your trial status…
+      </div>
+    );
+  }
+
+  if (trial.state === 'active') {
+    const daysLeft = Number(trial.daysLeft || 0);
+    const endsAtText = trial.endsAt
+      ? new Date(trial.endsAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })
+      : '—';
+    return (
+      <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-sky-500/40 bg-sky-600/10 px-5 py-4">
+        <div className="flex items-center gap-3">
+          <span className="rounded-full bg-sky-500/20 px-3 py-1 text-xs font-bold uppercase tracking-wider text-sky-300">
+            🎁 Trial Active
+          </span>
+          <p className="text-sm text-sky-100">
+            <strong>{daysLeft}</strong> day{daysLeft === 1 ? '' : 's'} left in your free trial
+            <span className="ml-1 text-sky-300">· ends {endsAtText}</span>
+          </p>
+        </div>
+        <p className="text-xs text-sky-300/80">
+          Subscribe before your trial ends to keep advanced features.
+        </p>
+      </div>
+    );
+  }
+
+  if (trial.state === 'expired') {
+    return (
+      <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-rose-500/50 bg-rose-600/15 px-5 py-4">
+        <div className="flex items-center gap-3">
+          <span className="rounded-full bg-rose-500/30 px-3 py-1 text-xs font-bold uppercase tracking-wider text-rose-200">
+            ⏱ Trial Expired
+          </span>
+          <p className="text-sm text-rose-100">
+            Your 15-day free trial has ended. Subscribe to a plan below to continue using advanced features.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // state === 'never'
+  const totalDays = Number(trial.totalDays || 15);
+  return (
+    <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-500/40 bg-emerald-600/10 px-5 py-4">
+      <div className="flex items-center gap-3">
+        <span className="rounded-full bg-emerald-500/20 px-3 py-1 text-xs font-bold uppercase tracking-wider text-emerald-300">
+          ✨ Free for {totalDays} days
+        </span>
+        <p className="text-sm text-emerald-100">
+          Get full access to advanced features for <strong>{totalDays} days</strong> — no credit card required.
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={onStart}
+        disabled={busy}
+        className="rounded-full bg-emerald-500 px-5 py-2 text-xs font-bold uppercase tracking-[0.18em] text-slate-950 transition hover:bg-emerald-400 disabled:opacity-50"
+      >
+        {busy ? 'Starting…' : 'Start Free Trial'}
+      </button>
+    </div>
   );
 }

@@ -636,6 +636,141 @@ router.post('/control/users/:id/impersonate', async (req, res) => {
   }
 });
 
+// ── Admin trial controls ────────────────────────────────────────────────────
+// Mirrors the public 15-day trial system in routes/payments.js but lets the
+// admin manually grant, extend, or expire a trial for any user. All actions
+// are audit-logged. Day arithmetic uses 24h * 60m * 60s * 1000ms.
+const TRIAL_DAY_MS = 24 * 60 * 60 * 1000;
+const PUBLIC_TRIAL_DAYS = 15;
+
+router.post('/control/users/:id/trial/start', async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid user ID' });
+    }
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (user.role === 'admin') {
+      return res.status(400).json({ error: 'Cannot grant trial to admin account' });
+    }
+
+    const now = new Date();
+    user.trial = {
+      startedAt: now,
+      endsAt: new Date(now.getTime() + PUBLIC_TRIAL_DAYS * TRIAL_DAY_MS),
+      planId: 'basic',
+      grantedBy: 'admin',
+    };
+    await user.save();
+
+    await AuditLog.create({
+      userId: req.user.id,
+      userEmail: req.user.email,
+      userRole: req.user.role,
+      action: 'ADMIN_TRIAL_GRANT',
+      resource: 'user',
+      resourceId: user._id.toString(),
+      ipAddress: getRequestIp(req),
+      userAgent: req.get('user-agent'),
+      method: req.method,
+      path: req.path,
+      statusCode: 200,
+      metadata: { endsAt: user.trial.endsAt },
+    });
+
+    return res.json({ userId: user._id, trial: user.trial });
+  } catch (error) {
+    console.error('Admin trial grant error:', error.message);
+    return res.status(500).json({ error: 'Failed to grant trial' });
+  }
+});
+
+router.post('/control/users/:id/trial/extend', [
+  body('days').isInt({ min: 1, max: 90 }),
+], async (req, res) => {
+  if (!ensureValidRequest(req, res)) return;
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid user ID' });
+    }
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const days = Number(req.body.days);
+    // Extend from the later of (current endsAt) and (now), so an admin can
+    // also "revive" an expired trial by N days.
+    const baseTime = Math.max(
+      user.trial?.endsAt ? new Date(user.trial.endsAt).getTime() : 0,
+      Date.now(),
+    );
+    const newEndsAt = new Date(baseTime + days * TRIAL_DAY_MS);
+
+    user.trial = {
+      startedAt: user.trial?.startedAt || new Date(),
+      endsAt: newEndsAt,
+      planId: user.trial?.planId || 'basic',
+      grantedBy: 'admin',
+    };
+    await user.save();
+
+    await AuditLog.create({
+      userId: req.user.id,
+      userEmail: req.user.email,
+      userRole: req.user.role,
+      action: 'ADMIN_TRIAL_EXTEND',
+      resource: 'user',
+      resourceId: user._id.toString(),
+      ipAddress: getRequestIp(req),
+      userAgent: req.get('user-agent'),
+      method: req.method,
+      path: req.path,
+      statusCode: 200,
+      metadata: { days, newEndsAt },
+    });
+
+    return res.json({ userId: user._id, trial: user.trial });
+  } catch (error) {
+    console.error('Admin trial extend error:', error.message);
+    return res.status(500).json({ error: 'Failed to extend trial' });
+  }
+});
+
+router.post('/control/users/:id/trial/expire', async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid user ID' });
+    }
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    if (!user.trial?.startedAt) {
+      return res.status(400).json({ error: 'User has no trial to expire' });
+    }
+    user.trial.endsAt = new Date(Date.now() - 1000); // 1 second in the past
+    await user.save();
+
+    await AuditLog.create({
+      userId: req.user.id,
+      userEmail: req.user.email,
+      userRole: req.user.role,
+      action: 'ADMIN_TRIAL_EXPIRE',
+      resource: 'user',
+      resourceId: user._id.toString(),
+      ipAddress: getRequestIp(req),
+      userAgent: req.get('user-agent'),
+      method: req.method,
+      path: req.path,
+      statusCode: 200,
+      metadata: {},
+    });
+
+    return res.json({ userId: user._id, trial: user.trial });
+  } catch (error) {
+    console.error('Admin trial expire error:', error.message);
+    return res.status(500).json({ error: 'Failed to expire trial' });
+  }
+});
+
 router.get('/control/loads', async (req, res) => {
   try {
     const loads = await Load.find({}).sort({ createdAt: -1 }).limit(300);
