@@ -5,6 +5,7 @@ import { Router } from 'express';
 import { requireRole, verifyJWT } from '../middleware/authorize.js';
 import { requireBookingsEnabled } from '../middleware/platformControl.js';
 import { requireActiveSubscription } from '../middleware/subscription.js';
+import { requireDailyQuota } from '../middleware/quotas.js';
 import { Joi, validateBody } from '../middleware/validation.js';
 import Load from '../schemas/LoadSchema.js';
 import User from '../schemas/UserSchema.js';
@@ -111,6 +112,7 @@ router.post(
   verifyJWT,
   requireRole(['shipper']),
   requireBookingsEnabled(),
+  requireDailyQuota('loads'),
   validateBody(createLoadSchema),
   async (req, res) => {
     try {
@@ -137,17 +139,18 @@ router.post(
   }
 );
 
-// ── All-side bidding ──────────────────────────────────────────────────────────
-// Shippers, drivers, and brokers can all place competitive bids on open loads
-// (subject to an active subscription — bidding is an "advanced" paid feature).
-// Bidders cannot bid on loads they posted themselves.
+// All-side bidding ──────────────────────────────────────────────────────────
+// Shippers, drivers, and brokers can all place competitive bids on open loads.
+// Free users get 5 bids/day, paid tiers get more (see PLAN_FEATURES); the
+// per-day cap is enforced by requireDailyQuota('bids'). Bidders cannot bid
+// on loads they posted themselves.
 
 router.post(
   '/bid',
   verifyJWT,
   requireRole(['shipper', 'driver', 'broker']),
   requireBookingsEnabled(),
-  requireActiveSubscription('basic'),
+  requireDailyQuota('bids'),
   validateBody(bidSchema),
   async (req, res) => {
     try {

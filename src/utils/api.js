@@ -243,6 +243,19 @@ export async function apiFetch(path, options = {}) {
     breakerOnFailure(key);
     if (response.status === 429) {
       reportFailedRequest(path, method, '429 rate-limited');
+      // Surface the daily-quota signal globally so any mounted listener
+      // (typically <QuotaExceededModal />) can pop the upgrade modal.
+      // We only fire for the sentinel `code: 'QUOTA_EXCEEDED'` so generic
+      // rate-limit 429s don't trigger a paywall.
+      if (payload && typeof payload === 'object' && payload.code === 'QUOTA_EXCEEDED'
+          && typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+        try {
+          window.dispatchEvent(new CustomEvent('quota:exceeded', { detail: payload }));
+        } catch {
+          // CustomEvent is unavailable in legacy IE — we don't support it,
+          // so swallowing here is fine.
+        }
+      }
     }
     throw new Error(getApiErrorMessage(payload, 'Request failed'));
   }

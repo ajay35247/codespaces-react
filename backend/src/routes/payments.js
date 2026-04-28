@@ -1,10 +1,17 @@
-import Razorpay from 'razorpay';
 import { Router } from 'express';
 import crypto from 'crypto';
 import express from 'express';
+import Razorpay from 'razorpay';
 import { verifyJWT } from '../middleware/authorize.js';
 import { requirePaymentsEnabled } from '../middleware/platformControl.js';
-import { getSubscriptionFeatures } from '../middleware/subscription.js';
+import {
+  getActiveSubscription,
+  getSubscriptionFeatures,
+  PLAN_FEATURES,
+  PLAN_RANK,
+  resolvePlanCode,
+} from '../middleware/subscription.js';
+import { readUsage } from '../middleware/quotas.js';
 import { Joi, validateBody } from '../middleware/validation.js';
 import Payment from '../schemas/PaymentSchema.js';
 import { resolvePrice, recordOfferUsage } from '../utils/pricing.js';
@@ -17,14 +24,74 @@ const razorpay = razorpayKeyId && razorpayKeySecret
   ? new Razorpay({ key_id: razorpayKeyId, key_secret: razorpayKeySecret })
   : null;
 
-const plans = [
-  { id: 'basic', title: 'Starter', price: 999, currency: 'INR', description: 'Up to 50 loads / month' },
-  { id: 'growth', title: 'Growth', price: 2499, currency: 'INR', description: 'Up to 200 loads / month' },
-  { id: 'enterprise', title: 'Enterprise', price: 4999, currency: 'INR', description: 'Unlimited loads + premium support' },
+/**
+ * Canonical 4-tier catalogue (see middleware/subscription.js for the
+ * matching feature mapping). Yearly price = 10 × monthly (i.e. "2 months
+ * free"); the savings line on the pricing UI is computed client-side from
+ * these two numbers and `monthlyPrice * 12`.
+ *
+ * Prices are admin-tunable via the SubscriptionPlan collection in a future
+ * iteration; for now this is the canonical default the pricing page reads
+ * (and the only authoritative input to /subscribe).
+ */
+const PLAN_CATALOGUE = [
+  {
+    id: 'free',
+    title: 'Free',
+    tagline: 'Get started free',
+    monthlyPrice: 0,
+    yearlyPrice: 0,
+    cta: 'Stay Free',
+    highlight: null,
+  },
+  {
+    id: 'basic',
+    title: 'Basic',
+    tagline: 'Continue Basic',
+    monthlyPrice: 99,
+    yearlyPrice: 999,
+    cta: 'Continue Basic',
+    highlight: null,
+  },
+  {
+    id: 'standard',
+    title: 'Standard',
+    tagline: 'Good performance, but you may miss the high-value loads',
+    monthlyPrice: 199,
+    yearlyPrice: 1999,
+    cta: 'Continue Standard',
+    highlight: 'popular', // gray "Popular" pill
+    losses: [
+      'You may miss high-value loads',
+      'No premium badge — lower buyer trust',
+      'No fast matching',
+    ],
+  },
+  {
+    id: 'premium',
+    title: 'Premium',
+    tagline: 'Never miss a premium load',
+    monthlyPrice: 299,
+    yearlyPrice: 2999,
+    cta: 'Start Earning More',
+    highlight: 'best-value', // gold "🔥 BEST VALUE" ribbon
+    anchor: 'Only ~₹10/day for maximum earnings',
+  },
 ];
 
+function planCatalogueWithFeatures() {
+  return PLAN_CATALOGUE.map((plan) => ({
+    ...plan,
+    features: PLAN_FEATURES[plan.id] || PLAN_FEATURES.free,
+    yearlySavings: Math.max(0, plan.monthlyPrice * 12 - plan.yearlyPrice),
+  }));
+}
+
+const PAID_PLAN_IDS = PLAN_CATALOGUE.filter((p) => p.monthlyPrice > 0).map((p) => p.id);
+
 const subscribeSchema = Joi.object({
-  planId: Joi.string().valid(...plans.map((plan) => plan.id)).required(),
+  planId: Joi.string().valid(...PAID_PLAN_IDS).required(),
+  billingCycle: Joi.string().valid('monthly', 'yearly').default('monthly'),
   couponCode: Joi.string().trim().min(2).max(50).pattern(/^[A-Za-z0-9_-]+$/).optional().allow(''),
 });
 
@@ -149,34 +216,37 @@ router.post(
 );
 
 router.get('/plans', (req, res) => {
-  res.json({ plans });
+  // Returns the canonical 4-tier catalogue with feature limits attached
+  // so the pricing page can render cards without a second round-trip.
+  res.json({ plans: planCatalogueWithFeatures() });
 });
 
 /**
- * Public pricing listing — returns each plan with its current effective
- * price after admin-managed offers are applied. This is what the
- * Subscription page renders.
+ * Public pricing listing — returns each plan with both monthly + yearly
+ * effective prices after admin-managed offers are applied.  This is what
+ * the Subscription page renders.
  *
- * Optional `?couponCode=XYZ` query string lets the user preview a coupon
- * discount without committing.  The same resolver is invoked again at
- * /subscribe to prevent client-side tampering.
+ * Optional `?couponCode=XYZ` query string previews a coupon discount.
+ * The same resolver is invoked again at /subscribe so a malicious client
+ * cannot pass a fake discounted price.
  */
 router.get('/pricing', async (req, res) => {
   try {
     const couponCode = typeof req.query.couponCode === 'string' ? req.query.couponCode.slice(0, 50) : '';
-    const enriched = await Promise.all(plans.map(async (plan) => {
-      const resolved = await resolvePrice({
-        planCode: plan.id,
-        originalPrice: plan.price,
-        couponCode,
-      });
-      return {
-        ...plan,
-        originalPrice: resolved.originalPrice,
-        finalPrice: resolved.finalPrice,
-        discountPercent: resolved.discountPercent,
-        appliedOffer: resolved.appliedOffer,
-      };
+    const enriched = await Promise.all(planCatalogueWithFeatures().map(async (plan) => {
+      // Free tier never carries a discount.
+      if (plan.monthlyPrice === 0 && plan.yearlyPrice === 0) {
+        return {
+          ...plan,
+          monthly: { originalPrice: 0, finalPrice: 0, discountPercent: 0, appliedOffer: null },
+          yearly:  { originalPrice: 0, finalPrice: 0, discountPercent: 0, appliedOffer: null },
+        };
+      }
+      const [monthly, yearly] = await Promise.all([
+        resolvePrice({ planCode: plan.id, originalPrice: plan.monthlyPrice, couponCode }),
+        resolvePrice({ planCode: plan.id, originalPrice: plan.yearlyPrice,  couponCode }),
+      ]);
+      return { ...plan, monthly, yearly };
     }));
     return res.json({ plans: enriched, couponApplied: Boolean(couponCode) });
   } catch (error) {
@@ -191,10 +261,42 @@ router.post('/subscribe', verifyJWT, requirePaymentsEnabled(), flagFraud, valida
   }
 
   const { planId, couponCode } = req.body;
-  const plan = plans.find((item) => item.id === planId);
-  if (!plan) {
+  const billingCycle = req.body.billingCycle === 'yearly' ? 'yearly' : 'monthly';
+  const plan = PLAN_CATALOGUE.find((item) => item.id === planId);
+  if (!plan || plan.monthlyPrice === 0) {
     return res.status(400).json({ error: 'Invalid plan selected' });
   }
+
+  // Downgrade-after-expiry rule — the spec disallows mid-cycle downgrade.
+  // Upgrades are always allowed (extends the new tier from now). For
+  // downgrades, instead of charging for a lower tier while a higher tier
+  // is still active, we ask the user to wait.  A future iteration may
+  // schedule the change for currentSub.expiresAt; for v1 we reject.
+  try {
+    const currentSub = await getActiveSubscription(req.user.id);
+    if (currentSub && currentSub.source === 'paid') {
+      const currentRank = PLAN_RANK[currentSub.planId] ?? 0;
+      const requestedRank = PLAN_RANK[planId] ?? 0;
+      if (requestedRank < currentRank
+          && currentSub.expiresAt
+          && new Date(currentSub.expiresAt).getTime() > Date.now()) {
+        return res.status(409).json({
+          error: 'Downgrade is only allowed after your current plan expires',
+          code: 'DOWNGRADE_AFTER_EXPIRY',
+          currentPlan: currentSub.planId,
+          requestedPlan: planId,
+          expiresAt: currentSub.expiresAt,
+        });
+      }
+    }
+  } catch (err) {
+    // If the entitlement lookup fails, be permissive but log it — we
+    // would rather risk a downgrade attempt than reject a legitimate
+    // upgrade because of a transient DB error.
+    console.warn('Subscribe: getActiveSubscription failed', err.message);
+  }
+
+  const originalPrice = billingCycle === 'yearly' ? plan.yearlyPrice : plan.monthlyPrice;
 
   // Server-side price resolution. This is the only place the actual
   // charge amount is computed — never trust a price coming from the client.
@@ -202,12 +304,12 @@ router.post('/subscribe', verifyJWT, requirePaymentsEnabled(), flagFraud, valida
   try {
     resolved = await resolvePrice({
       planCode: plan.id,
-      originalPrice: plan.price,
+      originalPrice,
       couponCode: couponCode || '',
     });
   } catch (err) {
     console.warn('Price resolution failed, falling back to list price:', err.message);
-    resolved = { originalPrice: plan.price, finalPrice: plan.price, discountPercent: 0, appliedOffer: null };
+    resolved = { originalPrice, finalPrice: originalPrice, discountPercent: 0, appliedOffer: null };
   }
 
   // If the user typed a coupon but it produced no offer, reject explicitly
@@ -225,6 +327,7 @@ router.post('/subscribe', verifyJWT, requirePaymentsEnabled(), flagFraud, valida
       receipt: `receipt_${crypto.randomUUID()}`,
       notes: {
         planId: plan.id,
+        billingCycle,
         userId: req.user.id,
         offerId: resolved.appliedOffer?.id || '',
         discountPercent: String(resolved.discountPercent || 0),
@@ -238,6 +341,7 @@ router.post('/subscribe', verifyJWT, requirePaymentsEnabled(), flagFraud, valida
         transactionId: order.id,
         razorpayOrderId: order.id,
         planId: plan.id,
+        billingCycle,
         userId: req.user.id,
         amount: chargeAmount,
         currency: 'INR',
@@ -265,6 +369,7 @@ router.post('/subscribe', verifyJWT, requirePaymentsEnabled(), flagFraud, valida
       keyId: razorpayKeyId,
       plan: {
         ...plan,
+        billingCycle,
         originalPrice: resolved.originalPrice,
         finalPrice: chargeAmount,
         discountPercent: resolved.discountPercent,
@@ -337,40 +442,73 @@ router.post('/subscription/cancel', verifyJWT, async (req, res) => {
 });
 
 // ── Current user subscription ─────────────────────────────────────────────────
+//
+// Returns the canonical entitlement view used everywhere in the app: which
+// plan is active (paid/trial/free), when it expires, today's usage vs the
+// daily quota, and the full feature object. This is the single endpoint
+// pages should call to render the "3/10 loads today" header bar and to
+// know whether to show paywalls.
 
-router.get('/subscription/me', verifyJWT, async (req, res) => {
+router.get('/subscription/me', verifyJWT, (req, res) => handleSubscriptionMe(req, res));
+
+// Pricing-page friendly alias for the same data — duplicated handler so we
+// don't depend on internal router.handle plumbing.
+async function handleSubscriptionMe(req, res) {
   try {
-    const payment = await Payment.findOne(
-      { userId: req.user.id, planId: { $exists: true, $ne: null } },
-      null,
-      { sort: { createdAt: -1 } }
-    ).lean();
+    const sub = await getActiveSubscription(req.user.id);
+    const usage = await readUsage(req.user.id);
+    const planMeta = PLAN_CATALOGUE.find((p) => p.id === sub?.planId) || null;
 
-    if (!payment) {
-      return res.json({ subscription: null });
-    }
-
-    const plan = plans.find((p) => p.id === payment.planId) || null;
-
-    // Compute renewal date (30 days from payment creation)
-    const renewalDate = payment.createdAt
-      ? new Date(new Date(payment.createdAt).getTime() + 30 * 24 * 60 * 60 * 1000)
-      : null;
-
+    const expiresAt = sub?.expiresAt ? new Date(sub.expiresAt) : null;
     return res.json({
-      subscription: {
-        planId: payment.planId,
-        plan: plan?.title || payment.planId,
-        amount: payment.amount,
-        currency: payment.currency,
-        status: payment.status,
-        createdAt: payment.createdAt,
-        renewal: renewalDate ? renewalDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }) : null,
+      subscription: sub ? {
+        planId: sub.planId,
+        plan: planMeta?.title || sub.planId,
+        amount: sub.amount,
+        currency: sub.currency,
+        status: sub.status,
+        source: sub.source,
+        billingCycle: sub.billingCycle || null,
+        createdAt: sub.createdAt,
+        expiresAt: sub.expiresAt,
+        renewal: expiresAt
+          ? expiresAt.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })
+          : null,
+        features: sub.features,
+      } : null,
+      usage: {
+        date: usage.date,
+        loadsCreated: usage.loadsCreated,
+        bidsPlaced: usage.bidsPlaced,
+        loadsLimit: sub?.features?.loadsPerDay ?? 0,
+        bidsLimit:  sub?.features?.bidsPerDay ?? 0,
       },
     });
   } catch (error) {
     console.error('Subscription me error:', error.message);
     return res.status(500).json({ error: 'Failed to fetch subscription' });
+  }
+}
+
+router.get('/me/subscription', verifyJWT, handleSubscriptionMe);
+
+// Cancel auto-renewal (alias of /subscription/cancel for the new UX copy).
+// We do not refund — we mark the user's latest active sub as 'refunded' so
+// getActiveSubscription stops counting it after the current window closes.
+router.post('/cancel-renewal', verifyJWT, async (req, res) => {
+  try {
+    const result = await Payment.findOneAndUpdate(
+      { userId: req.user.id, status: { $in: ['captured', 'success', 'pending'] }, planId: { $exists: true, $ne: null } },
+      { $set: { status: 'refunded', webhookEvent: 'subscription.cancelled' } },
+      { sort: { createdAt: -1 }, new: true }
+    );
+    if (!result) {
+      return res.status(404).json({ error: 'No active subscription found to cancel' });
+    }
+    return res.json({ message: 'Auto-renewal cancelled. Your current plan stays active until expiry.', paymentId: result._id });
+  } catch (error) {
+    console.error('Cancel renewal error:', error.message);
+    return res.status(500).json({ error: 'Failed to cancel renewal' });
   }
 });
 
