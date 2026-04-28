@@ -376,6 +376,12 @@ router.get(
 // Pure-read, no external services — see services/bidSuggestion.js for the
 // percentile math.  Available to any authenticated user: drivers use it
 // before bidding, shippers/brokers use it to gauge incoming bids.
+
+// Cap on the historical delivered-load pool scanned per request.  Keeps
+// per-call work bounded; the indexed { status, createdAt } path on Load
+// makes a 500-row scan fast.  Bump if richer per-route stats are needed.
+const HISTORICAL_POOL_LIMIT = 500;
+
 router.get(
   '/:loadId/bid-suggestion',
   verifyJWT,
@@ -386,17 +392,16 @@ router.get(
         .lean();
       if (!load) return res.status(404).json({ error: 'Load not found' });
 
-      // Pool: most-recent 500 delivered loads with the same truck type.
-      // 500 keeps the per-call work bounded; the indexed { status, createdAt }
-      // path on Load makes this a fast scan.  Route+truck filtering happens
-      // in-memory inside selectSample so the indexed query stays simple.
+      // Pool: most-recent delivered loads with the same truck type.
+      // Route+truck filtering happens in-memory inside selectSample so the
+      // indexed query stays simple.
       const pool = await Load.find({
         status: 'delivered',
         truckType: load.truckType,
       })
         .select('origin destination truckType freightPrice')
         .sort({ createdAt: -1 })
-        .limit(500)
+        .limit(HISTORICAL_POOL_LIMIT)
         .lean();
 
       const suggestion = suggestBidForLoad(load, pool);

@@ -40,12 +40,15 @@ export function extractPrices(loads) {
     .sort((a, b) => a - b);
 }
 
+// Minimum sample size before a basis is considered usable.
+export const MIN_SAMPLE_SIZE = 3;
+
 /**
  * Build a stats summary for a price array.  Returns null when the sample is
- * too small to draw meaningful percentiles from (< 3).
+ * too small to draw meaningful percentiles from (< MIN_SAMPLE_SIZE).
  */
 export function priceStats(prices) {
-  if (!Array.isArray(prices) || prices.length < 3) return null;
+  if (!Array.isArray(prices) || prices.length < MIN_SAMPLE_SIZE) return null;
   return {
     min: prices[0],
     p25: Math.round(percentile(prices, 0.25)),
@@ -54,9 +57,6 @@ export function priceStats(prices) {
     max: prices[prices.length - 1],
   };
 }
-
-// Minimum sample size before a basis is considered usable.
-export const MIN_SAMPLE_SIZE = 3;
 
 /**
  * Pick the most specific historical sample that still has enough data:
