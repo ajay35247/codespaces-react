@@ -1,3 +1,12 @@
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import { MetricCard, PageHeader } from './AdminShell';
 
 /**
@@ -112,30 +121,66 @@ export function MissionControl({
         />
       </div>
 
-      {/* Row 2 — Revenue trend (placeholder, real chart in Phase 3) + Live feed */}
+      {/* Row 2 — Revenue trend (Recharts area chart) + Live feed */}
       <div className="mt-6 grid gap-4 lg:grid-cols-3">
         <div className="rounded-xl border border-current/10 p-4 lg:col-span-2">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold uppercase tracking-wider opacity-70">Revenue snapshot</h2>
             <span className="text-xs opacity-60">last 24h: {last24hPayments != null ? formatInr(last24hPayments) : '—'}</span>
           </div>
-          <div className="mt-3 flex h-40 items-end gap-1">
-            {/* Lightweight bar viz — real time-series chart lands in Phase 3 (Recharts) */}
-            {(analytics?.dailyRevenue || EMPTY_REVENUE_BARS).slice(-14).map((v, i) => {
-              const max = Math.max(...((analytics?.dailyRevenue || [1])), 1);
-              const h = `${Math.max(4, Math.round((v / max) * 100))}%`;
-              return (
-                <div
-                  key={i}
-                  className="flex-1 rounded-t bg-cyan-500/60"
-                  style={{ height: h }}
-                  title={formatInr(v)}
+          <div className="mt-3 h-40 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart
+                data={(analytics?.dailyRevenue || EMPTY_REVENUE_BARS)
+                  .slice(-14)
+                  .map((v, i, arr) => ({ day: `D-${arr.length - 1 - i}`, revenue: Number(v) || 0 }))}
+                margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
+              >
+                <defs>
+                  <linearGradient id="missionRevenueFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#22d3ee" stopOpacity={0.55} />
+                    <stop offset="100%" stopColor="#22d3ee" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid stroke="currentColor" strokeOpacity={0.08} vertical={false} />
+                <XAxis
+                  dataKey="day"
+                  tick={{ fill: 'currentColor', fillOpacity: 0.55, fontSize: 10 }}
+                  tickLine={false}
+                  axisLine={{ stroke: 'currentColor', strokeOpacity: 0.15 }}
                 />
-              );
-            })}
+                <YAxis
+                  tick={{ fill: 'currentColor', fillOpacity: 0.55, fontSize: 10 }}
+                  tickLine={false}
+                  axisLine={{ stroke: 'currentColor', strokeOpacity: 0.15 }}
+                  tickFormatter={(v) => formatInr(v)}
+                  width={70}
+                />
+                <Tooltip
+                  cursor={{ stroke: 'currentColor', strokeOpacity: 0.2 }}
+                  contentStyle={{
+                    background: 'rgba(15, 23, 42, 0.95)',
+                    border: '1px solid rgba(148, 163, 184, 0.2)',
+                    borderRadius: 8,
+                    color: '#e2e8f0',
+                    fontSize: 12,
+                  }}
+                  labelStyle={{ color: '#94a3b8' }}
+                  formatter={(value) => [formatInr(value), 'Revenue']}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="revenue"
+                  stroke="#22d3ee"
+                  strokeWidth={2}
+                  fill="url(#missionRevenueFill)"
+                  isAnimationActive
+                />
+              </AreaChart>
+            </ResponsiveContainer>
           </div>
           <p className="mt-3 text-xs opacity-60">
-            Lightweight preview. A full time-series chart lands in Phase 3 (Recharts).
+            Daily revenue over the last 14 days. Hover any point for the exact total.
           </p>
         </div>
 

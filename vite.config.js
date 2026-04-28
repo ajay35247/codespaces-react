@@ -20,6 +20,7 @@ export default defineConfig(({ mode }) => {
           manualChunks: {
             vendor: ['react', 'react-dom', 'react-router-dom'],
             redux: ['@reduxjs/toolkit', 'react-redux'],
+            charts: ['recharts'],
           },
         },
       },
