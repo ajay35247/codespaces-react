@@ -1,5 +1,5 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
-import { apiRequest, buildApiUrl, getApiErrorMessage, parseApiBody } from '../../utils/api';
+import { apiRequest, buildApiUrl, getApiErrorMessage, getCsrfToken, parseApiBody } from '../../utils/api';
 
 export const bootstrapSession = createAsyncThunk('auth/bootstrapSession', async (_, { rejectWithValue }) => {
   try {
@@ -26,7 +26,14 @@ export const loginUser = createAsyncThunk('auth/loginUser', async (credentials, 
   try {
     const response = await fetch(buildApiUrl('/auth/login'), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        // Echo the double-submit CSRF cookie back as a header so that the
+        // login POST is accepted even when the browser still has cookies
+        // from a previous session (otherwise the backend rejects subsequent
+        // login attempts with `Forbidden: missing CSRF token`).
+        'X-CSRF-Token': getCsrfToken(),
+      },
       credentials: 'include',
       body: JSON.stringify(credentials),
     });
@@ -46,7 +53,12 @@ export const registerUser = createAsyncThunk('auth/registerUser', async (userDat
   try {
     const response = await fetch(buildApiUrl('/auth/register'), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        // See loginUser for rationale: avoids 403 on re-registration when
+        // a stale csrf-token / auth cookie is still in the browser jar.
+        'X-CSRF-Token': getCsrfToken(),
+      },
       credentials: 'include',
       body: JSON.stringify(userData),
     });

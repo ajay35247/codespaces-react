@@ -101,7 +101,7 @@ function buildFallbackUrl(path = '') {
  * `X-CSRF-Token` header on every mutating request so the backend can perform
  * a double-submit CSRF token check.
  */
-function getCsrfToken() {
+export function getCsrfToken() {
   if (typeof document === 'undefined') return '';
   const match = document.cookie.match(/(?:^|;\s*)csrf-token=([^;]+)/);
   return match ? decodeURIComponent(match[1]) : '';
