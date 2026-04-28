@@ -29,6 +29,8 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { motion } from 'framer-motion';
+import { useTranslation } from 'react-i18next';
 import { apiRequest } from '../utils/api';
 import { useSocket } from '../hooks/useSocket';
 import { useSubscription } from '../hooks/useSubscription';
@@ -43,6 +45,7 @@ function formatInr(value) {
 export function Subscription() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { t } = useTranslation();
   const [billingCycle, setBillingCycle] = useState('monthly');
   const [pricing, setPricing] = useState([]);
   const [coupon, setCoupon] = useState('');
@@ -193,16 +196,20 @@ export function Subscription() {
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-12 sm:px-8 sm:py-16">
-      <div className="rounded-[2rem] bg-slate-950/90 p-6 shadow-2xl shadow-slate-900/20 sm:p-10">
+      <motion.div
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, ease: 'easeOut' }}
+        className="rounded-[2rem] bg-slate-950/90 p-6 shadow-2xl shadow-slate-900/20 sm:p-10"
+      >
         {/* Header */}
         <div className="text-center">
-          <p className="text-xs uppercase tracking-[0.32em] text-orange-300">Pricing</p>
+          <p className="text-xs uppercase tracking-[0.32em] text-orange-300">{t('subscription.eyebrow')}</p>
           <h1 className="mt-3 text-3xl font-semibold text-white sm:text-4xl">
-            Pick the plan that pays you back
+            {t('subscription.headline')}
           </h1>
           <p className="mx-auto mt-3 max-w-xl text-sm text-slate-300">
-            One simple choice. Earn more, get loads faster, close deals quicker.
-            Switch or cancel any time — yearly plans get 2 months free.
+            {t('subscription.subhead')}
           </p>
           <div className="mt-8 flex justify-center">
             <BillingToggle value={billingCycle} onChange={setBillingCycle} />
@@ -223,12 +230,12 @@ export function Subscription() {
               type="text"
               value={coupon}
               onChange={(e) => setCoupon(e.target.value.toUpperCase())}
-              placeholder="Coupon code"
+              placeholder={t('subscription.couponPlaceholder')}
               maxLength={50}
               className="w-44 rounded-full border border-white/10 bg-slate-950 px-4 py-2 text-sm text-white placeholder-slate-500 focus:border-orange-400 focus:outline-none"
             />
             <button type="submit" className="rounded-full bg-orange-500 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-slate-950 hover:bg-orange-400">
-              Apply
+              {t('subscription.couponApply')}
             </button>
             {appliedCoupon && (
               <button
@@ -236,7 +243,7 @@ export function Subscription() {
                 onClick={clearCoupon}
                 className="rounded-full bg-slate-700 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-slate-200 hover:bg-slate-600"
               >
-                Clear
+                {t('subscription.couponClear')}
               </button>
             )}
           </form>
@@ -259,8 +266,14 @@ export function Subscription() {
 
         {!pricingLoading && !pricingError && orderedPlans.length > 0 && (
           <div className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-4 lg:items-stretch">
-            {orderedPlans.map((plan) => (
-              <div key={plan.id} id={`plan-card-${plan.id}`}>
+            {orderedPlans.map((plan, idx) => (
+              <motion.div
+                key={plan.id}
+                id={`plan-card-${plan.id}`}
+                initial={{ opacity: 0, y: 24 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.45, delay: 0.08 * idx, ease: 'easeOut' }}
+              >
                 <PlanCard
                   plan={plan}
                   billingCycle={billingCycle}
@@ -268,7 +281,7 @@ export function Subscription() {
                   isLoading={actionPlanId === plan.id}
                   onSelect={() => handleSelect(plan)}
                 />
-              </div>
+              </motion.div>
             ))}
           </div>
         )}
@@ -281,7 +294,7 @@ export function Subscription() {
         {!pricingLoading && orderedPlans.length > 0 && (
           <div className="mt-14">
             <h2 className="mb-4 text-center text-lg font-semibold text-white">
-              Full feature comparison
+              {t('subscription.comparisonTitle')}
             </h2>
             <ComparisonTable plans={orderedPlans} />
           </div>
@@ -289,13 +302,13 @@ export function Subscription() {
 
         {/* Footer copy / FAQ-ish */}
         <div className="mt-12 grid gap-4 text-center text-xs text-slate-400 sm:grid-cols-3">
-          <p>✓ Cancel auto-renewal any time</p>
-          <p>✓ GST-ready invoices</p>
+          <p>{t('subscription.footer.cancelAnytime')}</p>
+          <p>{t('subscription.footer.gstReady')}</p>
           <p>{premiumYearlySavings > 0
-            ? `✓ Yearly plans save ${formatInr(premiumYearlySavings)} on Premium`
-            : '✓ Switch plans any time'}</p>
+            ? t('subscription.footer.yearlySavings', { amount: formatInr(premiumYearlySavings) })
+            : t('subscription.footer.switchAnytime')}</p>
         </div>
-      </div>
+      </motion.div>
     </main>
   );
 }

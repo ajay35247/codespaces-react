@@ -1,0 +1,17 @@
+{
+  "subscription": {
+    "eyebrow": "Pricing",
+    "headline": "Pick the plan that pays you back",
+    "subhead": "One simple choice. Earn more, get loads faster, close deals quicker. Switch or cancel any time — yearly plans get 2 months free.",
+    "couponPlaceholder": "Coupon code",
+    "couponApply": "Apply",
+    "couponClear": "Clear",
+    "comparisonTitle": "Full feature comparison",
+    "footer": {
+      "cancelAnytime": "✓ Cancel auto-renewal any time",
+      "gstReady": "✓ GST-ready invoices",
+      "yearlySavings": "✓ Yearly plans save {{amount}} on Premium",
+      "switchAnytime": "✓ Switch plans any time"
+    }
+  }
+}
