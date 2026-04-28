@@ -1,5 +1,5 @@
 import UsageCounter from '../schemas/UsageCounterSchema.js';
-import { getActiveSubscription } from './subscription.js';
+import { buildUpgradeHint, getActiveSubscription } from './subscription.js';
 
 /**
  * Daily-quota enforcement.
@@ -99,6 +99,11 @@ export function requireDailyQuota(action) {
           });
           if (enforce) {
             return res.status(429).json({
+              ...buildUpgradeHint({
+                trigger: 'LIMIT_HIT',
+                fromPlan: planId,
+                meta: { action, limit, used },
+              }),
               error: 'Daily limit reached for your current plan',
               code: 'QUOTA_EXCEEDED',
               action,

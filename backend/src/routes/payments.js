@@ -5,8 +5,10 @@ import Razorpay from 'razorpay';
 import { verifyJWT } from '../middleware/authorize.js';
 import { requirePaymentsEnabled } from '../middleware/platformControl.js';
 import {
+  buildUpgradeHint,
   getActiveSubscription,
   getSubscriptionFeatures,
+  nextPlanUp,
   PLAN_FEATURES,
   PLAN_RANK,
   resolvePlanCode,
@@ -586,6 +588,83 @@ router.post('/trial/start', verifyJWT, requirePaymentsEnabled(), async (req, res
   } catch (error) {
     console.error('Trial start error:', error.message);
     return res.status(500).json({ error: 'Failed to start trial' });
+  }
+});
+
+// ── Upgrade-suggestion endpoint ──────────────────────────────────────────
+// Called by the frontend when:
+//   - context=PRICING_VIEW : user opened the /subscription page
+//   - context=HIGH_USAGE   : usage >= 80% of today's limit (computed here,
+//                            so the client can fire it after every quota
+//                            read without duplicating the threshold)
+//   - context=LIMIT_HIT    : usually surfaced via the 429 quota response
+//                            already, but the explicit GET helps re-prompt
+//                            after dismissal.
+// The response shape matches buildUpgradeHint() so the frontend modal can
+// be reused verbatim.
+const UPGRADE_CONTEXTS = ['LIMIT_HIT', 'HIGH_USAGE', 'PRICING_VIEW'];
+const HIGH_USAGE_THRESHOLD = 0.8; // fire HIGH_USAGE at >=80% of any daily counter
+
+router.get('/upgrade-suggestion', verifyJWT, async (req, res) => {
+  try {
+    const requested = String(req.query.context || 'PRICING_VIEW').toUpperCase();
+    const context = UPGRADE_CONTEXTS.includes(requested) ? requested : 'PRICING_VIEW';
+
+    const sub = await getActiveSubscription(req.user.id);
+    const fromPlan = sub?.planId || 'free';
+
+    // Premium users have nothing left to upgrade to — return a stay-the-course
+    // payload instead of nudging them to themselves.
+    if (fromPlan === 'premium') {
+      return res.json({
+        upgrade: false,
+        trigger: context,
+        fromPlan,
+        suggestedPlan: null,
+        message: "You're already on Premium — every load is yours to win.",
+        meta: null,
+      });
+    }
+
+    // For HIGH_USAGE we additionally compute today's usage % so the modal can
+    // render an accurate "you've used X / Y today" line. We don't gate on the
+    // threshold here — the client decides whether to *show* the modal — but we
+    // include the computed ratio in `meta`.
+    let meta = null;
+    if (context === 'HIGH_USAGE' || context === 'LIMIT_HIT') {
+      try {
+        const usage = await readUsage(req.user.id);
+        const features = sub?.features || PLAN_FEATURES.free;
+        const segments = ['loads', 'bids'].map((action) => {
+          const limit = Number(features[`${action}PerDay`]);
+          const used  = Number(usage[`${action === 'loads' ? 'loadsCreated' : 'bidsPlaced'}`] || 0);
+          if (!Number.isFinite(limit) || limit < 0) return null;
+          const ratio = limit > 0 ? used / limit : 0;
+          return { action, limit, used, ratio };
+        }).filter(Boolean);
+        const peak = segments.reduce((best, s) => (s.ratio > (best?.ratio ?? -1) ? s : best), null);
+        meta = {
+          highUsageThreshold: HIGH_USAGE_THRESHOLD,
+          segments,
+          peakAction: peak?.action || null,
+          peakRatio:  peak ? Number(peak.ratio.toFixed(2)) : 0,
+        };
+      } catch (err) {
+        // Usage lookup must not block the suggestion response.
+        console.warn('upgrade-suggestion usage lookup failed:', err.message);
+      }
+    }
+
+    const overrideTo = context === 'PRICING_VIEW' ? 'premium' : nextPlanUp(fromPlan);
+    return res.json(buildUpgradeHint({
+      trigger: context,
+      fromPlan,
+      overrideTo,
+      meta,
+    }));
+  } catch (error) {
+    console.error('upgrade-suggestion error:', error.message);
+    return res.status(500).json({ error: 'Failed to load upgrade suggestion' });
   }
 });
 
