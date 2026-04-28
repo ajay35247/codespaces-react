@@ -9,7 +9,13 @@ import Payment from '../schemas/PaymentSchema.js';
 import AuditLog from '../schemas/AuditLogSchema.js';
 import AdminSession from '../schemas/AdminSessionSchema.js';
 import AdminControlState from '../schemas/AdminControlStateSchema.js';
-import SubscriptionPlan from '../schemas/SubscriptionPlanSchema.js';
+import SubscriptionPlan, {
+  BILLING_CYCLES,
+  PRICE_MIN_INR,
+  PRICE_MAX_INR,
+  TRIAL_DAYS_MIN,
+  TRIAL_DAYS_MAX,
+} from '../schemas/SubscriptionPlanSchema.js';
 import Offer from '../schemas/OfferSchema.js';
 import LedgerEntry from '../schemas/LedgerEntrySchema.js';
 import FraudEvent from '../schemas/FraudEventSchema.js';
@@ -945,17 +951,56 @@ router.get('/control/search/trending', async (req, res) => {
   }
 });
 
+// Coerce/validate an incoming `pricing` object against BILLING_CYCLES.
+// Returns { ok: true, pricing } where `pricing` only contains numeric
+// entries inside [PRICE_MIN_INR, PRICE_MAX_INR], or { ok: false, error }.
+// Cycles whose value is null/undefined/empty-string are dropped, allowing
+// admins to remove a cycle from a plan. `requireAtLeastOne` enforces that
+// the resulting plan still has at least one price (used on create).
+function sanitisePricingPayload(raw, { requireAtLeastOne } = { requireAtLeastOne: false }) {
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ok: false, error: 'pricing must be an object keyed by billing cycle' };
+  }
+  const unknown = Object.keys(raw).filter((k) => !BILLING_CYCLES.includes(k));
+  if (unknown.length > 0) {
+    return { ok: false, error: `Unknown billing cycle(s): ${unknown.join(', ')}` };
+  }
+  const pricing = {};
+  for (const cycle of BILLING_CYCLES) {
+    const value = raw[cycle];
+    if (value === undefined || value === null || value === '') continue;
+    const num = Number(value);
+    if (!Number.isFinite(num)) {
+      return { ok: false, error: `pricing.${cycle} must be a number` };
+    }
+    if (num < PRICE_MIN_INR || num > PRICE_MAX_INR) {
+      return { ok: false, error: `pricing.${cycle} must be between ${PRICE_MIN_INR} and ${PRICE_MAX_INR}` };
+    }
+    // Round to 2 decimals to keep INR amounts clean.
+    pricing[cycle] = Math.round(num * 100) / 100;
+  }
+  if (requireAtLeastOne && Object.keys(pricing).length === 0) {
+    return { ok: false, error: 'At least one billing cycle price is required' };
+  }
+  return { ok: true, pricing };
+}
+
 router.post('/pricing/plans', [
   body('name').isString().isLength({ min: 2, max: 120 }),
   body('code').isString().isLength({ min: 2, max: 50 }),
-  body('pricing.monthly').isNumeric(),
-  body('pricing.quarterly').isNumeric(),
-  body('pricing.yearly').isNumeric(),
+  body('pricing').isObject().withMessage('pricing object required'),
+  body('trialDays').optional().isInt({ min: TRIAL_DAYS_MIN, max: TRIAL_DAYS_MAX })
+    .withMessage(`trialDays must be an integer between ${TRIAL_DAYS_MIN} and ${TRIAL_DAYS_MAX}`),
 ], async (req, res) => {
   if (!ensureValidRequest(req, res)) return;
   try {
+    const sanitised = sanitisePricingPayload(req.body.pricing, { requireAtLeastOne: true });
+    if (!sanitised.ok) {
+      return res.status(400).json({ error: sanitised.error });
+    }
     const plan = await SubscriptionPlan.create({
       ...req.body,
+      pricing: sanitised.pricing,
       pricingVersion: 1,
     });
     return res.status(201).json({ plan });
@@ -983,39 +1028,60 @@ router.patch('/pricing/plans/:id', async (req, res) => {
     const plan = await SubscriptionPlan.findById(req.params.id);
     if (!plan) return res.status(404).json({ error: 'Plan not found' });
 
-  const previousPricing = { ...plan.pricing.toObject() };
-    const incomingPricing = req.body.pricing || previousPricing;
+    const previousPricing = plan.pricing ? { ...plan.pricing.toObject() } : {};
+    let incomingPricing = previousPricing;
+    if (req.body.pricing !== undefined) {
+      const sanitised = sanitisePricingPayload(req.body.pricing, { requireAtLeastOne: true });
+      if (!sanitised.ok) {
+        return res.status(400).json({ error: sanitised.error });
+      }
+      incomingPricing = sanitised.pricing;
+    }
     const applyOnRenewalOnly = req.body.applyOnRenewalOnly !== false;
 
-    if (req.body.scheduleAt) {
+    if (req.body.scheduleAt && req.body.pricing !== undefined) {
       plan.pendingPriceChange = {
         pricing: incomingPricing,
         effectiveFrom: new Date(req.body.scheduleAt),
         applyOnRenewalOnly,
       };
-    } else {
+    } else if (req.body.pricing !== undefined) {
       plan.pricing = incomingPricing;
       plan.pricingVersion += 1;
       plan.nextRenewalPriceOnly = applyOnRenewalOnly;
-      for (const cycle of ['monthly', 'quarterly', 'yearly']) {
-        if (Number(previousPricing[cycle]) !== Number(incomingPricing[cycle])) {
-          plan.priceHistory.push({
-            billingCycle: cycle,
-            oldPrice: Number(previousPricing[cycle]),
-            newPrice: Number(incomingPricing[cycle]),
-            effectiveFrom: new Date(),
-            changedBy: req.user.id,
-            changeType: 'manual-update',
-            // Record the version this change creates so rollback can replay history.
-            pricingVersionAtChange: plan.pricingVersion + 1,
-          });
-        }
+      // Iterate every supported cycle so adding/removing a cycle (e.g. a
+      // brand-new daily price, or dropping the yearly tier) is recorded.
+      for (const cycle of BILLING_CYCLES) {
+        const prev = previousPricing[cycle];
+        const next = incomingPricing[cycle];
+        const prevDefined = prev !== undefined && prev !== null;
+        const nextDefined = next !== undefined && next !== null;
+        if (!prevDefined && !nextDefined) continue;
+        if (prevDefined && nextDefined && Number(prev) === Number(next)) continue;
+        plan.priceHistory.push({
+          billingCycle: cycle,
+          oldPrice: prevDefined ? Number(prev) : 0,
+          newPrice: nextDefined ? Number(next) : 0,
+          effectiveFrom: new Date(),
+          changedBy: req.user.id,
+          changeType: 'manual-update',
+          // Record the version this change creates so rollback can replay history.
+          pricingVersionAtChange: plan.pricingVersion,
+        });
       }
     }
 
     if (typeof req.body.taxPercent === 'number') plan.taxPercent = req.body.taxPercent;
     if (typeof req.body.platformFeePercent === 'number') plan.platformFeePercent = req.body.platformFeePercent;
-    if (typeof req.body.trialDays === 'number') plan.trialDays = req.body.trialDays;
+    if (req.body.trialDays !== undefined) {
+      const trialDays = Number(req.body.trialDays);
+      if (!Number.isInteger(trialDays) || trialDays < TRIAL_DAYS_MIN || trialDays > TRIAL_DAYS_MAX) {
+        return res.status(400).json({
+          error: `trialDays must be an integer between ${TRIAL_DAYS_MIN} and ${TRIAL_DAYS_MAX}`,
+        });
+      }
+      plan.trialDays = trialDays;
+    }
     if (typeof req.body.active === 'boolean') plan.active = req.body.active;
     if (Array.isArray(req.body.featureMapping)) plan.featureMapping = req.body.featureMapping;
     if (Array.isArray(req.body.regionMultipliers)) plan.regionMultipliers = req.body.regionMultipliers;
@@ -1051,11 +1117,11 @@ router.post('/pricing/plans/:id/rollback', [
     // Entries with pricingVersionAtChange <= targetVersion were applied at or before
     // the version we want to restore, so their newPrice is the price at targetVersion.
     // Entries without pricingVersionAtChange (legacy) are not replayed.
-    const rolledBackPricing = { ...plan.pricing.toObject() };
+    const rolledBackPricing = plan.pricing ? { ...plan.pricing.toObject() } : {};
     let anyChange = false;
     const newVersion = plan.pricingVersion + 1;
 
-    for (const cycle of ['monthly', 'quarterly', 'yearly']) {
+    for (const cycle of BILLING_CYCLES) {
       // Find the latest history entry for this cycle at or before targetVersion.
       const entriesForCycle = plan.priceHistory
         .filter((e) => e.billingCycle === cycle && e.pricingVersionAtChange != null && e.pricingVersionAtChange <= targetVersion);
@@ -1064,11 +1130,12 @@ router.post('/pricing/plans/:id/rollback', [
       entriesForCycle.sort((a, b) => a.pricingVersionAtChange - b.pricingVersionAtChange);
       const lastEntry = entriesForCycle[entriesForCycle.length - 1];
       const restoredPrice = Number(lastEntry.newPrice);
-      const currentPrice = Number(plan.pricing[cycle]);
-      if (restoredPrice !== currentPrice) {
+      const currentPrice = rolledBackPricing[cycle];
+      const currentDefined = currentPrice !== undefined && currentPrice !== null;
+      if (!currentDefined || Number(currentPrice) !== restoredPrice) {
         plan.priceHistory.push({
           billingCycle: cycle,
-          oldPrice: currentPrice,
+          oldPrice: currentDefined ? Number(currentPrice) : 0,
           newPrice: restoredPrice,
           effectiveFrom: new Date(),
           changedBy: req.user.id,
