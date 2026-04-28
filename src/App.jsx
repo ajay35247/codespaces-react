@@ -9,6 +9,7 @@ import { CookieConsentBanner } from './components/CookieConsentBanner';
 import { Footer } from './components/Footer';
 import { ThemeProvider } from './components/ThemeProvider';
 import { DashboardShell } from './components/DashboardShell';
+import { QuotaExceededModal } from './components/pricing/QuotaExceededModal';
 import { bootstrapSession } from './features/auth/authSlice';
 import { trackPageView } from './utils/analytics';
 
@@ -72,6 +73,7 @@ function AppWrapper() {
           <AppRoutes />
         </DashboardShell>
         <CookieConsentBanner />
+        <QuotaExceededModal />
       </>
     );
   }
@@ -83,6 +85,7 @@ function AppWrapper() {
       <AppRoutes />
       {!isAdminPanelRoute && <Footer />}
       {!isAdminPanelRoute && <CookieConsentBanner />}
+      <QuotaExceededModal />
     </>
   );
 }
