@@ -2,6 +2,63 @@ const DEFAULT_API_ORIGIN = 'http://localhost:5000';
 
 // Mutating HTTP methods that require a CSRF token header.
 const CSRF_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+const IDEMPOTENT_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+// Per-endpoint circuit-breaker state.  Opened after N consecutive failures
+// within a rolling window; rejects calls for `breakerOpenMs` to prevent
+// retry-storm DoS on a degraded backend.
+const BREAKER_FAILURE_THRESHOLD = 5;
+const BREAKER_OPEN_MS = 30_000;
+const BREAKER_WINDOW_MS = 60_000;
+const breakers = new Map(); // key: METHOD path, value: { failures: number[], openedAt: 0 }
+
+function breakerKey(method, path) {
+  // Strip query string + dynamic id-like segments so /loads/123 and /loads/456
+  // share the same breaker.
+  const cleanPath = String(path || '')
+    .split('?')[0]
+    .replace(/\/[0-9a-f]{8,}/gi, '/:id')
+    .replace(/\/\d+/g, '/:id');
+  return `${method.toUpperCase()} ${cleanPath}`;
+}
+
+function breakerState(key) {
+  let s = breakers.get(key);
+  if (!s) {
+    s = { failures: [], openedAt: 0 };
+    breakers.set(key, s);
+  }
+  return s;
+}
+
+function breakerAllow(key) {
+  const s = breakerState(key);
+  const now = Date.now();
+  if (s.openedAt && (now - s.openedAt) < BREAKER_OPEN_MS) return false;
+  if (s.openedAt && (now - s.openedAt) >= BREAKER_OPEN_MS) {
+    // half-open: allow a single trial; reset openedAt so subsequent calls
+    // queue behind the breaker again until success closes it.
+    s.openedAt = 0;
+    s.failures = [];
+  }
+  return true;
+}
+
+function breakerOnSuccess(key) {
+  const s = breakerState(key);
+  s.failures = [];
+  s.openedAt = 0;
+}
+
+function breakerOnFailure(key) {
+  const s = breakerState(key);
+  const now = Date.now();
+  s.failures = s.failures.filter((t) => (now - t) < BREAKER_WINDOW_MS);
+  s.failures.push(now);
+  if (s.failures.length >= BREAKER_FAILURE_THRESHOLD) {
+    s.openedAt = now;
+  }
+}
 
 function stripTrailingSlash(value = '') {
   return value.replace(/\/+$/, '');
@@ -17,12 +74,25 @@ export function getApiOrigin() {
   return configured.endsWith('/api') ? configured.slice(0, -4) : configured;
 }
 
+export function getApiFallbackOrigin() {
+  const configured = (import.meta.env.VITE_API_FALLBACK_URL || '').toString().trim();
+  if (!configured) return null;
+  const stripped = stripTrailingSlash(configured);
+  return stripped.endsWith('/api') ? stripped.slice(0, -4) : stripped;
+}
+
 export function getApiRootUrl() {
   return `${getApiOrigin()}/api`;
 }
 
 export function buildApiUrl(path = '') {
   return `${getApiRootUrl()}${normalizePath(path)}`;
+}
+
+function buildFallbackUrl(path = '') {
+  const origin = getApiFallbackOrigin();
+  if (!origin) return null;
+  return `${origin}/api${normalizePath(path)}`;
 }
 
 /**
@@ -44,22 +114,104 @@ export function createJsonHeaders(headers = {}) {
   };
 }
 
-export async function apiFetch(path, options = {}) {
-  const { _isRetry, ...fetchOptions } = options;
+function jitter(ms) {
+  return ms + Math.floor(Math.random() * (ms / 2));
+}
 
-  // Attach CSRF token header for all mutating requests so the backend
-  // double-submit check passes.
+function shouldRetry(method, status, isNetworkError, retryOptIn) {
+  if (isNetworkError) return true;
+  if (status === 429) return true;
+  if (status >= 500 && status < 600) {
+    if (IDEMPOTENT_METHODS.has(method)) return true;
+    return retryOptIn === true;
+  }
+  return false;
+}
+
+function parseRetryAfter(headerValue) {
+  if (!headerValue) return null;
+  const seconds = Number(headerValue);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const date = Date.parse(headerValue);
+  if (!Number.isNaN(date)) return Math.max(0, date - Date.now());
+  return null;
+}
+
+async function reportFailedRequest(path, method, info) {
+  // errorReporter no longer imports from api.js (it inlines URL building),
+  // so this static-style import is safe and the bundler picks the same chunk.
+  try {
+    const mod = await import('../services/errorReporter');
+    if (mod && typeof mod.captureError === 'function') {
+      mod.captureError({
+        message: `API ${method} ${path} failed: ${info}`,
+        type: 'api.fetch',
+        severity: 'warning',
+      });
+    }
+  } catch { /* swallow */ }
+}
+
+export async function apiFetch(path, options = {}) {
+  const { _isRetry, _attempt = 0, retry = true, retryMaxAttempts = 3, ...fetchOptions } = options;
+
   const method = (fetchOptions.method || 'GET').toUpperCase();
   const csrfHeaders = CSRF_METHODS.has(method) ? { 'X-CSRF-Token': getCsrfToken() } : {};
 
-  const response = await fetch(buildApiUrl(path), {
-    credentials: 'include',
-    ...fetchOptions,
-    headers: createJsonHeaders({ ...csrfHeaders, ...fetchOptions.headers }),
-  });
+  const key = breakerKey(method, path);
+  if (!breakerAllow(key)) {
+    // Fail fast to prevent piling onto a sick endpoint.
+    throw new Error(`Service temporarily unavailable: ${path}`);
+  }
+
+  const targetUrl = buildApiUrl(path);
+  let response;
+  let networkError = null;
+  try {
+    response = await fetch(targetUrl, {
+      credentials: 'include',
+      ...fetchOptions,
+      headers: createJsonHeaders({ ...csrfHeaders, ...fetchOptions.headers }),
+    });
+  } catch (err) {
+    networkError = err;
+  }
+
+  // Network failure or 5xx: try fallback origin once, then exponential retry.
+  if (networkError || (response && response.status >= 500)) {
+    breakerOnFailure(key);
+    const status = response?.status || 0;
+    const fallbackUrl = !_isRetry ? buildFallbackUrl(path) : null;
+    if (fallbackUrl && _attempt === 0) {
+      try {
+        const fbResponse = await fetch(fallbackUrl, {
+          credentials: 'include',
+          ...fetchOptions,
+          headers: createJsonHeaders({ ...csrfHeaders, ...fetchOptions.headers }),
+        });
+        if (fbResponse.ok) {
+          breakerOnSuccess(key);
+          return parseApiBody(fbResponse);
+        }
+      } catch {
+        // fall through to retry logic
+      }
+    }
+    if (retry && _attempt < retryMaxAttempts && shouldRetry(method, status, !!networkError, options.retryOnPost)) {
+      const retryAfter = parseRetryAfter(response?.headers?.get?.('retry-after'));
+      const backoff = retryAfter !== null ? Math.min(retryAfter, 10_000) : jitter(300 * (2 ** _attempt));
+      await new Promise((r) => setTimeout(r, backoff));
+      // Pass `_isRetry: true` so the retry doesn't trigger another silent
+      // token-refresh chain — the original 401 path handles refresh once and
+      // shouldn't repeat from inside a 5xx-retry loop.
+      return apiFetch(path, { ...options, _attempt: _attempt + 1, _isRetry: true });
+    }
+    reportFailedRequest(path, method, networkError ? networkError.message : `status ${status}`);
+    if (networkError) throw networkError;
+  }
 
   // Attempt a single silent token refresh when the access token has expired.
-  if (response.status === 401 && !_isRetry) {
+  if (response && response.status === 401 && !_isRetry) {
     const payload = await parseApiBody(response);
     if (payload?.code === 'TOKEN_EXPIRED') {
       try {
@@ -76,23 +228,36 @@ export async function apiFetch(path, options = {}) {
         // Refresh network error – fall through and throw the original 401.
       }
     }
+    breakerOnFailure(key);
     throw new Error(getApiErrorMessage(payload, 'Request failed'));
+  }
+
+  if (!response) {
+    // All retries exhausted, no fallback.
+    throw new Error('Network request failed');
   }
 
   const payload = await parseApiBody(response);
 
   if (!response.ok) {
+    breakerOnFailure(key);
+    if (response.status === 429) {
+      reportFailedRequest(path, method, '429 rate-limited');
+    }
     throw new Error(getApiErrorMessage(payload, 'Request failed'));
   }
 
+  breakerOnSuccess(key);
   return payload;
 }
 
-export async function apiRequest(path, { method = 'GET', body, headers } = {}) {
+export async function apiRequest(path, { method = 'GET', body, headers, retry, retryOnPost } = {}) {
   return apiFetch(path, {
     method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
+    retry,
+    retryOnPost,
   });
 }
 
@@ -138,3 +303,6 @@ export function getApiErrorMessage(payload, fallbackMessage = 'Request failed') 
 
   return payload.error || payload.message || fallbackMessage;
 }
+
+/** Test-only inspection of breaker state. */
+export const __apiInternals = { breakers, breakerKey };

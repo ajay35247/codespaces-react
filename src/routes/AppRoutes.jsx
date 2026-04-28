@@ -1,4 +1,5 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
+import { lazy, Suspense } from 'react';
 import { Home } from '../pages/Home';
 import { Login } from '../pages/Login';
 import { Register } from '../pages/Register';
@@ -26,103 +27,118 @@ import { Kyc } from '../pages/Kyc';
 import { UserProfilePanel } from '../pages/UserProfilePanel';
 import { SearchResults } from '../pages/SearchResults';
 import { ProtectedRoute } from '../components/ProtectedRoute';
+import { RouteErrorBoundary } from '../components/RouteErrorBoundary';
+
+// Heavy admin-only monitoring page is code-split so it never lands in the
+// main bundle (the auto-error-detection plan caps the dashboard at lazy-load).
+const AdminMonitoring = lazy(() => import('../pages/admin/Monitoring'));
 
 const ADMIN_PANEL_PATH = (import.meta.env.VITE_ADMIN_PANEL_PATH || '').replace(/^\//, '') || null;
 
 export function AppRoutes() {
   return (
-    <Routes>
-      <Route path="/" element={<Home />} />
-      <Route path="/login" element={<Login />} />
-      <Route path="/register" element={<Register />} />
-      <Route path="/forgot-password" element={<ForgotPassword />} />
-      <Route path="/reset-password" element={<ResetPassword />} />
-      <Route path="/verify-email/:token" element={<VerifyEmail />} />
-      <Route path="/tracking" element={
-        <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker', 'truck_owner']}>
-          <Tracking />
-        </ProtectedRoute>
-      } />
-      <Route path="/gst" element={
-        <ProtectedRoute allowedRoles={['shipper', 'broker']}>
-          <GstBilling />
-        </ProtectedRoute>
-      } />
-      <Route path="/payment" element={
-        <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker', 'truck_owner']}>
-          <Payment />
-        </ProtectedRoute>
-      } />
-      <Route path="/subscription" element={
-        <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker', 'truck_owner']}>
-          <Subscription />
-        </ProtectedRoute>
-      } />
-      <Route path="/wallet" element={
-        <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker', 'truck_owner']}>
-          <Wallet />
-        </ProtectedRoute>
-      } />
-      <Route path="/kyc" element={
-        <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker', 'truck_owner']}>
-          <Kyc />
-        </ProtectedRoute>
-      } />
-      <Route path="/profile" element={
-        <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker', 'truck_owner']}>
-          <UserProfilePanel />
-        </ProtectedRoute>
-      } />
-      <Route path="/shipper" element={
-        <ProtectedRoute allowedRoles={['shipper']}>
-          <ShipperWorkflow />
-        </ProtectedRoute>
-      } />
-      <Route path="/driver" element={
-        <ProtectedRoute allowedRoles={['driver']}>
-          <DriverDashboard />
-        </ProtectedRoute>
-      } />
-      <Route path="/driver/live" element={
-        <ProtectedRoute allowedRoles={['driver', 'truck_owner']}>
-          <DriverLive />
-        </ProtectedRoute>
-      } />
-      <Route path="/truck-owner" element={
-        <ProtectedRoute allowedRoles={['truck_owner']}>
-          <TruckOwnerDashboard />
-        </ProtectedRoute>
-      } />
-      <Route path="/tolls" element={
-        <ProtectedRoute allowedRoles={['driver']}>
-          <TollDashboard />
-        </ProtectedRoute>
-      } />
-      <Route path="/contact" element={<Contact />} />
-      <Route path="/search" element={<SearchResults />} />
-      <Route path="/privacy" element={<PrivacyPolicy />} />
-      <Route path="/terms" element={<Terms />} />
-      <Route path="/faq" element={<FAQ />} />
-      <Route
-        path="/broker"
-        element={
-          <ProtectedRoute allowedRoles={['broker']}>
-            <BrokerWorkflow />
+    <RouteErrorBoundary>
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<Register />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
+        <Route path="/verify-email/:token" element={<VerifyEmail />} />
+        <Route path="/tracking" element={
+          <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker', 'truck_owner']}>
+            <Tracking />
           </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/dashboard/:role"
-        element={
-          <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker']}>
-            <RoleDashboard />
+        } />
+        <Route path="/gst" element={
+          <ProtectedRoute allowedRoles={['shipper', 'broker']}>
+            <GstBilling />
           </ProtectedRoute>
-        }
-      />
-      {ADMIN_PANEL_PATH !== null && (
-        <Route path={`/${ADMIN_PANEL_PATH}`} element={<AdminControlPanel />} />
-      )}
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+        } />
+        <Route path="/payment" element={
+          <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker', 'truck_owner']}>
+            <Payment />
+          </ProtectedRoute>
+        } />
+        <Route path="/subscription" element={
+          <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker', 'truck_owner']}>
+            <Subscription />
+          </ProtectedRoute>
+        } />
+        <Route path="/wallet" element={
+          <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker', 'truck_owner']}>
+            <Wallet />
+          </ProtectedRoute>
+        } />
+        <Route path="/kyc" element={
+          <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker', 'truck_owner']}>
+            <Kyc />
+          </ProtectedRoute>
+        } />
+        <Route path="/profile" element={
+          <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker', 'truck_owner']}>
+            <UserProfilePanel />
+          </ProtectedRoute>
+        } />
+        <Route path="/shipper" element={
+          <ProtectedRoute allowedRoles={['shipper']}>
+            <ShipperWorkflow />
+          </ProtectedRoute>
+        } />
+        <Route path="/driver" element={
+          <ProtectedRoute allowedRoles={['driver']}>
+            <DriverDashboard />
+          </ProtectedRoute>
+        } />
+        <Route path="/driver/live" element={
+          <ProtectedRoute allowedRoles={['driver', 'truck_owner']}>
+            <DriverLive />
+          </ProtectedRoute>
+        } />
+        <Route path="/truck-owner" element={
+          <ProtectedRoute allowedRoles={['truck_owner']}>
+            <TruckOwnerDashboard />
+          </ProtectedRoute>
+        } />
+        <Route path="/tolls" element={
+          <ProtectedRoute allowedRoles={['driver']}>
+            <TollDashboard />
+          </ProtectedRoute>
+        } />
+        <Route path="/contact" element={<Contact />} />
+        <Route path="/search" element={<SearchResults />} />
+        <Route path="/privacy" element={<PrivacyPolicy />} />
+        <Route path="/terms" element={<Terms />} />
+        <Route path="/faq" element={<FAQ />} />
+        <Route
+          path="/broker"
+          element={
+            <ProtectedRoute allowedRoles={['broker']}>
+              <BrokerWorkflow />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/dashboard/:role"
+          element={
+            <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker']}>
+              <RoleDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/monitoring"
+          element={
+            <Suspense fallback={<div className="p-8 text-slate-300">Loading monitoring…</div>}>
+              <AdminMonitoring />
+            </Suspense>
+          }
+        />
+        {ADMIN_PANEL_PATH !== null && (
+          <Route path={`/${ADMIN_PANEL_PATH}`} element={<AdminControlPanel />} />
+        )}
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </RouteErrorBoundary>
   );
 }
