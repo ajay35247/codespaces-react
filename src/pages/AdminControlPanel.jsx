@@ -81,6 +81,21 @@ const EMPTY_PLAN_FORM = {
   active: true,
 };
 
+// ── Offer quick-launch templates ────────────────────────────────────────────
+// Pre-fill the offer creation form for common promotion scenarios so the
+// admin doesn't have to type dates / discounts from scratch each time.
+const OFFER_TEMPLATES = [
+  { name: 'Diwali Bonanza',      type: 'festival', label: '🎉 Diwali Offer',       discountPercent: 25, durationDays: 7   },
+  { name: 'Flash Sale',          type: 'flat',     label: '⚡ 24-Hour Flash Sale',  discountPercent: 40, durationDays: 1   },
+  { name: 'Holi Spring Sale',    type: 'festival', label: '🎨 Holi Offer',         discountPercent: 20, durationDays: 2   },
+  { name: 'New Year Kickstart',  type: 'festival', label: '🎊 New Year Offer',     discountPercent: 30, durationDays: 5   },
+  { name: 'Independence Day',    type: 'festival', label: '🇮🇳 Independence Day',  discountPercent: 15, durationDays: 3   },
+  { name: 'Republic Day',        type: 'festival', label: '🇮🇳 Republic Day',      discountPercent: 20, durationDays: 3   },
+  { name: 'Loyalty Reward',      type: 'coupon',   label: '🏆 Loyal Customer',     discountPercent: 15, durationDays: 30, couponCode: 'LOYAL15'    },
+  { name: 'Win-back Campaign',   type: 'coupon',   label: '💔 We Miss You',        discountPercent: 50, durationDays: 7,  couponCode: 'COMEBACK50' },
+  { name: 'Early Adopter',       type: 'coupon',   label: '🚀 Early Adopter',      discountPercent: 35, durationDays: 14, couponCode: 'EARLY35'    },
+];
+
 function updateItemById(setter, id, updates) {
   setter((prev) => prev.map((item) => item._id === id ? { ...item, ...updates } : item));
 }
@@ -585,7 +600,10 @@ export function AdminControlPanel() {
     }
   };
 
-  const handlePricingSave = async (plan, { schedule } = { schedule: false }) => {
+  // `forceApplyOnRenewalOnly` is an optional override so callers (e.g. the
+  // Subscriptions card view) can guarantee the renewal-only flag without
+  // relying on a prior async draft state update settling before this runs.
+  const handlePricingSave = async (plan, { schedule, forceApplyOnRenewalOnly } = { schedule: false }) => {
     setPricingSavingId(plan._id);
     setError('');
     try {
@@ -596,7 +614,7 @@ export function AdminControlPanel() {
       }
       const payload = {
         pricing: pricingPayload,
-        applyOnRenewalOnly: !!draft.applyOnRenewalOnly,
+        applyOnRenewalOnly: forceApplyOnRenewalOnly !== undefined ? forceApplyOnRenewalOnly : !!draft.applyOnRenewalOnly,
         trialDays: Number(draft.trialDays) || 0,
         taxPercent: Number(draft.taxPercent) || 0,
         platformFeePercent: Number(draft.platformFeePercent) || 0,
@@ -658,20 +676,71 @@ export function AdminControlPanel() {
     }
   };
 
+  // Pre-fill the offer form from a template and scroll the user to the form.
+  const handleOfferTemplate = (tpl) => {
+    // Format a Date as a datetime-local string in the browser's local timezone.
+    const toLocal = (d) =>
+      new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+    const start = new Date(Date.now() + 60_000); // 1 minute from now
+    const end   = new Date(start.getTime() + tpl.durationDays * 86_400_000);
+    setOfferForm({
+      name: tpl.name,
+      type: tpl.type,
+      label: tpl.label,
+      discountPercent: tpl.discountPercent,
+      startsAt: toLocal(start),
+      endsAt:   toLocal(end),
+      appliesToPlanCodes: '',
+      couponCode: tpl.couponCode || '',
+      usageLimit: '',
+    });
+  };
+
+  // Bulk-adjust: updates pricingDrafts for all matching plans so that the
+  // admin can preview the new prices on each card before saving individually.
+  const handleBulkPriceAdjust = (percent, category, cycle) => {
+    const pct = Number(percent);
+    if (!Number.isFinite(pct) || pct === 0) return;
+    const multiplier = 1 + pct / 100;
+    const targets = category === 'all'
+      ? pricingPlans
+      : pricingPlans.filter((p) => planCategory(p) === category);
+    const updates = {};
+    for (const plan of targets) {
+      const draft = getPricingDraft(plan);
+      const cyclesToAdjust = cycle === '_all'
+        ? BILLING_CYCLES.map((c) => c.key)
+        : [cycle];
+      const newPricing = { ...draft.pricing };
+      for (const ck of cyclesToAdjust) {
+        const v = newPricing[ck];
+        if (v !== '' && v != null) {
+          const adjusted = Math.round(Number(v) * multiplier);
+          newPricing[ck] = String(Math.min(15000, Math.max(0, adjusted)));
+        }
+      }
+      updates[plan._id] = { ...draft, pricing: newPricing };
+    }
+    setPricingDrafts((prev) => ({ ...prev, ...updates }));
+  };
+
   const TABS = [
-    { id: 'dashboard', label: 'Dashboard',     icon: '◉' },
-    { id: 'overview',  label: 'Overview',      icon: '▦' },
-    { id: 'users',     label: 'Users',         icon: '◌' },
-    { id: 'payments',  label: 'Payments',      icon: '₹' },
-    { id: 'pricing',   label: 'Pricing',       icon: '⊞' },
-    { id: 'offers',    label: 'Offers',        icon: '✦' },
-    { id: 'loads',     label: 'Loads',         icon: '⊟' },
-    { id: 'support',   label: 'Support',       icon: '◇' },
-    { id: 'gst',       label: 'GST Invoices',  icon: '⊜' },
-    { id: 'analytics', label: 'Analytics',     icon: '⊿' },
-    { id: 'flags',     label: 'Feature Flags', icon: '⚑' },
-    { id: 'search',    label: 'Search',        icon: '⌕' },
-    { id: 'audit',     label: 'Audit Log',     icon: '⊡' },
+    { id: 'dashboard',      label: 'Dashboard',         icon: '◉' },
+    { id: 'overview',       label: 'Overview',          icon: '▦' },
+    { id: 'users',          label: 'Users',             icon: '◌' },
+    { id: 'payments',       label: 'Payments',          icon: '₹' },
+    { id: 'subscriptions',  label: 'Subscriptions',     icon: '◈' },
+    { id: 'pricing',        label: 'Pricing (Advanced)', icon: '⊞' },
+    { id: 'offers',         label: 'Offers',            icon: '✦' },
+    { id: 'loads',          label: 'Loads',             icon: '⊟' },
+    { id: 'support',        label: 'Support',           icon: '◇' },
+    { id: 'gst',            label: 'GST Invoices',      icon: '⊜' },
+    { id: 'analytics',      label: 'Analytics',         icon: '⊿' },
+    { id: 'flags',          label: 'Feature Flags',     icon: '⚑' },
+    { id: 'search',         label: 'Search',            icon: '⌕' },
+    { id: 'audit',          label: 'Audit Log',         icon: '⊡' },
+    { id: 'retention',      label: 'Retention',         icon: '◎' },
+    { id: 'trials',         label: 'Trials',            icon: '🎁' },
   ];
 
   // Default landing tab logic and the Quick-Action / Palette callbacks are
@@ -1085,6 +1154,37 @@ export function AdminControlPanel() {
           </div>
         )}
 
+        {activeTab === 'subscriptions' && (
+          <>
+            <SubscriptionIntelligenceDashboard
+              plans={pricingPlans}
+              onBulkAdjust={handleBulkPriceAdjust}
+            />
+            <SubscriptionPlansControl
+            pricingPlans={pricingPlans}
+            pricingSavingId={pricingSavingId}
+            getPricingDraft={getPricingDraft}
+            updatePricingDraftCycle={updatePricingDraftCycle}
+            updatePricingDraft={updatePricingDraft}
+            handlePricingSave={handlePricingSave}
+            handlePricingToggleActive={handlePricingToggleActive}
+            handlePricingDelete={async (plan) => {
+              if (!window.confirm(`Delete plan "${plan.name}"? This cannot be undone.`)) return;
+              setPricingSavingId(plan._id);
+              setError('');
+              try {
+                await api(`/pricing/plans/${plan._id}`, 'DELETE');
+                setPricingPlans((prev) => prev.filter((p) => p._id !== plan._id));
+              } catch (err) {
+                setError(err.message);
+              } finally {
+                setPricingSavingId(null);
+              }
+            }}
+          />
+          </>
+        )}
+
         {activeTab === 'pricing' && (
           <div className="mt-6 space-y-6">
             <form onSubmit={handlePricingCreate} className="rounded-2xl border border-white/10 bg-slate-900/60 p-5">
@@ -1306,6 +1406,24 @@ export function AdminControlPanel() {
               </div>
             )}
 
+            {/* ── Quick-launch templates ──────────────────────────────── */}
+            <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wider text-orange-300 mb-3">⚡ Quick Launch Templates</p>
+              <p className="text-xs text-slate-400 mb-3">Click a template to pre-fill the form below — adjust dates or discount % before saving.</p>
+              <div className="flex flex-wrap gap-2">
+                {OFFER_TEMPLATES.map((tpl) => (
+                  <button
+                    key={tpl.name}
+                    type="button"
+                    onClick={() => handleOfferTemplate(tpl)}
+                    className="rounded-full border border-white/15 px-3 py-1.5 text-xs text-slate-300 transition hover:border-orange-400/50 hover:bg-orange-500/10 hover:text-orange-300"
+                  >
+                    {tpl.label} · {tpl.discountPercent}% · {tpl.durationDays}d
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <form onSubmit={handleOfferCreate} className="rounded-2xl border border-white/10 bg-slate-900/60 p-5">
               <h3 className="text-base font-semibold">Create Offer</h3>
               <p className="mt-1 text-xs text-slate-400">
@@ -1460,6 +1578,30 @@ export function AdminControlPanel() {
           </div>
         )}
 
+        {activeTab === 'retention' && (
+          <RetentionDashboard plans={pricingPlans} />
+        )}
+
+        {activeTab === 'trials' && (
+          <TrialsDashboard
+            users={users}
+            onAction={async (userId, action, payload) => {
+              try {
+                const data = await api(
+                  `/admin/control/users/${userId}/trial/${action}`,
+                  'POST',
+                  payload || {},
+                );
+                setUsers((prev) => prev.map((u) =>
+                  String(u._id) === String(userId) ? { ...u, trial: data.trial } : u
+                ));
+              } catch (err) {
+                setError(err.message);
+              }
+            }}
+          />
+        )}
+
     </AdminShell>
     <CommandPalette
       open={paletteOpen}
@@ -1492,6 +1634,905 @@ function StatCard({ label, value }) {
     <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-5">
       <p className="text-sm text-slate-400">{label}</p>
       <p className="mt-2 text-2xl font-semibold">{value}</p>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Subscription Plans Control — card-based admin view of plans.
+// Price changes are always applied on next renewal only (the
+// applyOnRenewalOnly flag is forced to true so no existing
+// subscription is retroactively repriced).
+// ─────────────────────────────────────────────────────────────────
+
+// All billing cycles available in the tab bar. The first 7 map directly to
+// priced cycles in the schema. "_trial" and "_free" are special-purpose tabs:
+//   _trial  → edits the plan's trialDays field (pre-set to 15)
+//   _free   → shows which cycles currently have a ₹0 price
+const SUB_CYCLES = [
+  { key: 'daily',      label: 'Daily',        isSpecial: false },
+  { key: 'weekly',     label: 'Weekly',       isSpecial: false },
+  { key: 'fifteenDay', label: '15-day',       isSpecial: false },
+  { key: 'monthly',    label: 'Monthly',      isSpecial: false },
+  { key: 'quarterly',  label: 'Quarterly',    isSpecial: false },
+  { key: 'halfYearly', label: '6-month',      isSpecial: false },
+  { key: 'yearly',     label: '1-year',       isSpecial: false },
+  { key: '_trial',     label: '15-day Trial', isSpecial: true  },
+  { key: '_free',      label: 'Free',         isSpecial: true  },
+];
+
+// Maps a plan's code/name to a category key used in the filter tabs.
+function planCategory(plan) {
+  const str = `${plan.code} ${plan.name}`.toLowerCase();
+  if (str.includes('starter') || str.includes('basic')) return 'starter';
+  if (str.includes('growth'))                            return 'growth';
+  if (str.includes('enterprise'))                        return 'enterprise';
+  return 'other';
+}
+
+function SubscriptionPlansControl({
+  pricingPlans,
+  pricingSavingId,
+  getPricingDraft,
+  updatePricingDraftCycle,
+  updatePricingDraft,
+  handlePricingSave,
+  handlePricingToggleActive,
+  handlePricingDelete,
+}) {
+  // Which plan-category tab is active (null = All)
+  const [categoryFilter, setCategoryFilter] = useState(null);
+  // Active billing-cycle tab per plan, keyed by plan._id
+  const [cycleTabByPlan, setCycleTabByPlan] = useState({});
+
+  // Derive which category tabs actually have matching plans.
+  const categoryTabs = ['starter', 'growth', 'enterprise', 'other'].filter(
+    (cat) => pricingPlans.some((p) => planCategory(p) === cat)
+  );
+
+  const visiblePlans = categoryFilter
+    ? pricingPlans.filter((p) => planCategory(p) === categoryFilter)
+    : pricingPlans;
+
+  function getActiveCycle(planId) {
+    return cycleTabByPlan[planId] || 'monthly';
+  }
+
+  function setActiveCycle(planId, cycleKey) {
+    setCycleTabByPlan((prev) => ({ ...prev, [planId]: cycleKey }));
+  }
+
+  if (pricingPlans.length === 0) {
+    return (
+      <div className="mt-6">
+        <h2 className="text-lg font-semibold">Subscription Plans</h2>
+        <p className="mt-3 text-sm text-slate-500">
+          No plans yet. Go to the <strong>Pricing (Advanced)</strong> tab to create one.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-6 space-y-6">
+      {/* Header */}
+      <div>
+        <p className="text-xs uppercase tracking-[0.28em] text-orange-300">Payments</p>
+        <h2 className="mt-2 text-2xl font-semibold text-white">Subscription Plan Control</h2>
+        <p className="mt-2 text-sm text-slate-400">
+          Edit plan prices per billing cycle. Changes are shown to all users immediately but only
+          charged from their{' '}
+          <span className="font-medium text-amber-300">next renewal payment</span> — existing
+          active subscriptions are never retroactively repriced.
+        </p>
+      </div>
+
+      {/* Renewal-only banner */}
+      <div className="rounded-2xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+        ℹ Price changes take effect from the subscriber's <strong>next recharge / renewal</strong>.
+        No currently active subscription price is changed.
+      </div>
+
+      {/* ── Plan-category filter tabs ─────────────────────────────────── */}
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setCategoryFilter(null)}
+          className={`rounded-full px-4 py-1.5 text-sm font-semibold transition-colors ${
+            categoryFilter === null
+              ? 'bg-orange-500 text-slate-950'
+              : 'border border-white/15 text-slate-300 hover:border-orange-400/50 hover:text-orange-300'
+          }`}
+        >
+          All ({pricingPlans.length})
+        </button>
+        {categoryTabs.map((cat) => {
+          const count = pricingPlans.filter((p) => planCategory(p) === cat).length;
+          const label = cat.charAt(0).toUpperCase() + cat.slice(1);
+          return (
+            <button
+              key={cat}
+              type="button"
+              onClick={() => setCategoryFilter(cat)}
+              className={`rounded-full px-4 py-1.5 text-sm font-semibold capitalize transition-colors ${
+                categoryFilter === cat
+                  ? 'bg-orange-500 text-slate-950'
+                  : 'border border-white/15 text-slate-300 hover:border-orange-400/50 hover:text-orange-300'
+              }`}
+            >
+              {label} ({count})
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ── Plan cards ───────────────────────────────────────────────── */}
+      {visiblePlans.length === 0 && (
+        <p className="text-sm text-slate-500">No plans in this category yet.</p>
+      )}
+
+      <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+        {visiblePlans.map((plan) => {
+          const draft       = getPricingDraft(plan);
+          const saving      = pricingSavingId === plan._id;
+          const pending     = plan.pendingPriceChange?.effectiveFrom ? plan.pendingPriceChange : null;
+          const activeCycle = getActiveCycle(plan._id);
+          const cycleInfo   = SUB_CYCLES.find((c) => c.key === activeCycle) || SUB_CYCLES[3];
+
+          // Current draft value for the selected cycle (price or trialDays for trial tab)
+          const currentValue = activeCycle === '_trial'
+            ? draft.trialDays
+            : activeCycle === '_free'
+            ? null
+            : draft.pricing[activeCycle];
+
+          // Free cycles are those with price explicitly set to 0
+          const freeCycles = SUB_CYCLES.filter(
+            (c) => !c.isSpecial && draft.pricing[c.key] !== '' && Number(draft.pricing[c.key]) === 0
+          ).map((c) => c.label);
+
+          return (
+            <div
+              key={plan._id}
+              className={`relative flex flex-col rounded-2xl border bg-slate-900/80 p-5 transition-colors ${
+                plan.active ? 'border-white/15' : 'border-white/5 opacity-60'
+              }`}
+            >
+              {/* Status badge */}
+              <span
+                className={`absolute right-3 top-3 rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+                  plan.active ? 'bg-emerald-700/40 text-emerald-200' : 'bg-slate-700 text-slate-400'
+                }`}
+              >
+                {plan.active ? 'Active' : 'Inactive'}
+              </span>
+
+              {/* Plan name & code */}
+              <p className="text-[10px] uppercase tracking-[0.24em] text-orange-300">{plan.code}</p>
+              <h3 className="mt-0.5 text-lg font-bold text-white">{plan.name}</h3>
+              {plan.description && (
+                <p className="mt-1 text-[11px] text-slate-400">{plan.description}</p>
+              )}
+
+              {/* ── Billing cycle tabs ──────────────────────────────── */}
+              <div className="mt-4 flex flex-wrap gap-1">
+                {SUB_CYCLES.map((c) => (
+                  <button
+                    key={c.key}
+                    type="button"
+                    onClick={() => setActiveCycle(plan._id, c.key)}
+                    className={`rounded-full px-2.5 py-0.5 text-[10px] font-semibold transition-colors ${
+                      activeCycle === c.key
+                        ? c.key === '_trial'
+                          ? 'bg-sky-500 text-slate-950'
+                          : c.key === '_free'
+                          ? 'bg-emerald-500 text-slate-950'
+                          : 'bg-orange-500 text-slate-950'
+                        : 'border border-white/10 text-slate-400 hover:border-orange-400/40 hover:text-orange-300'
+                    }`}
+                  >
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* ── Price / Trial editor for active cycle ────────────── */}
+              <div className="mt-4">
+                {activeCycle === '_trial' ? (
+                  <label className="text-xs text-slate-300">
+                    <span className="mb-1 block text-sky-300 font-medium">
+                      Free trial period (days)
+                    </span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={365}
+                      value={draft.trialDays}
+                      onChange={(e) => updatePricingDraft(plan, { trialDays: e.target.value })}
+                      placeholder="15"
+                      className="w-full rounded-lg bg-slate-950 px-3 py-2 text-base font-semibold text-sky-300 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                    />
+                    <span className="mt-1 block text-[10px] text-slate-500">
+                      Set to 0 to disable the free trial for this plan.
+                    </span>
+                  </label>
+                ) : activeCycle === '_free' ? (
+                  <div className="text-xs text-slate-400">
+                    <p className="font-medium text-emerald-300">Free (₹0) cycles</p>
+                    {freeCycles.length > 0 ? (
+                      <p className="mt-1 text-slate-300">{freeCycles.join(', ')}</p>
+                    ) : (
+                      <p className="mt-1 text-slate-500">
+                        No cycles set to ₹0. Select a cycle tab and set its price to 0 to offer a free tier.
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <label className="text-xs text-slate-300">
+                    <span className="mb-1 block text-orange-300 font-medium">
+                      {cycleInfo.label} price (₹)
+                    </span>
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-slate-400">₹</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={15000}
+                        step="1"
+                        value={currentValue ?? ''}
+                        onChange={(e) => updatePricingDraftCycle(plan, activeCycle, e.target.value)}
+                        placeholder="—"
+                        className="w-full rounded-lg bg-slate-950 px-3 py-2 text-xl font-semibold text-white focus:outline-none focus:ring-1 focus:ring-orange-400"
+                        aria-label={`${cycleInfo.label} price (₹)`}
+                      />
+                    </div>
+                    {currentValue === '' && (
+                      <span className="mt-1 block text-[10px] text-slate-500">
+                        Leave blank to not offer this billing cycle.
+                      </span>
+                    )}
+                  </label>
+                )}
+              </div>
+
+              {/* Feature list */}
+              {Array.isArray(plan.featureMapping) && plan.featureMapping.length > 0 && (
+                <ul className="mt-3 space-y-1 border-t border-white/5 pt-3">
+                  {plan.featureMapping.slice(0, 4).map((f) => (
+                    <li
+                      key={f.key}
+                      className={`text-[11px] ${f.enabled ? 'text-slate-300' : 'text-slate-600 line-through'}`}
+                    >
+                      • {f.key}{f.limit != null ? `: ${f.limit}` : ''}
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {/* Pending change notice */}
+              {pending && (
+                <p className="mt-3 rounded-lg border border-sky-500/40 bg-sky-600/10 px-2 py-1.5 text-[10px] text-sky-200">
+                  Pending change effective {new Date(pending.effectiveFrom).toLocaleString()}
+                </p>
+              )}
+
+              {/* Actions */}
+              <div className="mt-4 flex flex-col gap-2">
+                <button
+                  type="button"
+                  disabled={saving || activeCycle === '_free'}
+                  onClick={() =>
+                    handlePricingSave(plan, { schedule: false, forceApplyOnRenewalOnly: true })
+                  }
+                  className="w-full rounded-full bg-orange-500 py-2.5 text-xs font-bold uppercase tracking-wider text-slate-950 transition hover:bg-orange-400 disabled:opacity-50"
+                >
+                  {saving ? 'Saving…' : 'Save changes'}
+                </button>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    disabled={saving}
+                    onClick={() => handlePricingToggleActive(plan)}
+                    className="flex-1 rounded-full border border-white/15 py-2 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+                  >
+                    {plan.active ? 'Deactivate' : 'Activate'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={saving}
+                    onClick={() => handlePricingDelete(plan)}
+                    className="flex-1 rounded-full border border-rose-500/40 py-2 text-xs text-rose-300 hover:bg-rose-600/10 disabled:opacity-50"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+              <p className="mt-2 text-center text-[9px] text-slate-600">
+                v{plan.pricingVersion} · changes apply on next renewal
+              </p>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Subscription Intelligence Dashboard
+// Shown at the top of the Subscriptions tab. Provides at-a-glance stats,
+// smart pricing gap alerts, and a bulk price-adjust tool.
+// ─────────────────────────────────────────────────────────────────────────────
+function SubscriptionIntelligenceDashboard({ plans, onBulkAdjust }) {
+  const [adjPct,      setAdjPct]      = useState('');
+  const [adjCategory, setAdjCategory] = useState('all');
+  const [adjCycle,    setAdjCycle]    = useState('monthly');
+
+  const activePlans   = plans.filter((p) => p.active);
+  const trialPlans    = plans.filter((p) => (p.trialDays ?? 0) > 0);
+  const fullyCovered  = plans.filter((p) =>
+    BILLING_CYCLES.every((c) => p.pricing?.[c.key] != null)
+  );
+  const monthlyRevCap = activePlans.reduce((s, p) => s + (p.pricing?.monthly ?? 0), 0);
+
+  // Smart suggestions derived from plan data
+  const suggestions = [];
+  const missingMonthly = activePlans.filter((p) => !p.pricing?.monthly);
+  if (missingMonthly.length > 0)
+    suggestions.push(`${missingMonthly.length} active plan(s) have no monthly price — subscribers can't choose monthly billing.`);
+  if (trialPlans.length === 0 && plans.length > 0)
+    suggestions.push('No plans offer a free trial. Trials typically boost paid conversions by 30–60%.');
+  if (fullyCovered.length < plans.length && plans.length > 0)
+    suggestions.push(`${plans.length - fullyCovered.length} plan(s) are missing some billing cycles — add them to reach more subscriber preferences.`);
+  if (plans.length > 0 && activePlans.length === 0)
+    suggestions.push('All plans are currently inactive — users cannot subscribe to any plan.');
+  if (plans.length === 0)
+    suggestions.push('No pricing plans yet. Create one in the Pricing (Advanced) tab.');
+
+  const handleApply = () => {
+    if (!adjPct || Number(adjPct) === 0) return;
+    onBulkAdjust(adjPct, adjCategory, adjCycle);
+    setAdjPct('');
+  };
+
+  return (
+    <div className="mt-6 space-y-5">
+      {/* ── Stat cards ──────────────────────────────────────────── */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <IntelCard label="Active Plans"    value={activePlans.length}   sub={`${plans.length} total`}          color="emerald" />
+        <IntelCard label="Trial Enabled"   value={trialPlans.length}    sub="plans with free trial"            color="sky"     />
+        <IntelCard label="Full Coverage"   value={fullyCovered.length}  sub="plans with all cycles priced"    color="violet"  />
+        <IntelCard
+          label="Monthly Rev Cap"
+          value={`₹${monthlyRevCap.toLocaleString('en-IN')}`}
+          sub="per subscriber · all active plans"
+          color="orange"
+        />
+      </div>
+
+      {/* ── Smart suggestions ────────────────────────────────────── */}
+      {suggestions.length > 0 && (
+        <div className="rounded-2xl border border-sky-500/30 bg-sky-600/10 p-4">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-sky-300">💡 Smart Suggestions</p>
+          <ul className="space-y-1.5">
+            {suggestions.map((s, i) => (
+              <li key={i} className="flex items-start gap-2 text-sm text-sky-200">
+                <span className="mt-0.5 text-sky-400">•</span>{s}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* ── Bulk price adjust ────────────────────────────────────── */}
+      <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-4">
+        <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-orange-300">⚡ Bulk Price Adjust</p>
+        <p className="mb-4 text-xs text-slate-400">
+          Apply a percentage change to draft prices across plan categories in one action. Review each card then save individually.
+        </p>
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="text-xs text-slate-300">
+            Category
+            <select
+              value={adjCategory}
+              onChange={(e) => setAdjCategory(e.target.value)}
+              className="mt-1 w-full rounded-lg bg-slate-950 px-3 py-2 text-sm text-white"
+            >
+              <option value="all">All plans</option>
+              <option value="starter">Starter</option>
+              <option value="growth">Growth</option>
+              <option value="enterprise">Enterprise</option>
+            </select>
+          </label>
+          <label className="text-xs text-slate-300">
+            Billing cycle
+            <select
+              value={adjCycle}
+              onChange={(e) => setAdjCycle(e.target.value)}
+              className="mt-1 w-full rounded-lg bg-slate-950 px-3 py-2 text-sm text-white"
+            >
+              <option value="_all">All cycles</option>
+              {BILLING_CYCLES.map((c) => (
+                <option key={c.key} value={c.key}>{c.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs text-slate-300">
+            % change (e.g. +10 or −5)
+            <input
+              type="number"
+              min={-90}
+              max={200}
+              value={adjPct}
+              onChange={(e) => setAdjPct(e.target.value)}
+              placeholder="0"
+              className="mt-1 w-28 rounded-lg bg-slate-950 px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-orange-400"
+            />
+          </label>
+          <button
+            type="button"
+            onClick={handleApply}
+            disabled={!adjPct || Number(adjPct) === 0}
+            className="rounded-full bg-orange-500 px-5 py-2 text-xs font-bold uppercase tracking-wider text-slate-950 transition hover:bg-orange-400 disabled:opacity-40"
+          >
+            Apply to Drafts
+          </button>
+        </div>
+        <p className="mt-2 text-[10px] text-slate-500">
+          ⚠ Updates draft values only — use Save on each plan card to persist the change to the server.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function IntelCard({ label, value, sub, color = 'orange' }) {
+  const styles = {
+    orange:  'border-orange-500/25  bg-orange-500/10  text-orange-300',
+    emerald: 'border-emerald-500/25 bg-emerald-500/10 text-emerald-300',
+    sky:     'border-sky-500/25     bg-sky-500/10     text-sky-300',
+    violet:  'border-violet-500/25  bg-violet-500/10  text-violet-300',
+  };
+  return (
+    <div className={`rounded-2xl border p-4 ${styles[color] || styles.orange}`}>
+      <p className="text-xs font-semibold uppercase tracking-wider opacity-70">{label}</p>
+      <p className="mt-2 text-2xl font-bold">{value}</p>
+      {sub && <p className="mt-1 text-[10px] opacity-60">{sub}</p>}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Retention Dashboard
+// Forward-looking analytics: revenue forecaster, pricing matrix, plan health
+// scores, and an AI-ready roadmap panel for features planned through 2040.
+// ─────────────────────────────────────────────────────────────────────────────
+function RetentionDashboard({ plans }) {
+  const [forecasterCounts, setForecasterCounts] = useState({});
+
+  const activePlans = plans.filter((p) => p.active);
+  const totalMrr = activePlans.reduce((sum, p) => {
+    const subs = Number(forecasterCounts[p._id] || 0);
+    return sum + subs * (p.pricing?.monthly ?? 0);
+  }, 0);
+  const totalArr = totalMrr * 12;
+
+  return (
+    <div className="mt-6 space-y-8">
+      {/* Header */}
+      <div>
+        <p className="text-xs uppercase tracking-[0.28em] text-orange-300">Intelligence</p>
+        <h2 className="mt-2 text-2xl font-semibold text-white">Retention &amp; Revenue Intelligence</h2>
+        <p className="mt-2 text-sm text-slate-400">
+          Forward-looking tools to forecast revenue, identify pricing gaps, and track plan health from today through 2040.
+        </p>
+      </div>
+
+      {/* ── Revenue Forecaster ──────────────────────────────────── */}
+      <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-5">
+        <h3 className="text-base font-semibold text-white">📈 Revenue Forecaster</h3>
+        <p className="mt-1 text-xs text-slate-400">
+          Enter projected subscriber counts per plan to model Monthly Recurring Revenue (MRR) and Annual Recurring Revenue (ARR).
+        </p>
+        <div className="mt-4 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-xs text-slate-400">
+                <th className="py-2 pr-4 text-left">Plan</th>
+                <th className="pr-4 text-left">Monthly ₹</th>
+                <th className="pr-4 text-left">Yearly ₹</th>
+                <th className="pr-4 text-left">Est. Subscribers</th>
+                <th className="text-left">Projected MRR</th>
+              </tr>
+            </thead>
+            <tbody>
+              {activePlans.length === 0 && (
+                <tr>
+                  <td colSpan="5" className="py-4 text-center text-slate-500">No active plans yet.</td>
+                </tr>
+              )}
+              {activePlans.map((plan) => {
+                const subs = Number(forecasterCounts[plan._id] || 0);
+                const mrr  = subs * (plan.pricing?.monthly ?? 0);
+                return (
+                  <tr key={plan._id} className="border-t border-white/10">
+                    <td className="py-2 pr-4 font-medium">{plan.name}</td>
+                    <td className="pr-4 text-slate-300">{plan.pricing?.monthly != null ? `₹${plan.pricing.monthly}` : '—'}</td>
+                    <td className="pr-4 text-slate-300">{plan.pricing?.yearly  != null ? `₹${plan.pricing.yearly}`  : '—'}</td>
+                    <td className="pr-4">
+                      <input
+                        type="number"
+                        min={0}
+                        max={1_000_000}
+                        value={forecasterCounts[plan._id] || ''}
+                        onChange={(e) =>
+                          setForecasterCounts((prev) => ({ ...prev, [plan._id]: e.target.value }))
+                        }
+                        placeholder="0"
+                        className="w-24 rounded-lg bg-slate-950 px-2 py-1.5 text-sm text-white focus:outline-none focus:ring-1 focus:ring-orange-400"
+                      />
+                    </td>
+                    <td className="font-semibold text-orange-300">₹{mrr.toLocaleString('en-IN')}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            {activePlans.length > 0 && (
+              <tfoot className="border-t-2 border-orange-500/40">
+                <tr>
+                  <td colSpan="4" className="py-2 pr-4 text-right text-sm font-semibold text-slate-300">Total MRR</td>
+                  <td className="text-lg font-bold text-orange-400">₹{totalMrr.toLocaleString('en-IN')}</td>
+                </tr>
+                <tr>
+                  <td colSpan="4" className="py-1 pr-4 text-right text-xs text-slate-400">Projected ARR (MRR × 12)</td>
+                  <td className="text-base font-semibold text-orange-300">₹{totalArr.toLocaleString('en-IN')}</td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+      </div>
+
+      {/* ── Pricing Coverage Matrix ──────────────────────────────── */}
+      <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-5">
+        <h3 className="text-base font-semibold text-white">🗂 Pricing Coverage Matrix</h3>
+        <p className="mt-1 text-xs text-slate-400">
+          At-a-glance view of every plan × billing cycle. Green = price set, grey = not offered.
+        </p>
+        <div className="mt-4 overflow-x-auto">
+          <table className="text-xs">
+            <thead>
+              <tr className="text-slate-400">
+                <th className="min-w-[8rem] py-2 pr-4 text-left">Plan</th>
+                {BILLING_CYCLES.map((c) => (
+                  <th key={c.key} className="whitespace-nowrap px-2 py-2 text-center">{c.label}</th>
+                ))}
+                <th className="px-2 py-2 text-center">Trial</th>
+                <th className="px-2 py-2 text-center">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {plans.length === 0 && (
+                <tr>
+                  <td colSpan={BILLING_CYCLES.length + 3} className="py-4 text-center text-slate-500">No plans yet.</td>
+                </tr>
+              )}
+              {plans.map((plan) => (
+                <tr key={plan._id} className="border-t border-white/10">
+                  <td className="pr-4 py-2 font-medium">{plan.name}</td>
+                  {BILLING_CYCLES.map((c) => {
+                    const price = plan.pricing?.[c.key];
+                    const set   = price !== undefined && price !== null;
+                    return (
+                      <td key={c.key} className="px-2 py-2 text-center">
+                        {set
+                          ? <span className="rounded px-1.5 py-0.5 bg-emerald-700/30 text-emerald-300">₹{price}</span>
+                          : <span className="rounded px-1.5 py-0.5 bg-slate-800 text-slate-600">—</span>
+                        }
+                      </td>
+                    );
+                  })}
+                  <td className="px-2 py-2 text-center">
+                    {(plan.trialDays ?? 0) > 0
+                      ? <span className="rounded px-1.5 py-0.5 bg-sky-700/30 text-sky-300">{plan.trialDays}d</span>
+                      : <span className="rounded px-1.5 py-0.5 bg-slate-800 text-slate-600">—</span>
+                    }
+                  </td>
+                  <td className="px-2 py-2 text-center">
+                    <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${plan.active ? 'bg-emerald-700/30 text-emerald-300' : 'bg-slate-700 text-slate-500'}`}>
+                      {plan.active ? '● on' : '● off'}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* ── Plan Health Scores ────────────────────────────────────── */}
+      <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-5">
+        <h3 className="text-base font-semibold text-white">🏥 Plan Health Scores</h3>
+        <p className="mt-1 text-xs text-slate-400">
+          Each plan is scored on pricing completeness (60 pts), trial coverage (20 pts), and active status (20 pts).
+        </p>
+        <div className="mt-4 space-y-3">
+          {plans.length === 0 && <p className="text-sm text-slate-500">No plans yet.</p>}
+          {plans.map((plan) => {
+            const cyclesCovered = BILLING_CYCLES.filter((c) => plan.pricing?.[c.key] != null).length;
+            const hasTrial      = (plan.trialDays ?? 0) > 0;
+            const score         = Math.round(
+              (cyclesCovered / BILLING_CYCLES.length) * 60
+              + (hasTrial     ? 20 : 0)
+              + (plan.active  ? 20 : 0)
+            );
+            const barColor  = score >= 80 ? 'bg-emerald-500' : score >= 50 ? 'bg-amber-500' : 'bg-rose-500';
+            const textColor = score >= 80 ? 'text-emerald-300' : score >= 50 ? 'text-amber-300' : 'text-rose-300';
+            const scoreLabel = score >= 80 ? 'Excellent' : score >= 50 ? 'Good' : 'Needs attention';
+            return (
+              <div key={plan._id} className="rounded-xl border border-white/10 bg-slate-950/60 p-4">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-sm font-medium">{plan.name}</span>
+                  <span className={`text-xs font-semibold ${textColor}`}>{score}% · {scoreLabel}</span>
+                </div>
+                <div className="h-2 w-full rounded-full bg-slate-800">
+                  <div className={`h-2 rounded-full transition-all ${barColor}`} style={{ width: `${score}%` }} />
+                </div>
+                <div className="mt-2 flex flex-wrap gap-4 text-[10px] text-slate-400">
+                  <span>{cyclesCovered}/{BILLING_CYCLES.length} cycles priced</span>
+                  <span className={hasTrial ? 'text-sky-300' : 'text-slate-600'}>
+                    Trial: {hasTrial ? `${plan.trialDays}d` : 'none'}
+                  </span>
+                  <span className={plan.active ? 'text-emerald-300' : 'text-rose-400'}>
+                    {plan.active ? '● Active' : '● Inactive'}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── AI-Ready Roadmap (2025–2040) ─────────────────────────── */}
+      <div className="rounded-2xl border border-violet-500/30 bg-violet-600/10 p-5">
+        <h3 className="text-base font-semibold text-violet-200">🤖 AI-Ready Roadmap · 2025 – 2040</h3>
+        <p className="mt-2 text-sm text-slate-400">
+          Intelligence features on the platform's long-term growth roadmap — building towards fully autonomous subscription management:
+        </p>
+        <ul className="mt-4 space-y-2 text-sm text-slate-300">
+          {[
+            'Churn prediction: flag subscribers likely to cancel in the next 30 days based on usage patterns',
+            'Dynamic pricing engine: auto-adjust daily / weekly rates based on real-time demand signals',
+            'Price elasticity modelling: simulate revenue impact of any price change before applying',
+            'Cohort retention analysis: track which sign-up cohort retains longest by plan tier',
+            'AI-timed offers: suggest the optimal day, discount %, and duration for maximum paid conversions',
+            'Subscriber LTV forecasting: lifetime value projection by plan × billing cycle × region',
+            'Personalised renewal nudges: auto-generate per-subscriber reminder copy and send via preferred channel',
+            'Regional dynamic pricing: automatically apply multipliers for high/low purchasing-power zones',
+            'Automated grace-period management: configurable post-expiry access window with usage throttling',
+            'Smart plan upgrade prompts: surface upgrade offers to users approaching feature limits',
+          ].map((item, i) => (
+            <li key={i} className="flex items-start gap-2">
+              <span className="mt-0.5 text-violet-400">◈</span>
+              {item}
+            </li>
+          ))}
+        </ul>
+        <p className="mt-4 text-[11px] text-slate-500">
+          Items listed are planned features, not yet implemented. Current data feeds into this roadmap as historical training data.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Trials Dashboard
+// Shows trial-state stats across all users + per-user actions to grant /
+// extend / expire a 15-day public trial. Backed by the admin trial endpoints
+// in backend/src/routes/admin.js.
+// ─────────────────────────────────────────────────────────────────────────────
+function trialStateOf(user) {
+  const trial = user?.trial;
+  if (!trial?.startedAt || !trial?.endsAt) return 'never';
+  const ends = new Date(trial.endsAt).getTime();
+  if (Number.isNaN(ends)) return 'never';
+  return ends > Date.now() ? 'active' : 'expired';
+}
+
+function trialDaysLeft(user) {
+  const trial = user?.trial;
+  if (!trial?.endsAt) return 0;
+  const ms = new Date(trial.endsAt).getTime() - Date.now();
+  return ms <= 0 ? 0 : Math.ceil(ms / (24 * 60 * 60 * 1000));
+}
+
+function TrialsDashboard({ users, onAction }) {
+  const [filter, setFilter] = useState('all');
+  const [extendDays, setExtendDays] = useState({}); // { [userId]: number }
+
+  // Public users only — admin accounts are not eligible for the trial.
+  const publicUsers = users.filter((u) => u.role !== 'admin');
+
+  const counts = publicUsers.reduce(
+    (acc, u) => {
+      acc[trialStateOf(u)] += 1;
+      return acc;
+    },
+    { never: 0, active: 0, expired: 0 },
+  );
+  const total      = publicUsers.length;
+  const conversion = total === 0
+    ? 0
+    : Math.round(((counts.active + counts.expired) / total) * 100);
+
+  const filtered = filter === 'all'
+    ? publicUsers
+    : publicUsers.filter((u) => trialStateOf(u) === filter);
+
+  const handleExtend = (userId) => {
+    const days = Number(extendDays[userId] || 0);
+    if (!days || days < 1 || days > 90) return;
+    onAction(userId, 'extend', { days });
+    setExtendDays((prev) => ({ ...prev, [userId]: '' }));
+  };
+
+  return (
+    <div className="mt-6 space-y-6">
+      <div>
+        <p className="text-xs uppercase tracking-[0.28em] text-orange-300">Trials</p>
+        <h2 className="mt-2 text-2xl font-semibold text-white">15-Day Public Trial Control</h2>
+        <p className="mt-2 text-sm text-slate-400">
+          Every public user is eligible for a one-time 15-day free trial. After it expires, advanced features
+          return HTTP 402 until the user subscribes. From here you can grant a fresh trial, extend an active /
+          expired one by N days, or force-expire any trial immediately.
+        </p>
+      </div>
+
+      {/* ── Stat cards ──────────────────────────────────────────── */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <IntelCard label="Total Public Users" value={total}            sub="all roles except admin"     color="violet"  />
+        <IntelCard label="Trial Active"       value={counts.active}    sub="currently inside 15-day window" color="sky"     />
+        <IntelCard label="Trial Expired"      value={counts.expired}   sub="ended without conversion"   color="orange"  />
+        <IntelCard
+          label="Trial Reach"
+          value={`${conversion}%`}
+          sub={`${counts.active + counts.expired} / ${total} have started`}
+          color="emerald"
+        />
+      </div>
+
+      {/* ── Filter chips ────────────────────────────────────────── */}
+      <div className="flex flex-wrap items-center gap-2">
+        {[
+          { id: 'all',     label: `All (${total})` },
+          { id: 'active',  label: `Active (${counts.active})` },
+          { id: 'expired', label: `Expired (${counts.expired})` },
+          { id: 'never',   label: `Never started (${counts.never})` },
+        ].map((f) => (
+          <button
+            key={f.id}
+            type="button"
+            onClick={() => setFilter(f.id)}
+            className={`rounded-full px-4 py-1.5 text-sm font-semibold transition-colors ${
+              filter === f.id
+                ? 'bg-orange-500 text-slate-950'
+                : 'border border-white/15 text-slate-300 hover:border-orange-400/50 hover:text-orange-300'
+            }`}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Per-user list ───────────────────────────────────────── */}
+      <div className="overflow-x-auto rounded-2xl border border-white/10 bg-slate-900/60">
+        <table className="w-full text-left text-sm">
+          <thead className="text-slate-400">
+            <tr>
+              <th className="py-2 pl-4 pr-4">User</th>
+              <th className="pr-4">Role</th>
+              <th className="pr-4">Trial Status</th>
+              <th className="pr-4">Days Left</th>
+              <th className="pr-4">Ends</th>
+              <th className="pr-4">Granted By</th>
+              <th className="pr-4">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length === 0 && (
+              <tr>
+                <td colSpan="7" className="py-6 text-center text-slate-500">No users in this category.</td>
+              </tr>
+            )}
+            {filtered.map((u) => {
+              const state    = trialStateOf(u);
+              const daysLeft = trialDaysLeft(u);
+              const endsAt   = u.trial?.endsAt
+                ? new Date(u.trial.endsAt).toLocaleDateString()
+                : '—';
+              const stateBadge = {
+                active:  'bg-sky-700/40 text-sky-200',
+                expired: 'bg-rose-700/40 text-rose-200',
+                never:   'bg-slate-700 text-slate-400',
+              }[state];
+              return (
+                <tr key={u._id} className="border-t border-white/10 align-middle">
+                  <td className="py-2 pl-4 pr-4">
+                    <div className="font-medium">{u.name || '—'}</div>
+                    <div className="text-xs text-slate-400">{u.email}</div>
+                  </td>
+                  <td className="pr-4 text-xs">{u.role}</td>
+                  <td className="pr-4">
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${stateBadge}`}>
+                      {state}
+                    </span>
+                  </td>
+                  <td className="pr-4 font-mono text-xs">
+                    {state === 'active' ? `${daysLeft}d` : '—'}
+                  </td>
+                  <td className="pr-4 text-xs text-slate-400">{endsAt}</td>
+                  <td className="pr-4 text-xs text-slate-400">{u.trial?.grantedBy || '—'}</td>
+                  <td className="pr-4 py-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {state === 'never' && (
+                        <button
+                          type="button"
+                          onClick={() => onAction(u._id, 'start')}
+                          className="rounded bg-emerald-600/80 px-2 py-1 text-xs font-semibold text-white hover:bg-emerald-500"
+                        >
+                          Grant 15d
+                        </button>
+                      )}
+                      {state !== 'never' && (
+                        <>
+                          <input
+                            type="number"
+                            min={1}
+                            max={90}
+                            value={extendDays[u._id] || ''}
+                            onChange={(e) => setExtendDays((prev) => ({ ...prev, [u._id]: e.target.value }))}
+                            placeholder="days"
+                            className="w-16 rounded bg-slate-950 px-2 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-orange-400"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleExtend(u._id)}
+                            disabled={!extendDays[u._id]}
+                            className="rounded bg-sky-600/80 px-2 py-1 text-xs font-semibold text-white hover:bg-sky-500 disabled:opacity-40"
+                          >
+                            Extend
+                          </button>
+                        </>
+                      )}
+                      {state === 'active' && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (window.confirm(`Force-expire trial for ${u.email}?`)) onAction(u._id, 'expire');
+                          }}
+                          className="rounded bg-rose-600/80 px-2 py-1 text-xs font-semibold text-white hover:bg-rose-500"
+                        >
+                          Expire
+                        </button>
+                      )}
+                      {state === 'expired' && (
+                        <button
+                          type="button"
+                          onClick={() => onAction(u._id, 'start')}
+                          className="rounded bg-emerald-600/80 px-2 py-1 text-xs font-semibold text-white hover:bg-emerald-500"
+                        >
+                          Re-grant
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

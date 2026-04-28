@@ -88,6 +88,17 @@ const UserSchema = new mongoose.Schema({
   kycReviewedAt: { type: Date, default: null },
   kycRejectionReason: { type: String, default: '' },
   fundAccount: { type: FundAccountSchema, default: null },
+  // 15-day free trial granted once per public user. trial.startedAt is set
+  // when the user first activates the trial; trial.endsAt is then set to
+  // startedAt + 15 days. Admin can extend / expire via /admin/control/users/:id/trial/*.
+  // After endsAt, the user is treated as having no active subscription and
+  // gated features return HTTP 402 (handled by getActiveSubscription).
+  trial: {
+    startedAt: { type: Date, default: null },
+    endsAt:    { type: Date, default: null },
+    planId:    { type: String, default: 'basic' },
+    grantedBy: { type: String, default: 'self' }, // 'self' or 'admin'
+  },
   createdAt: { type: Date, default: Date.now },
 });
 
