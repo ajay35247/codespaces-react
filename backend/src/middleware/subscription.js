@@ -21,39 +21,102 @@ import User from '../schemas/UserSchema.js';
  * register, browse loads, post loads, and accept bids on their own loads.
  */
 
-const SUBSCRIPTION_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+const MONTH_MS = 30 * 24 * 60 * 60 * 1000;
+const YEAR_MS  = 365 * 24 * 60 * 60 * 1000;
 export const PUBLIC_TRIAL_DAYS = 15;
 export const PUBLIC_TRIAL_MS   = PUBLIC_TRIAL_DAYS * 24 * 60 * 60 * 1000;
 const ACTIVE_STATUSES = ['captured', 'success'];
 
+/**
+ * 4-tier plan model (free / basic / standard / premium).
+ *
+ * Negative numeric limits (-1) mean "unlimited" — the frontend treats any
+ * negative value as Unlimited. Daily limits are enforced by
+ * middleware/quotas.js using UsageCounter (IST day).
+ *
+ * Legacy plan codes `growth` and `enterprise` from the previous 3-tier
+ * model are kept as aliases (see PLAN_ALIASES) so any historical Payment
+ * documents (and any in-flight gating calls) still resolve. New code
+ * should always use the canonical codes below.
+ */
 const PLAN_FEATURES = {
+  free: {
+    loadsPerDay: 3,
+    bidsPerDay: 5,
+    maxBidsPerMonth: 5 * 30, // derived; kept for back-compat with old callers
+    walletWithdrawals: false,
+    aiMatching: false,
+    advancedAnalytics: false,
+    prioritySupport: false,
+    priorityVisibility: false,
+    fastMatching: false,
+    premiumBadge: false,
+    adsEnabled: true,
+    supportSla: 'community',
+  },
   basic: {
-    maxBidsPerMonth: 20,
+    loadsPerDay: 10,
+    bidsPerDay: 20,
+    maxBidsPerMonth: 20 * 30,
     walletWithdrawals: true,
     aiMatching: false,
     advancedAnalytics: false,
     prioritySupport: false,
+    priorityVisibility: false,
+    fastMatching: false,
+    premiumBadge: false,
+    adsEnabled: false,
+    supportSla: 'email',
   },
-  growth: {
-    maxBidsPerMonth: 100,
+  standard: {
+    loadsPerDay: 25,
+    bidsPerDay: 50,
+    maxBidsPerMonth: 50 * 30,
     walletWithdrawals: true,
     aiMatching: true,
     advancedAnalytics: true,
     prioritySupport: false,
+    // Spec: Standard explicitly excludes priority visibility / badge / fast
+    // matching — these are the loss-aversion levers on the pricing page.
+    priorityVisibility: false,
+    fastMatching: false,
+    premiumBadge: false,
+    adsEnabled: false,
+    supportSla: 'email',
   },
-  enterprise: {
-    // -1 is used as a sentinel for "unlimited" so the descriptor serialises
-    // cleanly over JSON (`Infinity` becomes `null` during JSON.stringify).
-    // The frontend interprets any negative number as Unlimited.
+  premium: {
+    loadsPerDay: -1, // unlimited
+    bidsPerDay: -1,
     maxBidsPerMonth: -1,
     walletWithdrawals: true,
     aiMatching: true,
     advancedAnalytics: true,
     prioritySupport: true,
+    priorityVisibility: true,
+    fastMatching: true,
+    premiumBadge: true,
+    adsEnabled: false,
+    supportSla: 'priority',
   },
 };
 
-const PLAN_RANK = { basic: 1, growth: 2, enterprise: 3 };
+// Map legacy (3-tier) codes onto the new canonical codes so old Payment
+// rows and any unmigrated `requireActiveSubscription('growth')` calls keep
+// working. Always normalise through resolvePlanCode() before lookup.
+const PLAN_ALIASES = {
+  growth: 'standard',
+  enterprise: 'premium',
+};
+
+export function resolvePlanCode(planId) {
+  const code = String(planId || '').trim();
+  if (!code) return 'free';
+  if (PLAN_FEATURES[code]) return code;
+  if (PLAN_ALIASES[code]) return PLAN_ALIASES[code];
+  return 'free';
+}
+
+const PLAN_RANK = { free: 0, basic: 1, standard: 2, premium: 3 };
 
 /**
  * Returns the user's trial state.
@@ -68,20 +131,38 @@ export async function getTrialStatus(userId) {
   }
   const endsAt = new Date(trial.endsAt).getTime();
   if (Number.isNaN(endsAt) || endsAt <= Date.now()) {
-    return { state: 'expired', endsAt: trial.endsAt, daysLeft: 0, planId: trial.planId || 'basic' };
+    return { state: 'expired', endsAt: trial.endsAt, daysLeft: 0, planId: resolvePlanCode(trial.planId) || 'basic' };
   }
   return {
     state: 'active',
     endsAt: trial.endsAt,
     daysLeft: Math.max(0, Math.ceil((endsAt - Date.now()) / (24 * 60 * 60 * 1000))),
-    planId: trial.planId || 'basic',
+    planId: resolvePlanCode(trial.planId) || 'basic',
+  };
+}
+
+function syntheticFreeSubscription() {
+  return {
+    planId: 'free',
+    amount: 0,
+    currency: 'INR',
+    status: 'free',
+    createdAt: null,
+    expiresAt: null,
+    billingCycle: null,
+    source: 'free',
+    features: PLAN_FEATURES.free,
   };
 }
 
 /**
- * Returns the latest active paid subscription for a user, or `null`.
- * Falls back to a synthetic subscription representing an active trial so
- * gated features remain accessible during the trial window.
+ * Returns the user's effective subscription. Resolution order:
+ *   1. Latest paid Payment row whose billing window has not expired.
+ *   2. Active 15-day trial → synthetic basic-tier sub (legacy onboarding path).
+ *   3. Synthetic FREE sub — every authenticated user always has at least
+ *      this one. The "everyone has a plan" invariant simplifies the rest
+ *      of the system: callers can read `sub.features.loadsPerDay` without
+ *      a null check.
  */
 export async function getActiveSubscription(userId) {
   if (!userId) return null;
@@ -98,10 +179,12 @@ export async function getActiveSubscription(userId) {
 
   if (payment) {
     const createdAt = payment.createdAt ? new Date(payment.createdAt).getTime() : 0;
-    const expiresAt = createdAt + SUBSCRIPTION_WINDOW_MS;
+    const cycle = payment.billingCycle === 'yearly' ? 'yearly' : 'monthly';
+    const windowMs = cycle === 'yearly' ? YEAR_MS : MONTH_MS;
+    const expiresAt = createdAt + windowMs;
     if (createdAt && expiresAt >= Date.now()) {
-      const planId = String(payment.planId);
-      const features = PLAN_FEATURES[planId] || PLAN_FEATURES.basic;
+      const planId = resolvePlanCode(payment.planId);
+      const features = PLAN_FEATURES[planId] || PLAN_FEATURES.free;
       return {
         planId,
         amount: payment.amount,
@@ -109,6 +192,7 @@ export async function getActiveSubscription(userId) {
         status: payment.status,
         createdAt: payment.createdAt,
         expiresAt: new Date(expiresAt),
+        billingCycle: cycle,
         source: 'paid',
         features,
       };
@@ -118,7 +202,7 @@ export async function getActiveSubscription(userId) {
   // No active paid subscription — fall back to active trial if any.
   const trial = await getTrialStatus(userId);
   if (trial.state === 'active') {
-    const planId = trial.planId || 'basic';
+    const planId = resolvePlanCode(trial.planId) || 'basic';
     return {
       planId,
       amount: 0,
@@ -126,65 +210,74 @@ export async function getActiveSubscription(userId) {
       status: 'trial',
       createdAt: null,
       expiresAt: new Date(trial.endsAt),
+      billingCycle: null,
       source: 'trial',
       features: PLAN_FEATURES[planId] || PLAN_FEATURES.basic,
     };
   }
 
-  return null;
+  return syntheticFreeSubscription();
 }
 
 /**
  * Returns a feature descriptor for a user, including whether they have an
  * active subscription and which advanced feature keys are unlocked.
+ *
+ * `active` is true only for paid/trial subs — it intentionally remains
+ * false for the synthetic free tier so existing UI paths that gate on
+ * "is the user paying" do not light up for free users.
  */
 export async function getSubscriptionFeatures(userId) {
   const active = await getActiveSubscription(userId);
+  const isPaying = Boolean(active) && active.source !== 'free';
   return {
-    active: Boolean(active),
-    planId:    active?.planId || null,
+    active: isPaying,
+    planId:    active?.planId || 'free',
     expiresAt: active?.expiresAt || null,
-    source:    active?.source || null, // 'paid' | 'trial' | null
-    features:  active?.features || {
-      maxBidsPerMonth: 0,
-      walletWithdrawals: false,
-      aiMatching: false,
-      advancedAnalytics: false,
-      prioritySupport: false,
-    },
+    source:    active?.source || 'free',
+    billingCycle: active?.billingCycle || null,
+    features:  active?.features || PLAN_FEATURES.free,
   };
 }
 
 /**
  * Middleware that rejects the request with HTTP 402 when the caller does not
  * have an active paid subscription. Callers can optionally require a minimum
- * tier (`basic` < `growth` < `enterprise`).
+ * tier (`basic` < `standard` < `premium`).
  *
  *   router.post('/bid', verifyJWT, requireActiveSubscription(), handler);
- *   router.post('/ai-match', verifyJWT, requireActiveSubscription('growth'), handler);
+ *   router.post('/ai-match', verifyJWT, requireActiveSubscription('standard'), handler);
+ *
+ * Legacy minTier strings ('growth', 'enterprise') are accepted via
+ * resolvePlanCode() and mapped to 'standard' / 'premium' respectively.
  */
 export function requireActiveSubscription(minTier = 'basic') {
-  const minRank = PLAN_RANK[minTier] || 1;
+  const normalisedTier = resolvePlanCode(minTier) || 'basic';
+  // We require a *paid* tier here; clamp 'free' callers up to 'basic' so the
+  // gate keeps its previous semantics.
+  const effectiveTier = normalisedTier === 'free' ? 'basic' : normalisedTier;
+  const minRank = PLAN_RANK[effectiveTier] ?? 1;
   return async (req, res, next) => {
     try {
       if (!req.user?.id) {
         return res.status(401).json({ error: 'Unauthorized' });
       }
       const sub = await getActiveSubscription(req.user.id);
-      if (!sub) {
+      // Synthetic free sub does not satisfy a paid gate.
+      if (!sub || sub.source === 'free') {
         return res.status(402).json({
           error: 'An active subscription is required to use this feature',
           code: 'SUBSCRIPTION_REQUIRED',
-          minTier,
+          minTier: effectiveTier,
         });
       }
-      const currentRank = PLAN_RANK[sub.planId] || 0;
+      const currentRank = PLAN_RANK[sub.planId] ?? 0;
       if (currentRank < minRank) {
         return res.status(402).json({
-          error: `This feature requires the ${minTier} plan or higher`,
+          error: `This feature requires the ${effectiveTier} plan or higher`,
           code: 'SUBSCRIPTION_UPGRADE_REQUIRED',
           currentPlan: sub.planId,
-          minTier,
+          minTier: effectiveTier,
         });
       }
       req.subscription = sub;
@@ -196,4 +289,4 @@ export function requireActiveSubscription(minTier = 'basic') {
   };
 }
 
-export { PLAN_FEATURES };
+export { PLAN_FEATURES, PLAN_RANK, PLAN_ALIASES };
