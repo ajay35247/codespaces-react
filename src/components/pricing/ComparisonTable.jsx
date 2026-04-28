@@ -20,19 +20,21 @@ const ROWS = [
   { label: 'Advanced analytics',    key: 'advancedAnalytics',  type: 'bool'   },
   { label: 'Wallet withdrawals',    key: 'walletWithdrawals',  type: 'bool'   },
   { label: 'Priority support',      key: 'prioritySupport',    type: 'bool'   },
-  { label: 'Ads',                   key: 'adsEnabled',         type: 'bool', invert: true, label2: 'No ads' },
+  // Synthetic row: the "ad-free experience" is the inverse of `adsEnabled`,
+  // surfaced as a positive feature so the comparison reads consistently
+  // (✓ = good for the user) without inverting cell semantics.
+  { label: 'Ad-free experience',    key: 'adsEnabled',         type: 'bool', derive: (v) => !v },
 ];
 
-function renderCell(value, type, invert) {
-  if (type === 'number') {
-    if (value === null || value === undefined) return '—';
-    if (typeof value === 'number' && value < 0) return 'Unlimited';
-    return String(value);
+function renderCell(rawValue, row) {
+  if (row.type === 'number') {
+    if (rawValue === null || rawValue === undefined) return '—';
+    if (typeof rawValue === 'number' && rawValue < 0) return 'Unlimited';
+    return String(rawValue);
   }
-  // bool — invert flips the meaning (e.g. ads enabled = bad).
-  const truthy = Boolean(value);
-  const positive = invert ? !truthy : truthy;
-  return positive ? (
+  // bool
+  const value = typeof row.derive === 'function' ? row.derive(rawValue) : Boolean(rawValue);
+  return value ? (
     <span className="text-emerald-400" aria-label="yes">✓</span>
   ) : (
     <span className="text-slate-600" aria-label="no">—</span>
@@ -68,7 +70,7 @@ export function ComparisonTable({ plans }) {
               className={idx % 2 === 0 ? 'bg-slate-950/40' : 'bg-transparent'}
             >
               <td className="sticky left-0 z-10 bg-inherit px-4 py-3 text-slate-300">
-                {row.invert ? row.label2 : row.label}
+                {row.label}
               </td>
               {plans.map((plan) => (
                 <td
@@ -77,7 +79,7 @@ export function ComparisonTable({ plans }) {
                     plan.highlight === 'best-value' ? 'text-orange-100' : 'text-slate-200'
                   }`}
                 >
-                  {renderCell(plan.features?.[row.key], row.type, row.invert)}
+                  {renderCell(plan.features?.[row.key], row)}
                 </td>
               ))}
             </tr>

@@ -139,6 +139,14 @@ export function Subscription() {
       .filter(Boolean);
   }, [pricing]);
 
+  // Premium yearly savings, computed from the live catalogue so we don't
+  // duplicate a hardcoded number that drifts when pricing is tuned.
+  const premiumYearlySavings = useMemo(() => {
+    const premium = pricing.find((p) => p.id === 'premium');
+    if (!premium) return 0;
+    return Math.max(0, (premium.monthlyPrice || 0) * 12 - (premium.yearlyPrice || 0));
+  }, [pricing]);
+
   const usageBar = (() => {
     if (!usage || !subscription) return null;
     const planLabel = subscription.plan || subscription.planId;
@@ -283,7 +291,9 @@ export function Subscription() {
         <div className="mt-12 grid gap-4 text-center text-xs text-slate-400 sm:grid-cols-3">
           <p>✓ Cancel auto-renewal any time</p>
           <p>✓ GST-ready invoices</p>
-          <p>✓ Yearly plans save {formatInr(2 * 299)} on Premium</p>
+          <p>{premiumYearlySavings > 0
+            ? `✓ Yearly plans save ${formatInr(premiumYearlySavings)} on Premium`
+            : '✓ Switch plans any time'}</p>
         </div>
       </div>
     </main>

@@ -34,9 +34,7 @@ export function useSubscription() {
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
     refresh().catch(() => { /* refresh already captures error in state */ });
-    return () => { cancelled = true; };
     // refresh is stable (useCallback with [] deps).
   }, [refresh]);
 
