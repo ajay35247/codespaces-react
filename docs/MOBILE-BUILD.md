@@ -83,60 +83,82 @@ The workflow injects the same `VITE_*` values from repo **Variables** and
 If any value is missing the build still succeeds — but the APK falls back
 to dev defaults (`http://localhost:5000`) and won't reach prod data.
 
-## 2. Release (signed) APK / AAB — blocked until you add secrets
+## 2. Release (signed) APK / AAB
 
 The debug APK is **not** Play Store eligible — it is signed with the
-Android debug keystore shipped in the SDK. A Play release needs:
+Android debug keystore shipped in the SDK. A Play release needs an
+upload keystore and a few CI secrets.
 
-| Secret / resource | How to obtain it |
-|---|---|
-| Upload keystore (`.jks` or `.keystore`) | Generate once with `keytool -genkeypair -v -keystore upload.jks -keyalg RSA -keysize 2048 -validity 10000 -alias speedy-trucks` |
-| Keystore password | Same command — pick a strong one. Keep it in a password manager. |
-| Key alias | `speedy-trucks` (or whatever you used above; must match `capacitor.config.json#android.buildOptions.keystoreAlias`) |
-| Key password | Usually the same as the keystore password |
-| Google Play service account JSON | Create in Google Cloud → IAM → Service accounts, grant "Release manager" in Play Console → API access, download JSON |
+### One-time setup
 
-Once you have these, add them to this repository under **Settings → Secrets
-and variables → Actions** using these exact names:
+1. **Generate an upload keystore** (do this once, keep the file safe — if
+   you lose it you cannot publish updates to the same Play listing):
 
-| GitHub Actions secret | Value |
-|---|---|
-| `ANDROID_KEYSTORE_BASE64` | Output of `base64 -w0 upload.jks` |
-| `ANDROID_KEYSTORE_PASSWORD` | Keystore password |
-| `ANDROID_KEY_ALIAS` | Key alias |
-| `ANDROID_KEY_PASSWORD` | Key password |
-| `GOOGLE_PLAY_SA_JSON` | Full contents of the service-account JSON |
+   ```bash
+   keytool -genkeypair -v \
+     -keystore upload.jks \
+     -keyalg RSA -keysize 2048 -validity 10000 \
+     -alias speedy-trucks
+   ```
 
-Adding a signed build job to `.github/workflows/build-apk.yml` is then
-straightforward:
+   You'll be prompted for a keystore password, key password, and
+   distinguished-name fields.
 
-```yaml
-  release:
-    needs: build
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Restore keystore
-        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/app/speedy-trucks.keystore
-      - name: Assemble release
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS:         ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASSWORD:      ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: cd android && ./gradlew bundleRelease --no-daemon
-      - name: Upload to Play Store
-        uses: r0adkll/upload-google-play@v1
-        with:
-          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SA_JSON }}
-          packageName: com.speedytrucks.app
-          releaseFiles: android/app/build/outputs/bundle/release/app-release.aab
-          track: internal
+2. **Add these GitHub Actions secrets** under
+   *Settings → Secrets and variables → Actions*:
+
+   | Secret name | Value |
+   |---|---|
+   | `ANDROID_KEYSTORE_BASE64` | `base64 -w0 upload.jks` (single line) |
+   | `ANDROID_KEYSTORE_PASSWORD` | Keystore password |
+   | `ANDROID_KEY_ALIAS` | `speedy-trucks` (or whatever alias you chose) |
+   | `ANDROID_KEY_PASSWORD` | Key password (often same as keystore password) |
+
+### Running the build
+
+The `.github/workflows/build-apk-release.yml` workflow runs:
+
+* Manually — Actions tab → **Build Android Release (Signed APK + AAB)**
+  → **Run workflow**.
+* Automatically when you push a tag matching `v*` (e.g. `git tag v1.0.0
+  && git push --tags`).
+
+It produces two artifacts on the run summary page:
+
+* `speedy-trucks-release-apk` → `app-release.apk` — sideload / direct
+  distribution.
+* `speedy-trucks-release-aab` → `app-release.aab` — upload to Play
+  Console (Internal testing → Production).
+
+The keystore file is decoded into the runner workspace and deleted again
+in a final cleanup step, so it never lands in build artifacts.
+
+### Local signed build
+
+Same env vars work locally — set them in your shell, drop the keystore
+at `android/app/release.keystore` (or point `ANDROID_KEYSTORE_PATH` at
+it), then:
+
+```bash
+npm run build
+npx cap sync android
+cd android && ./gradlew assembleRelease bundleRelease
 ```
 
-That block is **deliberately not enabled today** — it would fail on the
-first run because the secrets above don't exist yet. Add the secrets,
-uncomment the job, push, and it works.
+Outputs land in `android/app/build/outputs/apk/release/` and
+`android/app/build/outputs/bundle/release/`.
+
+If the keystore env vars are absent, `assembleRelease` still works but
+produces an **unsigned** APK that Play Store will reject — useful only
+for local smoke testing.
+
+### Auto-uploading to Play Console (optional, future work)
+
+To automate the Play Console upload, add a `GOOGLE_PLAY_SA_JSON` secret
+(service-account JSON from Google Cloud → IAM, granted "Release
+manager" in Play Console → API access) and append a step using
+`r0adkll/upload-google-play@v1` to the workflow. Not wired up yet —
+file an issue when you're ready and we'll add it.
 
 ## 3. iOS — deliberately not started
 
