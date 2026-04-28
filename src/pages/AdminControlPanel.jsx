@@ -585,7 +585,10 @@ export function AdminControlPanel() {
     }
   };
 
-  const handlePricingSave = async (plan, { schedule } = { schedule: false }) => {
+  // `forceApplyOnRenewalOnly` is an optional override so callers (e.g. the
+  // Subscriptions card view) can guarantee the renewal-only flag without
+  // relying on a prior async draft state update settling before this runs.
+  const handlePricingSave = async (plan, { schedule, forceApplyOnRenewalOnly } = { schedule: false }) => {
     setPricingSavingId(plan._id);
     setError('');
     try {
@@ -596,7 +599,7 @@ export function AdminControlPanel() {
       }
       const payload = {
         pricing: pricingPayload,
-        applyOnRenewalOnly: !!draft.applyOnRenewalOnly,
+        applyOnRenewalOnly: forceApplyOnRenewalOnly !== undefined ? forceApplyOnRenewalOnly : !!draft.applyOnRenewalOnly,
         trialDays: Number(draft.trialDays) || 0,
         taxPercent: Number(draft.taxPercent) || 0,
         platformFeePercent: Number(draft.platformFeePercent) || 0,
@@ -664,7 +667,7 @@ export function AdminControlPanel() {
     { id: 'users',          label: 'Users',             icon: '◌' },
     { id: 'payments',       label: 'Payments',          icon: '₹' },
     { id: 'subscriptions',  label: 'Subscriptions',     icon: '◈' },
-    { id: 'pricing',        label: 'Pricing (Advanced)',icon: '⊞' },
+    { id: 'pricing',        label: 'Pricing (Advanced)', icon: '⊞' },
     { id: 'offers',         label: 'Offers',            icon: '✦' },
     { id: 'loads',          label: 'Loads',             icon: '⊟' },
     { id: 'support',        label: 'Support',           icon: '◇' },
@@ -1685,12 +1688,7 @@ function SubscriptionPlansControl({
                 <button
                   type="button"
                   disabled={saving}
-                  onClick={() => {
-                    // Force applyOnRenewalOnly = true before saving so existing
-                    // subscribers are never retroactively charged the new price.
-                    updatePricingDraft(plan, { applyOnRenewalOnly: true });
-                    handlePricingSave(plan, { schedule: false });
-                  }}
+                  onClick={() => handlePricingSave(plan, { schedule: false, forceApplyOnRenewalOnly: true })}
                   className="w-full rounded-full bg-orange-500 py-2.5 text-xs font-bold uppercase tracking-wider text-slate-950 transition hover:bg-orange-400 disabled:opacity-50"
                 >
                   {saving ? 'Saving…' : 'Save changes'}
