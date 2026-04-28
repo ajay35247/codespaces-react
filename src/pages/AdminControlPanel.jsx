@@ -97,6 +97,10 @@ export function AdminControlPanel() {
   const [activeTab, setActiveTab] = useState('overview');
   const [userAction, setUserAction] = useState({});
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // Default landing tab is the new mission-control dashboard. Use a state flag
+  // so this only runs once per mount; otherwise an admin navigating back to
+  // "overview" would be bounced to "dashboard" again.
+  const [didDefaultDashboard, setDidDefaultDashboard] = useState(false);
 
   // Global ⌘K / Ctrl+K / "/" shortcut for the command palette.
   useCommandPaletteShortcut(useCallback(() => setPaletteOpen(true), []));
@@ -297,6 +301,49 @@ export function AdminControlPanel() {
     }
   };
 
+  // NOTE: All hooks must be declared before the early returns below to satisfy
+  // the Rules of Hooks (otherwise React #310 fires when the component flips
+  // from the bootstrap/login render to the authenticated render).
+  useEffect(() => {
+    if (!didDefaultDashboard && admin && activeTab === 'overview') {
+      setActiveTab('dashboard');
+      setDidDefaultDashboard(true);
+    }
+  }, [admin, activeTab, didDefaultDashboard]);
+
+  const handleQuickAction = useCallback(async (action) => {
+    if (action === 'stop-all') {
+      try {
+        const next = { ...featureFlags, offersPaused: true };
+        await api('/control/kill-switch', 'POST', next);
+        setFeatureFlags(next);
+      } catch (err) { setError(err.message); }
+    } else if (action === 'start-sale') {
+      setActiveTab('offers');
+    } else if (action === 'send-notification') {
+      setActiveTab('users');
+    }
+  }, [featureFlags]);
+
+  // Palette callbacks. Kept separate from `handleQuickAction` because the
+  // palette needs to await stop-all-offers (so it can show "Working…" and
+  // close on success) and seed the offer composer when the operator typed a
+  // discount percent like "50".
+  const handlePaletteStopAllOffers = useCallback(async () => {
+    const next = { ...featureFlags, offersPaused: true };
+    try {
+      await api('/control/kill-switch', 'POST', next);
+      setFeatureFlags(next);
+    } catch (err) { setError(err.message); }
+  }, [featureFlags]);
+
+  const handlePaletteStartSale = useCallback((percent) => {
+    if (percent != null) {
+      setOfferForm((prev) => ({ ...prev, discountPercent: percent }));
+    }
+    setActiveTab('offers');
+  }, []);
+
   if (bootstrapping) return null;
 
   if (!authenticated) {
@@ -441,49 +488,9 @@ export function AdminControlPanel() {
     { id: 'audit',     label: 'Audit Log',     icon: '⊡' },
   ];
 
-  // Default landing tab is the new mission-control dashboard. Use a ref-style
-  // flag (init via useState) so this only runs once per mount; otherwise an
-  // admin navigating back to "overview" would be bounced to "dashboard" again.
-  const [didDefaultDashboard, setDidDefaultDashboard] = useState(false);
-  useEffect(() => {
-    if (!didDefaultDashboard && admin && activeTab === 'overview') {
-      setActiveTab('dashboard');
-      setDidDefaultDashboard(true);
-    }
-  }, [admin, activeTab, didDefaultDashboard]);
-
-  const handleQuickAction = useCallback(async (action) => {
-    if (action === 'stop-all') {
-      try {
-        const next = { ...featureFlags, offersPaused: true };
-        await api('/control/kill-switch', 'POST', next);
-        setFeatureFlags(next);
-      } catch (err) { setError(err.message); }
-    } else if (action === 'start-sale') {
-      setActiveTab('offers');
-    } else if (action === 'send-notification') {
-      setActiveTab('users');
-    }
-  }, [featureFlags]);
-
-  // Palette callbacks. Kept separate from `handleQuickAction` because the
-  // palette needs to await stop-all-offers (so it can show "Working…" and
-  // close on success) and seed the offer composer when the operator typed a
-  // discount percent like "50".
-  const handlePaletteStopAllOffers = useCallback(async () => {
-    const next = { ...featureFlags, offersPaused: true };
-    try {
-      await api('/control/kill-switch', 'POST', next);
-      setFeatureFlags(next);
-    } catch (err) { setError(err.message); }
-  }, [featureFlags]);
-
-  const handlePaletteStartSale = useCallback((percent) => {
-    if (percent != null) {
-      setOfferForm((prev) => ({ ...prev, discountPercent: percent }));
-    }
-    setActiveTab('offers');
-  }, []);
+  // Default landing tab logic and the Quick-Action / Palette callbacks are
+  // declared above the `bootstrapping`/`authenticated` early returns to comply
+  // with the Rules of Hooks (otherwise React error #310 fires).
 
   const topBar = ({ isDark }) => (
     <>
