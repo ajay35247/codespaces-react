@@ -2,11 +2,17 @@ import { Router } from 'express';
 import crypto from 'crypto';
 import express from 'express';
 import Razorpay from 'razorpay';
-import { verifyJWT } from '../middleware/authorize.js';
+import {
+  getAccessTokenFromRequest,
+  verifyAccessToken,
+  verifyJWT,
+} from '../middleware/authorize.js';
 import { requirePaymentsEnabled } from '../middleware/platformControl.js';
 import {
+  buildUpgradeHint,
   getActiveSubscription,
   getSubscriptionFeatures,
+  nextPlanUp,
   PLAN_FEATURES,
   PLAN_RANK,
   resolvePlanCode,
@@ -15,6 +21,11 @@ import { readUsage } from '../middleware/quotas.js';
 import { Joi, validateBody } from '../middleware/validation.js';
 import Payment from '../schemas/PaymentSchema.js';
 import { resolvePrice, recordOfferUsage } from '../utils/pricing.js';
+import {
+  resolveExperimentForUser,
+  recordImpression as recordExperimentImpression,
+  recordConversion as recordExperimentConversion,
+} from '../services/experiments.js';
 
 const router = Router();
 const razorpayKeyId = process.env.RAZORPAY_KEY_ID || '';
@@ -128,6 +139,25 @@ const paymentAttempts = new Map();
 const FRAUD_WINDOW_MS = 15 * 60 * 1000;
 const FRAUD_MAX = 5;
 
+/**
+ * Optional auth — populate req.user when a valid access token is present
+ * without rejecting the request when it is missing.  Used by /pricing so
+ * the experiment service can bucket the user deterministically; absent
+ * tokens fall back to an anonymous bucket (one per IP+user-agent hash is
+ * not used — anonymous users all see the same 'anon' bucket which is fine
+ * because they are pre-conversion).
+ */
+function optionalAuth(req, _res, next) {
+  const token = getAccessTokenFromRequest(req);
+  if (!token) return next();
+  try {
+    req.user = verifyAccessToken(token);
+  } catch {
+    // Invalid / expired tokens are ignored — caller is treated as anonymous.
+  }
+  return next();
+}
+
 function flagFraud(req, res, next) {
   const ip = req.ip;
   const now = Date.now();
@@ -236,9 +266,16 @@ router.get('/plans', (req, res) => {
  * The same resolver is invoked again at /subscribe so a malicious client
  * cannot pass a fake discounted price.
  */
-router.get('/pricing', async (req, res) => {
+router.get('/pricing', optionalAuth, async (req, res) => {
   try {
     const couponCode = typeof req.query.couponCode === 'string' ? req.query.couponCode.slice(0, 50) : '';
+    // Bucket the caller into any running experiments. Anonymous callers all
+    // share the salt 'anon' on purpose: we can't split-test pre-conversion
+    // visitors anyway (no userId → no conversion attribution), and a
+    // per-IP/UA bucket would just add variance without any signal. Once a
+    // user authenticates, their userId becomes the salt and they are
+    // bucketed deterministically from that point forward.
+    const expSalt = req.user?.id || 'anon';
     const enriched = await Promise.all(planCatalogueWithFeatures().map(async (plan) => {
       // Free tier never carries a discount.
       if (plan.monthlyPrice === 0 && plan.yearlyPrice === 0) {
@@ -248,11 +285,37 @@ router.get('/pricing', async (req, res) => {
           yearly:  { originalPrice: 0, finalPrice: 0, discountPercent: 0, appliedOffer: null },
         };
       }
+
+      // 1. Resolve any running experiment FIRST so the catalogue prices we
+      //    feed into the offer resolver are the experiment-adjusted ones.
+      //    This ensures coupon discounts compose with experiment prices
+      //    (e.g. ₹179 - 10% coupon = ₹161, not ₹199 - 10%).
+      const exp = await resolveExperimentForUser({ planCode: plan.id, userId: expSalt });
+      const monthlyBase = exp.monthly ?? plan.monthlyPrice;
+      const yearlyBase  = exp.yearly  ?? plan.yearlyPrice;
+
+      // 2. Apply admin-managed offers / coupons on top.
       const [monthly, yearly] = await Promise.all([
-        resolvePrice({ planCode: plan.id, originalPrice: plan.monthlyPrice, couponCode }),
-        resolvePrice({ planCode: plan.id, originalPrice: plan.yearlyPrice,  couponCode }),
+        resolvePrice({ planCode: plan.id, originalPrice: monthlyBase, couponCode }),
+        resolvePrice({ planCode: plan.id, originalPrice: yearlyBase,  couponCode }),
       ]);
-      return { ...plan, monthly, yearly };
+
+      // 3. Best-effort impression metric (one per /pricing render).
+      if (exp.experiment) {
+        recordExperimentImpression({
+          experimentKey: exp.experiment.key,
+          variantId: exp.experiment.variantId,
+        });
+      }
+
+      return {
+        ...plan,
+        monthlyPrice: monthlyBase, // overwrite catalogue price so card shows variant
+        yearlyPrice:  yearlyBase,
+        monthly,
+        yearly,
+        experiment: exp.experiment, // null when no experiment is running
+      };
     }));
     return res.json({ plans: enriched, couponApplied: Boolean(couponCode) });
   } catch (error) {
@@ -302,7 +365,25 @@ router.post('/subscribe', verifyJWT, requirePaymentsEnabled(), flagFraud, valida
     console.warn('Subscribe: getActiveSubscription failed', err.message);
   }
 
-  const originalPrice = billingCycle === 'yearly' ? plan.yearlyPrice : plan.monthlyPrice;
+  // Resolve the user's experiment bucket FIRST so the charge mirrors what
+  // /pricing showed them. Server-side resolution defends against a stale
+  // /pricing cache or a tampered client paying a non-bucketed price.
+  // We DO NOT mutate `plan` (which is a reference to PLAN_CATALOGUE) —
+  // resolveExperimentForUser returns numbers we keep in local vars.
+  let experimentArm = null;
+  let monthlyPrice = plan.monthlyPrice;
+  let yearlyPrice  = plan.yearlyPrice;
+  try {
+    const exp = await resolveExperimentForUser({ planCode: plan.id, userId: req.user.id });
+    experimentArm = exp.experiment;
+    if (typeof exp.monthly === 'number') monthlyPrice = exp.monthly;
+    if (typeof exp.yearly  === 'number') yearlyPrice  = exp.yearly;
+  } catch (err) {
+    // Experiment lookup is best-effort; never block a sale.
+    console.warn('Subscribe: experiment resolution failed', err.message);
+  }
+
+  const originalPrice = billingCycle === 'yearly' ? yearlyPrice : monthlyPrice;
 
   // Server-side price resolution. This is the only place the actual
   // charge amount is computed — never trust a price coming from the client.
@@ -337,6 +418,8 @@ router.post('/subscribe', verifyJWT, requirePaymentsEnabled(), flagFraud, valida
         userId: req.user.id,
         offerId: resolved.appliedOffer?.id || '',
         discountPercent: String(resolved.discountPercent || 0),
+        experimentKey: experimentArm?.key || '',
+        experimentVariant: experimentArm?.variantId || '',
       },
       payment_capture: 1,
     });
@@ -353,6 +436,8 @@ router.post('/subscribe', verifyJWT, requirePaymentsEnabled(), flagFraud, valida
         currency: 'INR',
         sender: req.user.id,
         status: 'pending',
+        experimentKey:     experimentArm?.key       || null,
+        experimentVariant: experimentArm?.variantId || null,
       });
     } catch (dbErr) {
       console.warn('Payment record creation failed:', dbErr.message);
@@ -402,18 +487,30 @@ router.post('/verify', verifyJWT, validateBody(verifySchema), async (req, res) =
 
   // Mark payment as verified in DB
   // razorpay_order_id and razorpay_payment_id are Joi-validated strings; cast to String for safety.
+  let updatedPayment = null;
   try {
-    await Payment.findOneAndUpdate(
+    updatedPayment = await Payment.findOneAndUpdate(
       { razorpayOrderId: String(razorpay_order_id) },
       {
         $set: {
           razorpayPaymentId: String(razorpay_payment_id),
           status: 'captured',
         },
-      }
-    );
+      },
+      { new: true }
+    ).lean();
   } catch (dbErr) {
     console.warn('Payment verification DB update failed:', dbErr.message);
+  }
+
+  // A/B conversion: if this payment belongs to an experiment arm, record
+  // a +1 against that variant. Best-effort — we never block the user-
+  // facing verify response on a metrics write.
+  if (updatedPayment?.experimentKey && updatedPayment?.experimentVariant) {
+    recordExperimentConversion({
+      experimentKey: updatedPayment.experimentKey,
+      variantId:     updatedPayment.experimentVariant,
+    });
   }
 
   return res.json({ verified: true, paymentId: razorpay_payment_id });
@@ -586,6 +683,83 @@ router.post('/trial/start', verifyJWT, requirePaymentsEnabled(), async (req, res
   } catch (error) {
     console.error('Trial start error:', error.message);
     return res.status(500).json({ error: 'Failed to start trial' });
+  }
+});
+
+// ── Upgrade-suggestion endpoint ──────────────────────────────────────────
+// Called by the frontend when:
+//   - context=PRICING_VIEW : user opened the /subscription page
+//   - context=HIGH_USAGE   : usage >= 80% of today's limit (computed here,
+//                            so the client can fire it after every quota
+//                            read without duplicating the threshold)
+//   - context=LIMIT_HIT    : usually surfaced via the 429 quota response
+//                            already, but the explicit GET helps re-prompt
+//                            after dismissal.
+// The response shape matches buildUpgradeHint() so the frontend modal can
+// be reused verbatim.
+const UPGRADE_CONTEXTS = ['LIMIT_HIT', 'HIGH_USAGE', 'PRICING_VIEW'];
+const HIGH_USAGE_THRESHOLD = 0.8; // fire HIGH_USAGE at >=80% of any daily counter
+
+router.get('/upgrade-suggestion', verifyJWT, async (req, res) => {
+  try {
+    const requested = String(req.query.context || 'PRICING_VIEW').toUpperCase();
+    const context = UPGRADE_CONTEXTS.includes(requested) ? requested : 'PRICING_VIEW';
+
+    const sub = await getActiveSubscription(req.user.id);
+    const fromPlan = sub?.planId || 'free';
+
+    // Premium users have nothing left to upgrade to — return a stay-the-course
+    // payload instead of nudging them to themselves.
+    if (fromPlan === 'premium') {
+      return res.json({
+        upgrade: false,
+        trigger: context,
+        fromPlan,
+        suggestedPlan: null,
+        message: "You're already on Premium — every load is yours to win.",
+        meta: null,
+      });
+    }
+
+    // For HIGH_USAGE we additionally compute today's usage % so the modal can
+    // render an accurate "you've used X / Y today" line. We don't gate on the
+    // threshold here — the client decides whether to *show* the modal — but we
+    // include the computed ratio in `meta`.
+    let meta = null;
+    if (context === 'HIGH_USAGE' || context === 'LIMIT_HIT') {
+      try {
+        const usage = await readUsage(req.user.id);
+        const features = sub?.features || PLAN_FEATURES.free;
+        const segments = ['loads', 'bids'].map((action) => {
+          const limit = Number(features[`${action}PerDay`]);
+          const used  = Number(usage[`${action === 'loads' ? 'loadsCreated' : 'bidsPlaced'}`] || 0);
+          if (!Number.isFinite(limit) || limit < 0) return null;
+          const ratio = limit > 0 ? used / limit : 0;
+          return { action, limit, used, ratio };
+        }).filter(Boolean);
+        const peak = segments.reduce((best, s) => (s.ratio > (best?.ratio ?? -1) ? s : best), null);
+        meta = {
+          highUsageThreshold: HIGH_USAGE_THRESHOLD,
+          segments,
+          peakAction: peak?.action || null,
+          peakRatio:  peak ? Number(peak.ratio.toFixed(2)) : 0,
+        };
+      } catch (err) {
+        // Usage lookup must not block the suggestion response.
+        console.warn('upgrade-suggestion usage lookup failed:', err.message);
+      }
+    }
+
+    const overrideTo = context === 'PRICING_VIEW' ? 'premium' : nextPlanUp(fromPlan);
+    return res.json(buildUpgradeHint({
+      trigger: context,
+      fromPlan,
+      overrideTo,
+      meta,
+    }));
+  } catch (error) {
+    console.error('upgrade-suggestion error:', error.message);
+    return res.status(500).json({ error: 'Failed to load upgrade suggestion' });
   }
 });
 

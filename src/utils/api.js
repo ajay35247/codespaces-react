@@ -257,6 +257,21 @@ export async function apiFetch(path, options = {}) {
         }
       }
     }
+    // Standardised upgrade hint surface — any backend response that includes
+    // `upgrade: true` (402 SUBSCRIPTION_REQUIRED / SUBSCRIPTION_UPGRADE_REQUIRED,
+    // 429 QUOTA_EXCEEDED, or any future trigger) is forwarded to the global
+    // <QuotaExceededModal /> via the `upgrade:required` event. This lets
+    // every page benefit from the upgrade prompt without sprinkling per-call
+    // boilerplate. We dispatch in addition to (not instead of) `quota:exceeded`
+    // so existing listeners keep working.
+    if (payload && typeof payload === 'object' && payload.upgrade === true
+        && typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      try {
+        window.dispatchEvent(new CustomEvent('upgrade:required', { detail: payload }));
+      } catch {
+        // ignore — same rationale as above
+      }
+    }
     throw new Error(getApiErrorMessage(payload, 'Request failed'));
   }
 

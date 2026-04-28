@@ -50,10 +50,12 @@ import fleetRoutes from './routes/fleet.js';
 import profileRoutes from './routes/profile.js';
 import chatRoutes from './routes/chat.js';
 import searchRoutes from './routes/search.js';
+import boostsRoutes from './routes/boosts.js';
 import telemetryRoutes from './routes/telemetry.js';
 import adminMonitoringRoutes, { getCurrentReleaseSignal } from './routes/adminMonitoring.js';
 import { setIo } from './utils/socketBus.js';
 import { startOfferScheduler } from './services/offersScheduler.js';
+import { startSubscriptionScheduler } from './services/subscriptionScheduler.js';
 
 const httpRequestsTotal = new promClient.Counter({
   name: 'speedy_trucks_http_requests_total',
@@ -322,6 +324,9 @@ const createApp = async () => {
   app.use('/api/telemetry', telemetryRoutes);
   // Maintenance mode blocks all user-facing endpoints; admin routes above are exempt.
   app.use('/api/payments', paymentLimiter, requireNotMaintenance(), paymentRoutes);
+  // Boost / add-on purchases — share the payment limiter to deter rapid
+  // ordering loops and respect platform-wide payments-paused state.
+  app.use('/api/boosts', paymentLimiter, requireNotMaintenance(), boostsRoutes);
   app.use('/api/loads', requireNotMaintenance(), loadsRoutes);
   app.use('/api/match', matchingRoutes);
   app.use('/api/tracking', trackingRoutes);
@@ -369,6 +374,7 @@ const startWorker = async () => {
 
   // Start admin-offer auto-expiry scheduler now that DB + io are ready.
   startOfferScheduler();
+  startSubscriptionScheduler();
   // Start the auto-healing scheduler (best-effort; quietly no-ops if Redis
   // is unavailable — the queue itself will log the underlying error).
   startHealingScheduler().catch((err) => {

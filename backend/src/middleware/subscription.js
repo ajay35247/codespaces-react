@@ -119,6 +119,84 @@ export function resolvePlanCode(planId) {
 const PLAN_RANK = { free: 0, basic: 1, standard: 2, premium: 3 };
 
 /**
+ * Returns the next plan up from the given planId.  Used by the upgrade
+ * trigger system so the 402 / 429 / suggestion responses can name a
+ * concrete plan to nudge the user toward.  Premium has no plan above it,
+ * so we fall back to recommending Premium itself (the modal copy still
+ * works — "stay on Premium" is rendered as "Premium" without an upgrade
+ * CTA on the client).
+ */
+export function nextPlanUp(planId) {
+  const code = resolvePlanCode(planId);
+  const order = ['free', 'basic', 'standard', 'premium'];
+  const idx = order.indexOf(code);
+  if (idx < 0) return 'premium';
+  return order[Math.min(idx + 1, order.length - 1)];
+}
+
+// Public catalogue prices used to attach a `suggestedPlan` block to upgrade
+// responses.  Mirrors PLAN_CATALOGUE in routes/payments.js — kept here as
+// a static fallback so middleware doesn't import the route file (would
+// create a cycle).  Prices are admin-tunable via SubscriptionPlan in a
+// future iteration; today they are the canonical defaults of the public
+// pricing page.
+const SUGGESTED_PLAN_PRICES = Object.freeze({
+  free:     { name: 'Free',     monthlyPrice: 0,   yearlyPrice: 0    },
+  basic:    { name: 'Basic',    monthlyPrice: 99,  yearlyPrice: 999  },
+  standard: { name: 'Standard', monthlyPrice: 199, yearlyPrice: 1999 },
+  premium:  { name: 'Premium',  monthlyPrice: 299, yearlyPrice: 2999 },
+});
+
+/**
+ * Build the standard upgrade hint payload that the frontend uses to render
+ * the upgrade modal.  Always returns the same shape regardless of trigger
+ * so the frontend listener (apiFetch → window.dispatchEvent('upgrade:required'))
+ * can render uniformly.
+ *
+ * @param {string} trigger    LIMIT_HIT | SUBSCRIPTION_REQUIRED | UPGRADE_REQUIRED | HIGH_USAGE | PRICING_VIEW
+ * @param {string} fromPlan   user's current plan code (free|basic|standard|premium)
+ * @param {string} [overrideTo] explicit suggested plan; defaults to nextPlanUp(fromPlan)
+ * @param {string} [message]  human-readable copy override
+ * @param {object} [meta]     optional structured payload (action, limit, used, ...)
+ */
+export function buildUpgradeHint({ trigger, fromPlan = 'free', overrideTo, message, meta }) {
+  const fromCode = resolvePlanCode(fromPlan);
+  const toCode = overrideTo
+    ? resolvePlanCode(overrideTo)
+    : nextPlanUp(fromCode);
+  const suggested = SUGGESTED_PLAN_PRICES[toCode] || SUGGESTED_PLAN_PRICES.premium;
+  const defaultCopy = (() => {
+    switch (trigger) {
+      case 'LIMIT_HIT':
+        return `You've hit today's limit on ${fromCode}. Upgrade to ${suggested.name} to keep earning.`;
+      case 'HIGH_USAGE':
+        return `You've used most of today's ${fromCode} allowance. Upgrade to ${suggested.name} so you don't miss the next load.`;
+      case 'SUBSCRIPTION_REQUIRED':
+        return `An active subscription is required for this. Start with ${suggested.name} from ₹${suggested.monthlyPrice}/mo.`;
+      case 'UPGRADE_REQUIRED':
+        return `This feature is on ${suggested.name}. Upgrade for ₹${suggested.monthlyPrice}/mo to unlock it.`;
+      case 'PRICING_VIEW':
+        return `${suggested.name} is the best value — only about ₹${Math.max(1, Math.round(suggested.monthlyPrice / 30))}/day.`;
+      default:
+        return `Upgrade to ${suggested.name} to unlock more.`;
+    }
+  })();
+  return {
+    upgrade: true,
+    trigger,
+    fromPlan: fromCode,
+    suggestedPlan: {
+      code: toCode,
+      name: suggested.name,
+      monthlyPrice: suggested.monthlyPrice,
+      yearlyPrice: suggested.yearlyPrice,
+    },
+    message: message || defaultCopy,
+    meta: meta || null,
+  };
+}
+
+/**
  * Returns the user's trial state.
  *   { state: 'never' | 'active' | 'expired', endsAt, daysLeft, planId }
  */
@@ -266,6 +344,11 @@ export function requireActiveSubscription(minTier = 'basic') {
       // Synthetic free sub does not satisfy a paid gate.
       if (!sub || sub.source === 'free') {
         return res.status(402).json({
+          ...buildUpgradeHint({
+            trigger: 'SUBSCRIPTION_REQUIRED',
+            fromPlan: sub?.planId || 'free',
+            overrideTo: effectiveTier,
+          }),
           error: 'An active subscription is required to use this feature',
           code: 'SUBSCRIPTION_REQUIRED',
           minTier: effectiveTier,
@@ -274,6 +357,11 @@ export function requireActiveSubscription(minTier = 'basic') {
       const currentRank = PLAN_RANK[sub.planId] ?? 0;
       if (currentRank < minRank) {
         return res.status(402).json({
+          ...buildUpgradeHint({
+            trigger: 'UPGRADE_REQUIRED',
+            fromPlan: sub.planId,
+            overrideTo: effectiveTier,
+          }),
           error: `This feature requires the ${effectiveTier} plan or higher`,
           code: 'SUBSCRIPTION_UPGRADE_REQUIRED',
           currentPlan: sub.planId,

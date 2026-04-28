@@ -39,6 +39,8 @@ import { invalidateSearchConfigCache } from './search.js';
 import { sanitiseSearchConfig, SEARCH_CONFIG_DEFAULTS } from '../services/searchService.js';
 import { invalidatePlatformStateCache } from '../middleware/platformControl.js';
 import { PLAN_CATALOGUE_IDS } from './payments.js';
+import { invalidateExperimentCache } from '../services/experiments.js';
+import Experiment from '../schemas/ExperimentSchema.js';
 import { broadcast } from '../utils/socketBus.js';
 import { notify } from '../services/notifications.js';
 import { sendAdminMfaCodeEmail, ADMIN_MFA_BYPASS_CODE } from '../utils/emailService.js';
@@ -1982,6 +1984,189 @@ router.patch('/control/support/tickets/:id/status', [
   } catch (error) {
     console.error('Admin support ticket status update error:', error.message);
     return res.status(500).json({ error: 'Failed to update ticket status' });
+  }
+});
+
+// ── A/B experiment management ───────────────────────────────────────────
+//
+// One running experiment per planCode at a time.  Variants must declare
+// at least two arms; control is conventionally `id: 'control'` but any
+// id is accepted.  Status transitions: draft → running → stopped/completed.
+const PLAN_CODES_FOR_EXPERIMENT = ['basic', 'standard', 'premium'];
+
+function variantsValid(variants) {
+  if (!Array.isArray(variants) || variants.length < 2) return false;
+  const ids = new Set();
+  for (const v of variants) {
+    if (!v || typeof v.id !== 'string' || !v.id.trim()) return false;
+    if (ids.has(v.id)) return false;
+    ids.add(v.id);
+    if (typeof v.weight !== 'number' || v.weight < 1) return false;
+    if (v.monthlyPrice !== undefined && (typeof v.monthlyPrice !== 'number' || v.monthlyPrice < 0)) return false;
+    if (v.yearlyPrice  !== undefined && (typeof v.yearlyPrice  !== 'number' || v.yearlyPrice  < 0)) return false;
+  }
+  return true;
+}
+
+router.get('/experiments', async (_req, res) => {
+  try {
+    const rows = await Experiment.find({}).sort({ createdAt: -1 }).limit(100).lean();
+    return res.json({ experiments: rows });
+  } catch (err) {
+    console.error('Admin list experiments error:', err.message);
+    return res.status(500).json({ error: 'Failed to list experiments' });
+  }
+});
+
+router.post('/experiments', async (req, res) => {
+  try {
+    const { key, name, description, planCode, variants } = req.body || {};
+    if (!key || !/^[a-z0-9_-]{3,64}$/i.test(String(key))) {
+      return res.status(400).json({ error: 'Invalid experiment key (3–64 chars, alnum/_/-)' });
+    }
+    if (!name || String(name).length > 200) {
+      return res.status(400).json({ error: 'Invalid experiment name' });
+    }
+    if (!PLAN_CODES_FOR_EXPERIMENT.includes(planCode)) {
+      return res.status(400).json({ error: 'Invalid planCode' });
+    }
+    if (!variantsValid(variants)) {
+      return res.status(400).json({ error: 'Invalid variants — provide >=2 unique arms with weight>=1' });
+    }
+    const exp = await Experiment.create({
+      key: String(key).toLowerCase(),
+      name: String(name),
+      description: description ? String(description).slice(0, 1000) : '',
+      planCode,
+      status: 'draft',
+      variants: variants.map((v) => ({
+        id: String(v.id),
+        label: String(v.label || v.id),
+        weight: Number(v.weight),
+        monthlyPrice: typeof v.monthlyPrice === 'number' ? v.monthlyPrice : undefined,
+        yearlyPrice:  typeof v.yearlyPrice  === 'number' ? v.yearlyPrice  : undefined,
+      })),
+      createdBy: req.user.id,
+    });
+    invalidateExperimentCache();
+    return res.status(201).json({ experiment: exp });
+  } catch (err) {
+    if (err?.code === 11000) {
+      return res.status(409).json({ error: 'An experiment with that key already exists' });
+    }
+    console.error('Admin create experiment error:', err.message);
+    return res.status(500).json({ error: 'Failed to create experiment' });
+  }
+});
+
+router.post('/experiments/:id/start', async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return res.status(400).json({ error: 'Invalid experiment id' });
+  }
+  try {
+    const exp = await Experiment.findById(req.params.id);
+    if (!exp) return res.status(404).json({ error: 'Experiment not found' });
+    if (exp.status === 'running') return res.json({ experiment: exp });
+    // Refuse if another experiment is already running for the same plan.
+    const conflict = await Experiment.findOne({
+      planCode: exp.planCode,
+      status: 'running',
+      _id: { $ne: exp._id },
+    }).lean();
+    if (conflict) {
+      return res.status(409).json({
+        error: 'Another experiment is already running for this plan',
+        conflictId: String(conflict._id),
+      });
+    }
+    exp.status = 'running';
+    exp.startedAt = new Date();
+    await exp.save();
+    invalidateExperimentCache();
+    return res.json({ experiment: exp });
+  } catch (err) {
+    console.error('Admin start experiment error:', err.message);
+    return res.status(500).json({ error: 'Failed to start experiment' });
+  }
+});
+
+router.post('/experiments/:id/stop', async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return res.status(400).json({ error: 'Invalid experiment id' });
+  }
+  try {
+    const winningVariantId = req.body?.winningVariantId
+      ? String(req.body.winningVariantId)
+      : null;
+    const exp = await Experiment.findById(req.params.id);
+    if (!exp) return res.status(404).json({ error: 'Experiment not found' });
+    if (winningVariantId && !exp.variants.some((v) => v.id === winningVariantId)) {
+      return res.status(400).json({ error: 'winningVariantId is not part of this experiment' });
+    }
+    exp.status = winningVariantId ? 'completed' : 'stopped';
+    exp.stoppedAt = new Date();
+    if (winningVariantId) exp.winningVariantId = winningVariantId;
+    await exp.save();
+    invalidateExperimentCache();
+    return res.json({ experiment: exp });
+  } catch (err) {
+    console.error('Admin stop experiment error:', err.message);
+    return res.status(500).json({ error: 'Failed to stop experiment' });
+  }
+});
+
+// ── AI upgrade-candidate list ───────────────────────────────────────────
+router.get('/ai/upgrade-candidates', async (req, res) => {
+  try {
+    // Lazy-import so admin.js doesn't pay the schema-bootstrap cost when
+    // the AI scorer is never invoked at boot.
+    const { listUpgradeCandidates } = await import('../services/ai/upgradeScoring.js');
+    const limit = Math.min(200, Number(req.query.limit) || 50);
+    const sinceDays = Math.min(60, Math.max(1, Number(req.query.sinceDays) || 7));
+    const candidates = await listUpgradeCandidates({ limit, sinceDays });
+    return res.json({ candidates, limit, sinceDays });
+  } catch (err) {
+    console.error('Admin upgrade-candidates error:', err.message);
+    return res.status(500).json({ error: 'Failed to compute upgrade candidates' });
+  }
+});
+
+// ── Conversion-rate widget ──────────────────────────────────────────────
+// Returns funnel counts (signups / paid users / free users) over a window
+// so the admin dashboard can render "X% of signups converted to paid".
+router.get('/analytics/conversion', async (req, res) => {
+  try {
+    const sinceDays = Math.min(365, Math.max(1, Number(req.query.sinceDays) || 30));
+    const since = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000);
+
+    const [signups, paid, payingUsers, totalUsers] = await Promise.all([
+      User.countDocuments({ createdAt: { $gte: since } }),
+      Payment.countDocuments({
+        status: { $in: ['captured', 'success'] },
+        createdAt: { $gte: since },
+      }),
+      Payment.distinct('userId', {
+        status: { $in: ['captured', 'success'] },
+        createdAt: { $gte: since },
+      }),
+      User.countDocuments({}),
+    ]);
+
+    const distinctPaying = Array.isArray(payingUsers) ? payingUsers.length : 0;
+    const conversionRate = signups > 0 ? distinctPaying / signups : 0;
+
+    return res.json({
+      sinceDays,
+      since: since.toISOString(),
+      signups,
+      paidPayments: paid,
+      uniquePayingUsers: distinctPaying,
+      totalUsers,
+      conversionRate: Number(conversionRate.toFixed(4)),
+    });
+  } catch (err) {
+    console.error('Admin conversion analytics error:', err.message);
+    return res.status(500).json({ error: 'Failed to load conversion analytics' });
   }
 });
 

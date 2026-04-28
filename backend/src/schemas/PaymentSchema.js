@@ -26,6 +26,12 @@ const PaymentSchema = new mongoose.Schema({
     default: 'pending',
   },
   webhookEvent: { type: String },
+  // A/B experiment bucket the user was in at order time.  Used by the
+  // /verify path to record a conversion against the right arm without
+  // re-bucketing (which would risk a different result if the variant
+  // weights changed mid-test).
+  experimentKey:     { type: String, default: null, index: true },
+  experimentVariant: { type: String, default: null },
   createdAt: { type: Date, default: Date.now },
 });
 
