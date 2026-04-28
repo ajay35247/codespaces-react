@@ -1674,8 +1674,8 @@ function SubscriptionPlansControl({
             : draft.pricing[activeCycle];
 
           // Free cycles are those with price explicitly set to 0
-          const freeCycles = BILLING_CYCLES.filter(
-            (c) => draft.pricing[c.key] !== '' && Number(draft.pricing[c.key]) === 0
+          const freeCycles = SUB_CYCLES.filter(
+            (c) => !c.isSpecial && draft.pricing[c.key] !== '' && Number(draft.pricing[c.key]) === 0
           ).map((c) => c.label);
 
           return (
@@ -1727,7 +1727,7 @@ function SubscriptionPlansControl({
               <div className="mt-4">
                 {activeCycle === '_trial' ? (
                   <label className="text-xs text-slate-300">
-                    <span className="block mb-1 text-sky-300 font-medium">
+                    <span className="mb-1 block text-sky-300 font-medium">
                       Free trial period (days)
                     </span>
                     <input
@@ -1756,7 +1756,7 @@ function SubscriptionPlansControl({
                   </div>
                 ) : (
                   <label className="text-xs text-slate-300">
-                    <span className="block mb-1 text-orange-300 font-medium">
+                    <span className="mb-1 block text-orange-300 font-medium">
                       {cycleInfo.label} price (₹)
                     </span>
                     <div className="flex items-baseline gap-2">

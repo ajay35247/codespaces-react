@@ -41,9 +41,9 @@ const BILLING_CYCLES = [
   { key: 'weekly',     label: 'Weekly',        suffix: '/week',      multiplier: 1 / 4  },
   { key: 'fifteenDay', label: '15-day',        suffix: '/15 days',   multiplier: 1 / 2  },
   { key: 'monthly',    label: 'Monthly',       suffix: '/month',     multiplier: 1      },
-  { key: 'quarterly',  label: 'Quarterly',     suffix: '/quarter',   multiplier: 2.7    },
-  { key: 'halfYearly', label: '6-month',       suffix: '/6 months',  multiplier: 5.1    },
-  { key: 'yearly',     label: '1-year',        suffix: '/year',      multiplier: 9.6    },
+  { key: 'quarterly',  label: 'Quarterly',     suffix: '/quarter',   multiplier: 2.7    }, // 3 months × 0.90 (10 % bulk discount)
+  { key: 'halfYearly', label: '6-month',       suffix: '/6 months',  multiplier: 5.1    }, // 6 months × 0.85 (15 % bulk discount)
+  { key: 'yearly',     label: '1-year',        suffix: '/year',      multiplier: 9.6    }, // 12 months × 0.80 (20 % bulk discount)
   { key: '_trial',     label: '15-day Trial',  suffix: ' free',      multiplier: 0, special: 'trial' },
   { key: '_free',      label: 'Free',          suffix: '',           multiplier: 0, special: 'free'  },
 ];
