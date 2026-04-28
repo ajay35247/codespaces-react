@@ -18,6 +18,7 @@ import {
 } from '../utils/razorpayClient.js';
 import { notify, pushLive } from '../services/notifications.js';
 import { rankLoadsForDriver, rankDriversForLoad } from '../services/smartRanking.js';
+import { suggestBidForLoad } from '../services/bidSuggestion.js';
 
 const router = Router();
 
@@ -365,6 +366,47 @@ router.get(
     } catch (error) {
       console.error('Suggested drivers error:', error.message);
       return res.status(500).json({ error: 'Failed to rank drivers' });
+    }
+  }
+);
+
+// ── Dynamic bid suggestion (Phase 3b) ────────────────────────────────────────
+// Returns a statistical bid range for a load based on historical *delivered*
+// loads with the same truck type (and ideally same origin/destination).
+// Pure-read, no external services — see services/bidSuggestion.js for the
+// percentile math.  Available to any authenticated user: drivers use it
+// before bidding, shippers/brokers use it to gauge incoming bids.
+router.get(
+  '/:loadId/bid-suggestion',
+  verifyJWT,
+  async (req, res) => {
+    try {
+      const load = await Load.findOne({ loadId: req.params.loadId })
+        .select('loadId origin destination truckType bids freightPrice')
+        .lean();
+      if (!load) return res.status(404).json({ error: 'Load not found' });
+
+      // Pool: most-recent 500 delivered loads with the same truck type.
+      // 500 keeps the per-call work bounded; the indexed { status, createdAt }
+      // path on Load makes this a fast scan.  Route+truck filtering happens
+      // in-memory inside selectSample so the indexed query stays simple.
+      const pool = await Load.find({
+        status: 'delivered',
+        truckType: load.truckType,
+      })
+        .select('origin destination truckType freightPrice')
+        .sort({ createdAt: -1 })
+        .limit(500)
+        .lean();
+
+      const suggestion = suggestBidForLoad(load, pool);
+      return res.json({
+        loadId: load.loadId,
+        ...suggestion,
+      });
+    } catch (error) {
+      console.error('Bid suggestion error:', error.message);
+      return res.status(500).json({ error: 'Failed to compute bid suggestion' });
     }
   }
 );
