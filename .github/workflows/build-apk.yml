@@ -37,6 +37,26 @@ jobs:
       run: npm ci --legacy-peer-deps
 
     - name: Build web app (skip tests)
+      # The Vite build inlines `import.meta.env.VITE_*` values into the
+      # bundle that `cap sync` later copies into the APK.  Configure these
+      # under repo Settings → Secrets and variables → Actions:
+      #   - Variables: VITE_API_URL, VITE_API_FALLBACK_URL,
+      #     VITE_ADMIN_PRIVATE_PATH_SEGMENT, VITE_ADMIN_PANEL_PATH,
+      #     VITE_ADMIN_API_SEGMENT, VITE_APP_ENV
+      #   - Secrets:   VITE_GOOGLE_MAP_API_KEY, VITE_RAZORPAY_KEY_ID
+      # If a value is unset the build falls back to dev defaults, which
+      # produces an APK that talks to localhost — fine for smoke tests but
+      # not for "live with web" parity.
+      env:
+        VITE_API_URL: ${{ vars.VITE_API_URL }}
+        VITE_API_FALLBACK_URL: ${{ vars.VITE_API_FALLBACK_URL }}
+        VITE_ADMIN_PANEL_PATH: ${{ vars.VITE_ADMIN_PANEL_PATH }}
+        VITE_ADMIN_API_SEGMENT: ${{ vars.VITE_ADMIN_API_SEGMENT }}
+        VITE_ADMIN_PRIVATE_PATH_SEGMENT: ${{ vars.VITE_ADMIN_PRIVATE_PATH_SEGMENT }}
+        VITE_APP_ENV: ${{ vars.VITE_APP_ENV || 'production' }}
+        VITE_GOOGLE_MAP_API_KEY: ${{ secrets.VITE_GOOGLE_MAP_API_KEY }}
+        VITE_GOOGLE_MAPS_API_KEY: ${{ secrets.VITE_GOOGLE_MAP_API_KEY }}
+        VITE_RAZORPAY_KEY_ID: ${{ secrets.VITE_RAZORPAY_KEY_ID }}
       run: npm run build -- --mode=production 2>/dev/null || npm run build
 
     - name: Setup Java
@@ -48,25 +68,25 @@ jobs:
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
 
-    - name: Create required directories
-      run: mkdir -p android/app/src/main/assets/public || true
-
-    - name: Copy web assets to Android
-      run: |
-        if [ -d "dist" ]; then
-          cp -r dist/* android/app/src/main/assets/public/ || cp -r dist android/app/src/main/assets/public
-        else
-          echo "dist directory not found"
-          exit 1
-        fi
+    - name: Capacitor sync Android
+      # `cap sync android` copies the Vite `dist/` output into the native
+      # project AND regenerates `android/capacitor-cordova-android-plugins/`
+      # (including `cordova.variables.gradle`, which is referenced from
+      # `android/app/capacitor.build.gradle` and is gitignored). Skipping
+      # this step makes Gradle fail with "Could not read script
+      # '.../capacitor-cordova-android-plugins/cordova.variables.gradle'".
+      run: npx cap sync android
 
     - name: Make gradlew executable
       run: chmod +x android/gradlew
 
     - name: Build Android APK
+      # Run Gradle without piping through `tail`, otherwise the pipe's exit
+      # status (always 0 from `tail`) masks Gradle failures and the job
+      # reports success even when no APK is produced.
       run: |
         cd android
-        ./gradlew clean assembleDebug --no-daemon --info 2>&1 | tail -50
+        ./gradlew clean assembleDebug --no-daemon --stacktrace
 
     - name: Check APK output
       run: |
@@ -83,4 +103,5 @@ jobs:
       with:
         name: speedy-trucks-apk
         path: android/app/build/outputs/apk/debug/app-debug.apk
+        if-no-files-found: error
         retention-days: 30

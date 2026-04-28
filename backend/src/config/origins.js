@@ -9,6 +9,18 @@ function parseCsv(value = '') {
     .filter(Boolean);
 }
 
+// Pseudo-origins used by Capacitor / Ionic WebViews when the same React bundle
+// runs inside the Android (and iOS) APK.  These are non-routable local
+// schemes — they cannot be reached by a third-party site — so allowing them
+// in every environment is safe and is required for the APK to talk to the
+// same backend as the web app (see docs/MOBILE-BUILD.md).
+const CAPACITOR_WEBVIEW_ORIGINS = [
+  'https://localhost',
+  'http://localhost',
+  'capacitor://localhost',
+  'ionic://localhost',
+];
+
 export function getAllowedOriginsFromEnv() {
   const explicitOrigins = [
     process.env.FRONTEND_URL,
@@ -20,7 +32,7 @@ export function getAllowedOriginsFromEnv() {
     .filter(Boolean);
 
   if (explicitOrigins.length > 0) {
-    return Array.from(new Set(explicitOrigins));
+    return Array.from(new Set([...explicitOrigins, ...CAPACITOR_WEBVIEW_ORIGINS]));
   }
 
   // Always return localhost origins in development
@@ -32,8 +44,7 @@ export function getAllowedOriginsFromEnv() {
       'http://127.0.0.1:3000',
       'http://127.0.0.1:4173',
       'http://127.0.0.1:5173',
-      'capacitor://localhost',
-      'ionic://localhost',
+      ...CAPACITOR_WEBVIEW_ORIGINS,
     ];
   }
 
@@ -41,7 +52,7 @@ export function getAllowedOriginsFromEnv() {
   console.warn(
     'WARNING: No allowed origins configured. Set FRONTEND_URL or CLIENT_URL in environment variables.'
   );
-  return [];
+  return [...CAPACITOR_WEBVIEW_ORIGINS];
 }
 
 export function getAllowedOriginsSet() {

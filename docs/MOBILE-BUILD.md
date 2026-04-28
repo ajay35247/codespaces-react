@@ -25,6 +25,32 @@ Install it on a phone with USB debugging enabled:
 adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
+### Pointing the APK at your live backend
+
+The web app reads `import.meta.env.VITE_*` values at **build time**, and
+`cap sync` then bakes those values into the APK's bundled JS.  So the APK
+talks to whichever backend was configured when you ran `npm run build`.
+
+For "all data matches the web" parity, create a `.env.production` (or
+`.env.local`) at the repo root before building:
+
+```bash
+# .env.production
+VITE_API_URL=https://api.your-domain.com/api
+VITE_API_FALLBACK_URL=                       # optional secondary host
+VITE_ADMIN_PRIVATE_PATH_SEGMENT=<must match backend ADMIN_PRIVATE_PATH_SEGMENT>
+VITE_ADMIN_PANEL_PATH=<your secret admin path>
+VITE_ADMIN_API_SEGMENT=<your secret admin segment>
+VITE_GOOGLE_MAP_API_KEY=...
+VITE_RAZORPAY_KEY_ID=rzp_live_...
+VITE_APP_ENV=production
+```
+
+The Capacitor WebView loads pages from `https://localhost` on Android
+(and `capacitor://localhost` on iOS).  Both are already on the backend's
+allow-list (`backend/src/config/origins.js`), so CORS, cookie auth, and
+the double-submit CSRF token all work unchanged inside the APK.
+
 ### Prerequisites
 
 * **Node 22.x** and **npm 10.x** (matching `engines` in `package.json`)
@@ -39,6 +65,23 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 request that touches the app, and via the Actions **Run workflow** button.
 It uploads the debug APK as a workflow artifact named `speedy-trucks-apk`
 with a 30-day retention — download it from the run summary page.
+
+The workflow injects the same `VITE_*` values from repo **Variables** and
+**Secrets** so the CI-built APK points at the same backend as production:
+
+| Setting | Type | Purpose |
+|---|---|---|
+| `VITE_API_URL` | Variable | Backend base URL (include `/api`) |
+| `VITE_API_FALLBACK_URL` | Variable | Optional failover backend |
+| `VITE_ADMIN_PANEL_PATH` | Variable | Hidden admin route path |
+| `VITE_ADMIN_API_SEGMENT` | Variable | Hidden admin API segment |
+| `VITE_ADMIN_PRIVATE_PATH_SEGMENT` | Variable | Same value, alias |
+| `VITE_APP_ENV` | Variable | Defaults to `production` |
+| `VITE_GOOGLE_MAP_API_KEY` | Secret | Google Maps key |
+| `VITE_RAZORPAY_KEY_ID` | Secret | Razorpay public key |
+
+If any value is missing the build still succeeds — but the APK falls back
+to dev defaults (`http://localhost:5000`) and won't reach prod data.
 
 ## 2. Release (signed) APK / AAB — blocked until you add secrets
 
