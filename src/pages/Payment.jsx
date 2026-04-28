@@ -41,9 +41,9 @@ const BILLING_CYCLES = [
   { key: 'weekly',     label: 'Weekly',        suffix: '/week',      multiplier: 1 / 4  },
   { key: 'fifteenDay', label: '15-day',        suffix: '/15 days',   multiplier: 1 / 2  },
   { key: 'monthly',    label: 'Monthly',       suffix: '/month',     multiplier: 1      },
-  { key: 'quarterly',  label: 'Quarterly',     suffix: '/quarter',   multiplier: 2.7    }, // 3 months × 0.90 (10 % bulk discount)
-  { key: 'halfYearly', label: '6-month',       suffix: '/6 months',  multiplier: 5.1    }, // 6 months × 0.85 (15 % bulk discount)
-  { key: 'yearly',     label: '1-year',        suffix: '/year',      multiplier: 9.6    }, // 12 months × 0.80 (20 % bulk discount)
+  { key: 'quarterly',  label: 'Quarterly',     suffix: '/quarter',   multiplier: 2.7    }, // 3 months at 10% bulk discount (3 × 0.90)
+  { key: 'halfYearly', label: '6-month',       suffix: '/6 months',  multiplier: 5.1    }, // 6 months at 15% bulk discount (6 × 0.85)
+  { key: 'yearly',     label: '1-year',        suffix: '/year',      multiplier: 9.6    }, // 12 months at 20% bulk discount (12 × 0.80)
   { key: '_trial',     label: '15-day Trial',  suffix: ' free',      multiplier: 0, special: 'trial' },
   { key: '_free',      label: 'Free',          suffix: '',           multiplier: 0, special: 'free'  },
 ];
@@ -261,7 +261,10 @@ export function Payment() {
                 </ul>
 
                 <button
-                  onClick={(e) => { e.stopPropagation(); handlePayment(plan.id); }}
+                  onClick={(e) => {
+                  e.stopPropagation();
+                  handlePayment(plan.id);
+                }}
                   disabled={status === 'processing'}
                   className={`mt-6 w-full rounded-full px-4 py-3 text-sm font-semibold uppercase tracking-[0.18em] transition disabled:opacity-50 ${
                     isActive
