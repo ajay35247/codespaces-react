@@ -24,6 +24,11 @@ on:
     tags:
       - 'v*'
 
+# Least-privilege token: this workflow only reads source and uploads
+# artifacts (which uses the actions API, not contents).
+permissions:
+  contents: read
+
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -49,6 +54,9 @@ jobs:
           VITE_ADMIN_API_SEGMENT: ${{ vars.VITE_ADMIN_API_SEGMENT }}
           VITE_ADMIN_PRIVATE_PATH_SEGMENT: ${{ vars.VITE_ADMIN_PRIVATE_PATH_SEGMENT }}
           VITE_APP_ENV: ${{ vars.VITE_APP_ENV || 'production' }}
+          # Both names are populated from the same secret because the
+          # codebase reads either spelling depending on the call site —
+          # mirrors build-apk.yml.
           VITE_GOOGLE_MAP_API_KEY: ${{ secrets.VITE_GOOGLE_MAP_API_KEY }}
           VITE_GOOGLE_MAPS_API_KEY: ${{ secrets.VITE_GOOGLE_MAP_API_KEY }}
           VITE_RAZORPAY_KEY_ID: ${{ secrets.VITE_RAZORPAY_KEY_ID }}
