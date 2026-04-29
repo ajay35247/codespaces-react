@@ -20,8 +20,28 @@ import { RouteErrorBoundary } from '../components/RouteErrorBoundary';
  * default exports, so each lazy import resolves the named symbol and re-emits
  * it as the chunk's default — the shape `lazy()` requires.
  */
+/**
+ * Wrap a `lazy()` import that resolves a named export rather than a default.
+ *
+ * Usage:
+ *   const Login = lazyNamed(() => import('../pages/Login'), 'Login');
+ *
+ * Throws a clear error at render time if the resolved module does not expose
+ * the requested named symbol — better than React's opaque "default is
+ * undefined" error which is hard to track back to the wrong export name.
+ *
+ * @param {() => Promise<Record<string, unknown>>} importer  dynamic import call
+ * @param {string} name  name of the export to surface as the chunk's default
+ */
 const lazyNamed = (importer, name) =>
-  lazy(() => importer().then((mod) => ({ default: mod[name] })));
+  lazy(() =>
+    importer().then((mod) => {
+      if (!mod || typeof mod[name] === 'undefined') {
+        throw new Error(`lazyNamed: module does not export "${name}"`);
+      }
+      return { default: mod[name] };
+    })
+  );
 
 const Login              = lazyNamed(() => import('../pages/Login'),               'Login');
 const Register           = lazyNamed(() => import('../pages/Register'),            'Register');

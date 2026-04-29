@@ -199,7 +199,7 @@ async function connectDb() {
   log('Connected.');
 }
 
-async function seedPlans(adminId) {
+async function seedPlans() {
   let created = 0;
   let skipped = 0;
 
