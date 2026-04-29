@@ -119,7 +119,9 @@ const authSlice = createSlice({
       .addCase(bootstrapSession.fulfilled, (state, action) => {
         state.loading = false;
         state.ready = true;
-        state.user = action.payload.user;
+        const u = action.payload.user;
+        // Normalise: some API paths return _id without id (e.g. raw Mongoose doc).
+        state.user = u ? { ...u, id: u.id ?? u._id } : null;
         state.role = action.payload.user?.role || null;
         state.token = '__cookie_session__';
       })

@@ -370,7 +370,17 @@ router.get('/me', verifyJWT, async (req, res) => {
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
-    return res.json({ user });
+    return res.json({
+      user: {
+        id: user._id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        isEmailVerified: user.isEmailVerified,
+        accountStatus: user.accountStatus,
+        kycStatus: user.kycStatus,
+      },
+    });
   } catch (error) {
     console.error('Auth check error:', error.message);
     return res.status(500).json({ error: 'Authentication check failed' });
