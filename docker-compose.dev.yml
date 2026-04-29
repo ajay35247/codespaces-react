@@ -12,8 +12,6 @@
 # Copy .env.dev.example → .env.dev and fill in the values before starting.
 # The file is git-ignored; never commit it.
 
-version: '3.9'
-
 services:
   frontend:
     build:

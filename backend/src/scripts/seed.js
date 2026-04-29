@@ -187,7 +187,14 @@ function log(msg) {
 }
 
 async function connectDb() {
-  log(`Connecting to MongoDB: ${MONGODB_URI.replace(/\/\/[^:]+:[^@]+@/, '//<credentials>@')}`);
+  // Redact user:password from the URI before logging.  The pattern covers
+  // both mongodb:// and mongodb+srv:// forms.  URIs without credentials
+  // (e.g. localhost) are logged unchanged — no sensitive data is present.
+  const safeUri = MONGODB_URI.replace(
+    /(mongodb(?:\+srv)?:\/\/)([^:@/?]+:[^@/?]+)@/,
+    '$1<credentials>@'
+  );
+  log(`Connecting to MongoDB: ${safeUri}`);
   await mongoose.connect(MONGODB_URI);
   log('Connected.');
 }
