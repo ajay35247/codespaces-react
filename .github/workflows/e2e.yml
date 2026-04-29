@@ -45,6 +45,7 @@ jobs:
       JWT_SECRET: e2e-jwt-secret-not-for-production
       JWT_REFRESH_SECRET: e2e-refresh-secret-not-for-production
       ADMIN_EMAIL: admin@example.com
+      ADMIN_BOOTSTRAP_PASSWORD: e2e-bootstrap-password-not-for-production
       PORT: 5000
 
       # Frontend proxy target
@@ -84,6 +85,7 @@ jobs:
             curl -sf http://localhost:5000/api/health && break
             sleep 2
           done
+          curl -sf http://localhost:5000/api/health || { echo "Backend failed to start"; exit 1; }
         working-directory: backend
 
       # Serve the pre-built frontend via vite preview so the spec hits real
