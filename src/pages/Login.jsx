@@ -55,6 +55,7 @@ export function Login() {
             <input
               className="mt-3 w-full rounded-3xl border border-slate-800 bg-slate-900 px-4 py-3 text-white outline-none ring-2 ring-transparent transition focus:ring-sky-500 disabled:opacity-50"
               type="password"
+              name="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}  // ✅ FIXED: was [e.target](http://e.target).value
               placeholder="••••••••"
