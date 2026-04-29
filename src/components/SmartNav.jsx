@@ -186,6 +186,7 @@ export function SmartNav({ expanded, onToggle, mobileClose = false }) {
         <button
           type="button"
           onClick={toggleTheme}
+          aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
           title={!expanded ? (theme === 'dark' ? 'Light mode' : 'Dark mode') : undefined}
           className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-sm text-slate-500 hover:bg-white/5 hover:text-slate-300 transition"
         >

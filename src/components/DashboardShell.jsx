@@ -4,6 +4,7 @@ import { useSelector } from 'react-redux';
 import { SmartNav } from './SmartNav';
 import { LiveActivityRail } from './LiveActivityRail';
 import { GlobalSearchBar } from './search/GlobalSearchBar';
+import { NotificationBell } from './NotificationBell';
 
 /**
  * DashboardShell – Unified 3-column layout for all authenticated dashboard views.
@@ -115,8 +116,11 @@ export function DashboardShell({ children, hideLiveRail = false }) {
         </div>
 
         {/* Sticky universal search bar — visible on every authenticated page. */}
-        <div className="sticky top-0 z-30 flex justify-center border-b border-white/5 bg-slate-950/85 px-4 py-3 backdrop-blur-md">
-          <GlobalSearchBar compact />
+        <div className="sticky top-0 z-30 flex items-center justify-between gap-2 border-b border-white/5 bg-slate-950/85 px-4 py-3 backdrop-blur-md">
+          <div className="flex-1 flex justify-center">
+            <GlobalSearchBar compact />
+          </div>
+          <NotificationBell />
         </div>
 
         {/* Page content – independently scrollable */}
