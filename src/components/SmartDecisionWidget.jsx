@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import { apiRequest } from '../utils/api';
+import { captureError } from '../services/errorReporter';
 
 /**
  * Role-specific suggested actions that the user can take with one click.
@@ -138,7 +139,7 @@ export function SmartDecisionWidget({ compact = false }) {
     if (!user?.id) return;
     apiRequest('/dashboard/stats')
       .then((data) => setStats(data.stats || null))
-      .catch(() => {});
+      .catch((err) => captureError(err, { type: 'smart-decision.fetch' }));
   }, [user?.id]);
 
   const role = user?.role;

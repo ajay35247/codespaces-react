@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { apiRequest } from '../utils/api';
 import { RatingBadge, StarPicker } from '../components/RatingBadge';
 import { loadRazorpayScript } from '../utils/razorpay';
+import { TripChatPanel } from '../components/TripChatPanel';
 
 const TRUCK_TYPES = ['truck', 'mini-truck', 'trailer', 'container', 'tanker', 'flatbed', 'reefer'];
 
@@ -591,6 +592,15 @@ function LoadCard({ load, onStatusChange }) {
 
       {load.bids && load.bids.length === 0 && load.status === 'posted' && (
         <p className="mt-4 text-xs text-slate-500">No bids yet. Drivers and brokers will bid on this load.</p>
+      )}
+
+      {load.status === 'in-transit' && (
+        <div className="mt-4">
+          <TripChatPanel
+            loadId={load.loadId}
+            loadRoute={`${load.origin} → ${load.destination}`}
+          />
+        </div>
       )}
 
       {showRate && (

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import { apiRequest } from '../utils/api';
+import { captureError } from '../services/errorReporter';
 
 /** Animated SVG ring that fills to `value/max`. */
 function ProgressRing({ value, max, size = 84, stroke = 8, color = '#f97316' }) {
@@ -69,7 +70,7 @@ export function EarningsWidget() {
       .then(([statsRes, walletRes]) => {
         setData({ stats: statsRes?.stats || null, wallet: walletRes?.wallet || null });
       })
-      .catch(() => {})
+      .catch((err) => captureError(err, { type: 'earnings.fetch' }))
       .finally(() => setLoading(false));
   }, [user?.id]);
 

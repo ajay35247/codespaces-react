@@ -11,6 +11,8 @@ export default defineConfig(({ mode }) => {
     test: {
       globals: true,
       environment: 'jsdom',
+      include: ['src/**/*.{test,spec}.{js,jsx,ts,tsx}'],
+      exclude: ['node_modules', 'dist', 'backend', 'e2e', 'android'],
     },
     build: {
       outDir: 'dist',
@@ -21,6 +23,8 @@ export default defineConfig(({ mode }) => {
             vendor: ['react', 'react-dom', 'react-router-dom'],
             redux: ['@reduxjs/toolkit', 'react-redux'],
             charts: ['recharts'],
+            three: ['three', '@react-three/fiber'],
+            motion: ['framer-motion'],
           },
         },
       },

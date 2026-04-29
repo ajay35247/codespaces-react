@@ -1,3 +1,5 @@
+import { captureError as _captureError } from '../services/errorReporter';
+
 const DEFAULT_API_ORIGIN = 'http://localhost:5000';
 
 // Mutating HTTP methods that require a CSRF token header.
@@ -137,18 +139,13 @@ function parseRetryAfter(headerValue) {
   return null;
 }
 
-async function reportFailedRequest(path, method, info) {
-  // errorReporter no longer imports from api.js (it inlines URL building),
-  // so this static-style import is safe and the bundler picks the same chunk.
+function reportFailedRequest(path, method, info) {
   try {
-    const mod = await import('../services/errorReporter');
-    if (mod && typeof mod.captureError === 'function') {
-      mod.captureError({
-        message: `API ${method} ${path} failed: ${info}`,
-        type: 'api.fetch',
-        severity: 'warning',
-      });
-    }
+    _captureError({
+      message: `API ${method} ${path} failed: ${info}`,
+      type: 'api.fetch',
+      severity: 'warning',
+    });
   } catch { /* swallow */ }
 }
 

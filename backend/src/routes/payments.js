@@ -516,16 +516,6 @@ router.post('/verify', verifyJWT, validateBody(verifySchema), async (req, res) =
   return res.json({ verified: true, paymentId: razorpay_payment_id });
 });
 
-router.post('/subscription/upgrade', verifyJWT, (req, res) => {
-  // Subscription management is not yet implemented.  Returning a fake 200 success
-  // would mislead users into believing their plan changed when it did not.
-  return res.status(501).json({ error: 'Subscription upgrade is not yet implemented' });
-});
-
-router.post('/subscription/downgrade', verifyJWT, (req, res) => {
-  return res.status(501).json({ error: 'Subscription downgrade is not yet implemented' });
-});
-
 router.post('/subscription/cancel', verifyJWT, async (req, res) => {
   try {
     // Mark the user's latest active subscription payment as cancelled

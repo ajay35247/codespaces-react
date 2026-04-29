@@ -6,6 +6,8 @@ import { StatsCard } from '../components/StatsCard';
 import { Card3D } from '../components/Card3D';
 import { ROLE_CARDS } from '../data/roles';
 import { apiRequest } from '../utils/api';
+import { AnalyticsInsights } from '../components/AnalyticsInsights';
+import { EarningsWidget } from '../components/EarningsWidget';
 
 const ROLE_ACTIONS = {
   shipper: [
@@ -276,6 +278,17 @@ export function RoleDashboard() {
           </Card3D>
         </div>
       </motion.section>
+
+      {/* ── Earnings & Insights widgets ────────────────────────── */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.6, delay: 0.45 }}
+        className="mt-6 grid gap-6 lg:grid-cols-2"
+      >
+        <EarningsWidget />
+        <AnalyticsInsights />
+      </motion.div>
     </main>
   );
 }
