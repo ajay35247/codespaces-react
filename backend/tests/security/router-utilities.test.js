@@ -203,32 +203,52 @@ test('fingerprintError: handles empty input', () => {
 test('isGspConfigured always returns false (no GSP licensed)', () => assert.equal(isGspConfigured(), false));
 
 test('getActiveProviderName defaults to "none"', () => {
-  const saved = process.env.GSP_PROVIDER; delete process.env.GSP_PROVIDER;
-  assert.equal(getActiveProviderName(), 'none');
-  if (saved !== undefined) process.env.GSP_PROVIDER = saved;
+  const saved = process.env.GSP_PROVIDER;
+  try {
+    delete process.env.GSP_PROVIDER;
+    assert.equal(getActiveProviderName(), 'none');
+  } finally {
+    if (saved !== undefined) process.env.GSP_PROVIDER = saved;
+    else delete process.env.GSP_PROVIDER;
+  }
 });
 
 test('generateEwayBill returns configured:false for provider "none"', async () => {
-  const saved = process.env.GSP_PROVIDER; delete process.env.GSP_PROVIDER;
-  const r = await generateEwayBill({});
-  assert.equal(r.configured, false);
-  assert.ok(r.reason.length > 0);
-  if (saved !== undefined) process.env.GSP_PROVIDER = saved;
+  const saved = process.env.GSP_PROVIDER;
+  try {
+    delete process.env.GSP_PROVIDER;
+    const r = await generateEwayBill({});
+    assert.equal(r.configured, false);
+    assert.ok(r.reason.length > 0);
+  } finally {
+    if (saved !== undefined) process.env.GSP_PROVIDER = saved;
+    else delete process.env.GSP_PROVIDER;
+  }
 });
 
 test('generateIrn returns configured:false for provider "none"', async () => {
-  const saved = process.env.GSP_PROVIDER; delete process.env.GSP_PROVIDER;
-  const r = await generateIrn({});
-  assert.equal(r.configured, false);
-  if (saved !== undefined) process.env.GSP_PROVIDER = saved;
+  const saved = process.env.GSP_PROVIDER;
+  try {
+    delete process.env.GSP_PROVIDER;
+    const r = await generateIrn({});
+    assert.equal(r.configured, false);
+  } finally {
+    if (saved !== undefined) process.env.GSP_PROVIDER = saved;
+    else delete process.env.GSP_PROVIDER;
+  }
 });
 
 test('generateEwayBill with GSP_PROVIDER=clear returns configured:false (not implemented)', async () => {
-  process.env.GSP_PROVIDER = 'clear';
-  const r = await generateEwayBill({});
-  assert.equal(r.configured, false);
-  assert.ok(r.reason.includes('not implemented'));
-  delete process.env.GSP_PROVIDER;
+  const saved = process.env.GSP_PROVIDER;
+  try {
+    process.env.GSP_PROVIDER = 'clear';
+    const r = await generateEwayBill({});
+    assert.equal(r.configured, false);
+    assert.ok(r.reason.includes('not implemented'));
+  } finally {
+    if (saved !== undefined) process.env.GSP_PROVIDER = saved;
+    else delete process.env.GSP_PROVIDER;
+  }
 });
 
 // ════════════════════════════════════════════════════════════════════════════
