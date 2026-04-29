@@ -11,6 +11,9 @@
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
     "worker": "node src/worker.js",
+    "seed": "node src/scripts/seed.js",
+    "seed:reset": "node src/scripts/seed.js --reset",
+    "test": "node --test tests/security/*.test.js",
     "test:security": "node --test tests/security/*.test.js"
   },
   "dependencies": {

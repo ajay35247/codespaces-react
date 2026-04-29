@@ -95,7 +95,7 @@ export default function App() {
     <Provider store={store}>
       <ThemeProvider>
         <div className="min-h-screen bg-slate-950 text-white">
-          <BrowserRouter>
+          <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
             <AppWrapper />
           </BrowserRouter>
         </div>
