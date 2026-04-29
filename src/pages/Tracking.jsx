@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { GoogleMap, Marker, Polyline, useJsApiLoader } from '@react-google-maps/api';
 import { apiRequest } from '../utils/api';
 import { useSocket } from '../hooks/useSocket';
+import { captureError } from '../services/errorReporter';
 
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAP_API_KEY || import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
 const mapContainerStyle = { width: '100%', height: '100%' };
@@ -87,7 +88,7 @@ export function Tracking() {
     const shipment = shipments[0];
     apiRequest(`/tracking/route/${shipment.id}`)
       .then((data) => setRoutePath(data.route?.path || []))
-      .catch(() => {});
+      .catch((err) => captureError(err, { type: 'tracking.route.fetch' }));
   }, [shipments, loadId]);
 
   const routePolyline = useMemo(() => routePath.map((point) => ({ lat: point.lat, lng: point.lng })), [routePath]);

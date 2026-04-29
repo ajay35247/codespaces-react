@@ -5,6 +5,7 @@ import { Card3D } from '../components/Card3D';
 import { RatingBadge, StarPicker } from '../components/RatingBadge';
 import BidSuggestionPanel from '../components/BidSuggestionPanel';
 import { useSpeechDictation, useSpeechSynthesis } from '../hooks/useSpeech';
+import { TripChatPanel } from '../components/TripChatPanel';
 
 // Hard cap matches MAX_POD_PHOTO_LENGTH on the backend (≈260 KB decoded).
 const MAX_POD_PHOTO_DATA_URL_LENGTH = 350_000;
@@ -490,6 +491,15 @@ function LoadCard({ load, onChanged, isAssigned, onPlaceBid }) {
         </div>
       </div>
       {error && <p className="mt-3 text-xs text-orange-300">{error}</p>}
+
+      {isAssigned && load.status === 'in-transit' && (
+        <div className="mt-4">
+          <TripChatPanel
+            loadId={load.loadId}
+            loadRoute={`${load.origin} → ${load.destination}`}
+          />
+        </div>
+      )}
 
       {showPod && <PodModal load={load} onClose={() => setShowPod(false)} onSubmitted={() => { setShowPod(false); onChanged(); }} />}
       {showRate && <RateShipperModal load={load} onClose={() => setShowRate(false)} onRated={() => { setShowRate(false); onChanged(); }} />}

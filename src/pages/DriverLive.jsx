@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { apiRequest } from '../utils/api';
 import { getSharedSocket } from '../hooks/useSocket';
+import { captureError } from '../services/errorReporter';
 
 /**
  * Browser-based driver GPS ping.  Uses `navigator.geolocation.watchPosition`
@@ -56,7 +57,7 @@ function useBatteryStatus() {
       update(b);
       b.addEventListener('levelchange', () => update(b));
       b.addEventListener('chargingchange', () => update(b));
-    }).catch(() => {});
+    }).catch((err) => captureError(err, { type: 'battery.api' }));
     return () => {
       mounted = false;
       if (batteryRef) {

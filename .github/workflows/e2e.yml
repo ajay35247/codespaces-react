@@ -1,0 +1,110 @@
+name: E2E Playwright Tests
+
+# Runs the full freight-lifecycle spec against a real backend + MongoDB.
+# Triggers on every PR targeting main that touches frontend or backend code.
+#
+# Required secrets / variables: none beyond defaults.
+# Playwright browsers are installed fresh each run via the official action.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'backend/**'
+      - 'e2e/**'
+      - 'playwright.config.*'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ping:1})'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # Backend
+      NODE_ENV: test
+      MONGODB_URI: mongodb://localhost:27017/speedytrucks_e2e
+      JWT_SECRET: e2e-jwt-secret-not-for-production
+      JWT_REFRESH_SECRET: e2e-refresh-secret-not-for-production
+      ADMIN_EMAIL: admin@example.com
+      PORT: 5000
+
+      # Frontend proxy target
+      VITE_API_URL: http://localhost:5000/api
+
+      # Playwright target
+      E2E_BASE_URL: http://localhost:3000
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Install backend dependencies
+        run: npm ci
+        working-directory: backend
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Build frontend
+        run: npm run build
+
+      # Start backend in background; wait for it to be healthy before tests.
+      - name: Start backend
+        run: |
+          npm run dev &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:5000/api/health && break
+            sleep 2
+          done
+        working-directory: backend
+
+      # Serve the pre-built frontend via vite preview so the spec hits real
+      # built assets (catches missing chunk / routing issues).
+      - name: Start frontend preview server
+        run: npx vite preview --port 3000 &
+
+      - name: Wait for frontend
+        run: |
+          for i in $(seq 1 20); do
+            curl -sf http://localhost:3000 && break
+            sleep 2
+          done
+
+      - name: Run Playwright tests
+        run: npm run test:e2e
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14

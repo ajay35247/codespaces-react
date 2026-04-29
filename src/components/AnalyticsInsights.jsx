@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import { apiRequest } from '../utils/api';
+import { captureError } from '../services/errorReporter';
 
 const INSIGHT_COLORS = {
   warning: { bg: 'bg-amber-500/8',  border: 'border-amber-500/20',  icon: '⚠️', text: 'text-amber-300' },
@@ -35,7 +36,7 @@ function generateInsights(role, stats) {
       insights.push({
         type: 'success',
         title: `Excellent score: ${stats.performanceScore}/100`,
-        body: 'You're eligible for premium, high-value loads — keep it up!',
+        body: "You're eligible for premium, high-value loads — keep it up!",
         action: null,
       });
     }
@@ -51,7 +52,7 @@ function generateInsights(role, stats) {
       insights.push({
         type: 'info',
         title: 'No active trips — idle time costs you money',
-        body: 'Available loads are waiting for bids. Don't let them go to competitors.',
+        body: "Available loads are waiting for bids. Don't let them go to competitors.",
         action: 'Browse loads', href: '/driver',
       });
     }
@@ -155,7 +156,7 @@ export function AnalyticsInsights() {
     if (!user?.id) return;
     apiRequest('/dashboard/stats')
       .then((d) => setStats(d.stats || null))
-      .catch(() => {})
+      .catch((err) => captureError(err, { type: 'analytics.fetch' }))
       .finally(() => setLoading(false));
   }, [user?.id]);
 

@@ -1,9 +1,18 @@
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import App from './App';
 
-test('renders learn react link', () => {
+// jsdom does not implement IntersectionObserver — stub it so components that
+// use it (lazy-load triggers, animation observers) don't crash in tests.
+global.IntersectionObserver = vi.fn(() => ({
+  observe: vi.fn(),
+  unobserve: vi.fn(),
+  disconnect: vi.fn(),
+}));
+
+test('renders the Speedy Trucks app header', () => {
   render(<App />);
-  const linkElement = screen.getByText(/learn react/i);
-  expect(linkElement).toBeDefined();
+  // The nav/header always renders regardless of auth state.
+  const headings = screen.getAllByText(/Speedy Trucks/i);
+  expect(headings.length).toBeGreaterThan(0);
 });

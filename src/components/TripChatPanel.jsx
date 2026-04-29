@@ -86,6 +86,8 @@ export function TripChatPanel({ loadId, loadRoute }) {
     if (error) setError(null);
     setText(e.target.value);
   };
+
+  const handleSend = async (e) => {
     e.preventDefault();
     const trimmed = text.trim();
     if (!trimmed || sending) return;
