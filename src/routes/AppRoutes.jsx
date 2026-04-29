@@ -1,120 +1,156 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { lazy, Suspense } from 'react';
 import { Home } from '../pages/Home';
-import { Login } from '../pages/Login';
-import { Register } from '../pages/Register';
-import { RoleDashboard } from '../pages/RoleDashboard';
-import { Tracking } from '../pages/Tracking';
-import { GstBilling } from '../pages/GstBilling';
-import { BrokerWorkflow } from '../pages/BrokerWorkflow';
-import { PrivacyPolicy } from '../pages/PrivacyPolicy';
-import { Terms } from '../pages/Terms';
-import { Contact } from '../pages/Contact';
-import { ForgotPassword } from '../pages/ForgotPassword';
-import { ResetPassword } from '../pages/ResetPassword';
-import { VerifyEmail } from '../pages/VerifyEmail';
-import { Payment } from '../pages/Payment';
-import { Subscription } from '../pages/Subscription';
-import { Wallet } from '../pages/Wallet';
-import { FAQ } from '../pages/FAQ';
-import { AdminControlPanel } from '../pages/AdminControlPanel';
-import { ShipperWorkflow } from '../pages/ShipperWorkflow';
-import { DriverDashboard } from '../pages/DriverDashboard';
-import { DriverLive } from '../pages/DriverLive';
-import { TruckOwnerDashboard } from '../pages/TruckOwnerDashboard';
-import { TollDashboard } from '../pages/TollDashboard';
-import { Kyc } from '../pages/Kyc';
-import { UserProfilePanel } from '../pages/UserProfilePanel';
-import { SearchResults } from '../pages/SearchResults';
 import { ProtectedRoute } from '../components/ProtectedRoute';
 import { RouteErrorBoundary } from '../components/RouteErrorBoundary';
 
-// Heavy admin-only monitoring page is code-split so it never lands in the
-// main bundle (the auto-error-detection plan caps the dashboard at lazy-load).
-const AdminMonitoring = lazy(() => import('../pages/admin/Monitoring'));
+/**
+ * Route-level code splitting.
+ *
+ * `Home` stays in the main bundle so the landing page (root path) renders
+ * without a Suspense flash — first-paint on `/` is the most conversion-
+ * critical render in the app.
+ *
+ * Every other page is lazy-loaded.  Each becomes its own JS chunk, downloaded
+ * only when the user navigates there.  This dramatically shrinks the initial
+ * payload for unauthenticated visitors (the majority of traffic) who would
+ * otherwise download admin / KYC / fleet / tolls code on the home page.
+ *
+ * Pages export named symbols (e.g. `export function Login`) rather than
+ * default exports, so each lazy import resolves the named symbol and re-emits
+ * it as the chunk's default — the shape `lazy()` requires.
+ */
+const lazyNamed = (importer, name) =>
+  lazy(() => importer().then((mod) => ({ default: mod[name] })));
+
+const Login              = lazyNamed(() => import('../pages/Login'),               'Login');
+const Register           = lazyNamed(() => import('../pages/Register'),            'Register');
+const RoleDashboard      = lazyNamed(() => import('../pages/RoleDashboard'),       'RoleDashboard');
+const Tracking           = lazyNamed(() => import('../pages/Tracking'),            'Tracking');
+const GstBilling         = lazyNamed(() => import('../pages/GstBilling'),          'GstBilling');
+const BrokerWorkflow     = lazyNamed(() => import('../pages/BrokerWorkflow'),      'BrokerWorkflow');
+const PrivacyPolicy      = lazyNamed(() => import('../pages/PrivacyPolicy'),       'PrivacyPolicy');
+const Terms              = lazyNamed(() => import('../pages/Terms'),               'Terms');
+const Contact            = lazyNamed(() => import('../pages/Contact'),             'Contact');
+const ForgotPassword     = lazyNamed(() => import('../pages/ForgotPassword'),      'ForgotPassword');
+const ResetPassword      = lazyNamed(() => import('../pages/ResetPassword'),       'ResetPassword');
+const VerifyEmail        = lazyNamed(() => import('../pages/VerifyEmail'),         'VerifyEmail');
+const Payment            = lazyNamed(() => import('../pages/Payment'),             'Payment');
+const Subscription       = lazyNamed(() => import('../pages/Subscription'),        'Subscription');
+const Wallet             = lazyNamed(() => import('../pages/Wallet'),              'Wallet');
+const FAQ                = lazyNamed(() => import('../pages/FAQ'),                 'FAQ');
+const AdminControlPanel  = lazyNamed(() => import('../pages/AdminControlPanel'),   'AdminControlPanel');
+const ShipperWorkflow    = lazyNamed(() => import('../pages/ShipperWorkflow'),     'ShipperWorkflow');
+const DriverDashboard    = lazyNamed(() => import('../pages/DriverDashboard'),     'DriverDashboard');
+const DriverLive         = lazyNamed(() => import('../pages/DriverLive'),          'DriverLive');
+const TruckOwnerDashboard = lazyNamed(() => import('../pages/TruckOwnerDashboard'), 'TruckOwnerDashboard');
+const TollDashboard      = lazyNamed(() => import('../pages/TollDashboard'),       'TollDashboard');
+const Kyc                = lazyNamed(() => import('../pages/Kyc'),                 'Kyc');
+const UserProfilePanel   = lazyNamed(() => import('../pages/UserProfilePanel'),    'UserProfilePanel');
+const SearchResults      = lazyNamed(() => import('../pages/SearchResults'),       'SearchResults');
+// Admin monitoring page has a default export — keep its existing shape.
+const AdminMonitoring    = lazy(() => import('../pages/admin/Monitoring'));
 
 const ADMIN_PANEL_PATH = (import.meta.env.VITE_ADMIN_PANEL_PATH || '').replace(/^\//, '') || null;
+
+/**
+ * Suspense fallback used for every lazy route.  Kept intentionally minimal
+ * (no spinner animation) so the chunk-fetch isn't masked by an apparent
+ * "still working" UI on a slow network — users see the previous page until
+ * the chunk arrives, which feels faster than a flash of skeleton state.
+ */
+const RouteFallback = (
+  <div
+    className="flex min-h-[40vh] items-center justify-center p-8 text-sm text-slate-300"
+    role="status"
+    aria-live="polite"
+  >
+    Loading…
+  </div>
+);
+
+const lazyRoute = (element) => <Suspense fallback={RouteFallback}>{element}</Suspense>;
 
 export function AppRoutes() {
   return (
     <RouteErrorBoundary>
       <Routes>
         <Route path="/" element={<Home />} />
-        <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />
-        <Route path="/forgot-password" element={<ForgotPassword />} />
-        <Route path="/reset-password" element={<ResetPassword />} />
-        <Route path="/verify-email/:token" element={<VerifyEmail />} />
+        <Route path="/login" element={lazyRoute(<Login />)} />
+        <Route path="/register" element={lazyRoute(<Register />)} />
+        <Route path="/forgot-password" element={lazyRoute(<ForgotPassword />)} />
+        <Route path="/reset-password" element={lazyRoute(<ResetPassword />)} />
+        <Route path="/verify-email/:token" element={lazyRoute(<VerifyEmail />)} />
         <Route path="/tracking" element={
           <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker', 'truck_owner']}>
-            <Tracking />
+            {lazyRoute(<Tracking />)}
           </ProtectedRoute>
         } />
         <Route path="/gst" element={
           <ProtectedRoute allowedRoles={['shipper', 'broker']}>
-            <GstBilling />
+            {lazyRoute(<GstBilling />)}
           </ProtectedRoute>
         } />
         <Route path="/payment" element={
           <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker', 'truck_owner']}>
-            <Payment />
+            {lazyRoute(<Payment />)}
           </ProtectedRoute>
         } />
         <Route path="/subscription" element={
           <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker', 'truck_owner']}>
-            <Subscription />
+            {lazyRoute(<Subscription />)}
           </ProtectedRoute>
         } />
         <Route path="/wallet" element={
           <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker', 'truck_owner']}>
-            <Wallet />
+            {lazyRoute(<Wallet />)}
           </ProtectedRoute>
         } />
         <Route path="/kyc" element={
           <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker', 'truck_owner']}>
-            <Kyc />
+            {lazyRoute(<Kyc />)}
           </ProtectedRoute>
         } />
         <Route path="/profile" element={
           <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker', 'truck_owner']}>
-            <UserProfilePanel />
+            {lazyRoute(<UserProfilePanel />)}
           </ProtectedRoute>
         } />
         <Route path="/shipper" element={
           <ProtectedRoute allowedRoles={['shipper']}>
-            <ShipperWorkflow />
+            {lazyRoute(<ShipperWorkflow />)}
           </ProtectedRoute>
         } />
         <Route path="/driver" element={
           <ProtectedRoute allowedRoles={['driver']}>
-            <DriverDashboard />
+            {lazyRoute(<DriverDashboard />)}
           </ProtectedRoute>
         } />
         <Route path="/driver/live" element={
           <ProtectedRoute allowedRoles={['driver', 'truck_owner']}>
-            <DriverLive />
+            {lazyRoute(<DriverLive />)}
           </ProtectedRoute>
         } />
         <Route path="/truck-owner" element={
           <ProtectedRoute allowedRoles={['truck_owner']}>
-            <TruckOwnerDashboard />
+            {lazyRoute(<TruckOwnerDashboard />)}
           </ProtectedRoute>
         } />
         <Route path="/tolls" element={
           <ProtectedRoute allowedRoles={['driver']}>
-            <TollDashboard />
+            {lazyRoute(<TollDashboard />)}
           </ProtectedRoute>
         } />
-        <Route path="/contact" element={<Contact />} />
-        <Route path="/search" element={<SearchResults />} />
-        <Route path="/privacy" element={<PrivacyPolicy />} />
-        <Route path="/terms" element={<Terms />} />
-        <Route path="/faq" element={<FAQ />} />
+        <Route path="/contact" element={lazyRoute(<Contact />)} />
+        <Route path="/search" element={lazyRoute(<SearchResults />)} />
+        <Route path="/privacy" element={lazyRoute(<PrivacyPolicy />)} />
+        <Route path="/terms" element={lazyRoute(<Terms />)} />
+        <Route path="/faq" element={lazyRoute(<FAQ />)} />
         <Route
           path="/broker"
           element={
             <ProtectedRoute allowedRoles={['broker']}>
-              <BrokerWorkflow />
+              {lazyRoute(<BrokerWorkflow />)}
             </ProtectedRoute>
           }
         />
@@ -122,7 +158,7 @@ export function AppRoutes() {
           path="/dashboard/:role"
           element={
             <ProtectedRoute allowedRoles={['shipper', 'driver', 'broker']}>
-              <RoleDashboard />
+              {lazyRoute(<RoleDashboard />)}
             </ProtectedRoute>
           }
         />
@@ -135,7 +171,7 @@ export function AppRoutes() {
           }
         />
         {ADMIN_PANEL_PATH !== null && (
-          <Route path={`/${ADMIN_PANEL_PATH}`} element={<AdminControlPanel />} />
+          <Route path={`/${ADMIN_PANEL_PATH}`} element={lazyRoute(<AdminControlPanel />)} />
         )}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
