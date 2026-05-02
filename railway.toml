@@ -2,6 +2,7 @@
 dockerfilePath = "Dockerfile.backend"
 
 [deploy]
+startCommand = "node src/index.js"
 healthcheckPath = "/api/health"
 healthcheckTimeout = 120
 restartPolicyType = "ON_FAILURE"
