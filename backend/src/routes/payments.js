@@ -137,7 +137,10 @@ function secureCompareHex(expected, actual) {
 // ── Fraud detection ─ in-memory sliding window per IP ──────────────────────
 const paymentAttempts = new Map();
 const FRAUD_WINDOW_MS = 15 * 60 * 1000;
-const FRAUD_MAX = 5;
+// Aligned with the express-rate-limit `paymentLimiter` (10/15 min) in index.js
+// so users who cancel and retry the Razorpay modal multiple times are not
+// penalised a second time by this in-process guard.
+const FRAUD_MAX = 10;
 
 /**
  * Optional auth — populate req.user when a valid access token is present
@@ -219,11 +222,23 @@ router.post(
       case 'payment.captured': {
         const entity = event.payload?.payment?.entity;
         const paymentId = entity?.id ? String(entity.id) : null;
+        const orderId   = entity?.order_id ? String(entity.order_id) : null;
         if (paymentId) {
+          // Primary lookup: the client already called /verify and stored the paymentId.
           Payment.findOneAndUpdate(
             { razorpayPaymentId: paymentId },
             { $set: { status: 'captured', webhookEvent: 'payment.captured' } }
-          ).catch((err) => console.warn('Webhook DB update failed:', err.message));
+          ).then((updated) => {
+            // Fallback: /verify was never called (browser closed, network error).
+            // Find the pending order by razorpayOrderId and stamp the paymentId so
+            // the subscription becomes active without requiring the client to retry.
+            if (!updated && orderId) {
+              return Payment.findOneAndUpdate(
+                { razorpayOrderId: orderId, razorpayPaymentId: null },
+                { $set: { razorpayPaymentId: paymentId, status: 'captured', webhookEvent: 'payment.captured' } }
+              );
+            }
+          }).catch((err) => console.warn('Webhook DB update failed (captured):', err.message));
         }
         console.log('Payment captured:', paymentId);
         break;
@@ -231,11 +246,19 @@ router.post(
       case 'payment.failed': {
         const entity = event.payload?.payment?.entity;
         const paymentId = entity?.id ? String(entity.id) : null;
+        const orderId   = entity?.order_id ? String(entity.order_id) : null;
         if (paymentId) {
           Payment.findOneAndUpdate(
             { razorpayPaymentId: paymentId },
             { $set: { status: 'failed', webhookEvent: 'payment.failed' } }
-          ).catch((err) => console.warn('Webhook DB update failed:', err.message));
+          ).then((updated) => {
+            if (!updated && orderId) {
+              return Payment.findOneAndUpdate(
+                { razorpayOrderId: orderId, razorpayPaymentId: null },
+                { $set: { razorpayPaymentId: paymentId, status: 'failed', webhookEvent: 'payment.failed' } }
+              );
+            }
+          }).catch((err) => console.warn('Webhook DB update failed (failed):', err.message));
         }
         console.warn('Payment failed:', paymentId);
         break;
@@ -429,6 +452,10 @@ router.post('/subscribe', verifyJWT, requirePaymentsEnabled(), flagFraud, valida
       await Payment.create({
         transactionId: order.id,
         razorpayOrderId: order.id,
+        // Explicitly null so the webhook fallback can query { razorpayPaymentId: null }
+        // without also matching empty-string edge cases.  /verify sets this field
+        // when the client confirms payment; the webhook does so when /verify is skipped.
+        razorpayPaymentId: null,
         planId: plan.id,
         billingCycle,
         userId: req.user.id,

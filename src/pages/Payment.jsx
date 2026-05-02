@@ -5,7 +5,7 @@
  * `/subscription`. The Subscription page hands users off here with
  * `?planId=<id>&cycle=<billingCycle>` query params; we then:
  *
- *   1. POST /payments/subscribe { planId, billingCycle, currency:'INR' }
+ *   1. POST /payments/subscribe { planId, billingCycle }
  *      to create a Razorpay order on the server.
  *   2. Load the Razorpay Checkout JS and open the modal.
  *   3. POST /payments/verify with the gateway response so the backend can
@@ -19,6 +19,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { apiRequest } from '../utils/api';
+import { useSubscription } from '../hooks/useSubscription';
 
 function loadRazorpayScript() {
   return new Promise((resolve) => {
@@ -35,6 +36,7 @@ export function Payment() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const user = useSelector((state) => state.auth.user);
+  const { refresh: refreshSubscription } = useSubscription();
 
   const planId = searchParams.get('planId');
   const cycle = searchParams.get('cycle') || 'monthly';
@@ -55,7 +57,7 @@ export function Payment() {
     try {
       const data = await apiRequest('/payments/subscribe', {
         method: 'POST',
-        body: { planId, currency: 'INR', billingCycle: cycle },
+        body: { planId, billingCycle: cycle },
       });
       if (!data.orderId) throw new Error('Payment gateway error');
 
@@ -80,6 +82,11 @@ export function Payment() {
                 razorpay_signature: response.razorpay_signature,
               },
             });
+            // Refresh subscription state so the header/nav reflects the new
+            // plan immediately without requiring a hard page reload.
+            refreshSubscription().catch((err) => {
+              console.warn('Subscription refresh after payment failed:', err?.message);
+            });
             setStatus('success');
           } catch (verifyError) {
             console.error('Payment verification failed:', verifyError);
@@ -103,7 +110,7 @@ export function Payment() {
       setErrorMessage(error?.message || '');
       setStatus('error');
     }
-  }, [planId, cycle, user?.name, user?.email]);
+  }, [planId, cycle, user?.name, user?.email, refreshSubscription]);
 
   // Auto-start the checkout once on mount when params are present. If
   // params are missing, bounce the user to the pricing page where plan
