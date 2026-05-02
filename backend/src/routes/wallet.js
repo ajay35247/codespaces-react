@@ -129,7 +129,7 @@ router.post('/topup', requirePaymentsEnabled(), validateBody(topupSchema), async
     const order = await razorpay.orders.create({
       amount: amount * 100,
       currency: 'INR',
-      receipt: `wallet_${crypto.randomUUID()}`,
+      receipt: `wallet_${crypto.randomUUID()}`.slice(0, 40),
       notes: { purpose: 'wallet-topup', userId: String(req.user.id) },
       payment_capture: 1,
     });

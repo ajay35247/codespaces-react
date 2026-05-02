@@ -106,7 +106,7 @@ router.post('/recharge/order', requirePaymentsEnabled(), requireTollsEnabled(), 
     const order = await razorpay.orders.create({
       amount: amount * 100, // paise
       currency: 'INR',
-      receipt: `fastag_${crypto.randomUUID()}`,
+      receipt: `fastag_${crypto.randomUUID()}`.slice(0, 40),
       notes: {
         purpose: 'fastag_recharge',
         userId: req.user.id,
