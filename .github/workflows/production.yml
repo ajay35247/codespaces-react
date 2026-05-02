@@ -48,7 +48,7 @@ jobs:
       - name: Build backend image
         if: steps.registry_check.outputs.has_registry == 'true'
         run: |
-          docker build -f Dockerfile.backend -t ${{ secrets.REGISTRY_HOST }}/speedy-trucks-backend:${{ github.sha }} ./backend
+          docker build -f Dockerfile.backend -t ${{ secrets.REGISTRY_HOST }}/speedy-trucks-backend:${{ github.sha }} .
 
       - name: Build frontend image
         if: steps.registry_check.outputs.has_registry == 'true'
