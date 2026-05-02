@@ -468,10 +468,21 @@ router.post('/subscribe', verifyJWT, requirePaymentsEnabled(), flagFraud, valida
       },
     });
   } catch (error) {
-    // Log the full Razorpay error body so mis-configured credentials are
-    // immediately visible in Railway deploy logs (not just the top-level message).
-    const razorpayDetail = error.body?.error?.description || error.body?.message || null;
-    console.error('Razorpay order creation error:', error.message, razorpayDetail ? `| Razorpay: ${razorpayDetail}` : '', error.status ? `| HTTP ${error.status}` : '');
+    // The Razorpay Node SDK surfaces errors as error.error.description
+    // (statusCode + error.{code,description,field,...}).  razorpayFetch uses
+    // error.body.error.description.  Check both so the real reason is always
+    // visible in Railway logs and surfaced to the user instead of a generic msg.
+    const razorpayDetail =
+      error.error?.description ||
+      error.body?.error?.description ||
+      error.body?.message ||
+      null;
+    console.error(
+      'Razorpay order creation error:',
+      error.message,
+      razorpayDetail ? `| Razorpay: ${razorpayDetail}` : '',
+      error.statusCode ? `| HTTP ${error.statusCode}` : (error.status ? `| HTTP ${error.status}` : ''),
+    );
     const userMessage = razorpayDetail
       ? `Failed to create payment order: ${razorpayDetail}`
       : 'Failed to create payment order. Please try again or contact support.';
