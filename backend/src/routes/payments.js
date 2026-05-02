@@ -411,7 +411,7 @@ router.post('/subscribe', verifyJWT, requirePaymentsEnabled(), flagFraud, valida
     const order = await razorpay.orders.create({
       amount: chargeAmount * 100,
       currency: 'INR',
-      receipt: `receipt_${crypto.randomUUID()}`,
+      receipt: `receipt_${crypto.randomUUID()}`.slice(0, 40),
       notes: {
         planId: plan.id,
         billingCycle,

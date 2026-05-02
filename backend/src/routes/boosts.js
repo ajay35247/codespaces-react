@@ -118,7 +118,7 @@ router.post('/purchase', verifyJWT, requirePaymentsEnabled(), validateBody(purch
     const order = await razorpay.orders.create({
       amount: product.unitPrice * 100,
       currency: 'INR',
-      receipt: `boost_${crypto.randomUUID()}`,
+      receipt: `boost_${crypto.randomUUID()}`.slice(0, 40),
       notes: {
         userId: req.user.id,
         productCode: product.code,
