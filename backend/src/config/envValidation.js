@@ -62,6 +62,17 @@ export function validateStartupEnv() {
     }
   }
 
+  // Razorpay — warn in all environments; payment endpoints will fail without these
+  if (isMissing(process.env.RAZORPAY_KEY_ID) || isMissing(process.env.RAZORPAY_KEY_SECRET)) {
+    warnings.push(
+      'RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET are not set. Payment subscriptions will be unavailable.'
+    );
+  } else if (isProd && String(process.env.RAZORPAY_KEY_ID).startsWith('rzp_test_')) {
+    warnings.push(
+      'RAZORPAY_KEY_ID looks like a test-mode key (rzp_test_…) but NODE_ENV=production. Payments will be declined in production. Use live keys (rzp_live_…).'
+    );
+  }
+
   // Admin identity — required in all environments
   if (isMissing(process.env.ADMIN_EMAIL)) {
     issues.push('ADMIN_EMAIL is required. Set it to the designated admin email address.');
