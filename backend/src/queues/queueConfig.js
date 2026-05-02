@@ -1,10 +1,11 @@
 import Queue from 'bull';
+import { bullRedisOpts } from '../config/redis.js';
 
 const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
 
-export const matchingQueue = new Queue('matching-queue', redisUrl);
+export const matchingQueue = new Queue('matching-queue', redisUrl, { redis: bullRedisOpts });
 
-export const notificationQueue = new Queue('notification-queue', redisUrl);
+export const notificationQueue = new Queue('notification-queue', redisUrl, { redis: bullRedisOpts });
 
 export const queueOptions = {
   removeOnComplete: true,
