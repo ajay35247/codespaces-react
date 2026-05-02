@@ -5,6 +5,12 @@ import { broadcast } from '../utils/socketBus.js';
 
 const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
 
+const redisOpts = {
+  enableReadyCheck: false,
+  maxRetriesPerRequest: null,
+  retryStrategy: (times) => Math.min(times * 100, 3000),
+};
+
 /**
  * Healing queue — runs auto-heal jobs:
  *   - apply-healing-rule:   apply a HealingRule to a fingerprint (admin-driven
@@ -15,7 +21,7 @@ const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
  * crash the worker; failures are logged and bounded by the default retry
  * config (3 attempts, exponential).
  */
-export const healingQueue = new Queue('healing-queue', redisUrl);
+export const healingQueue = new Queue('healing-queue', redisUrl, { redis: redisOpts });
 
 const queueOptions = {
   removeOnComplete: true,
