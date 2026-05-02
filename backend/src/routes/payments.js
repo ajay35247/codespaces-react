@@ -139,8 +139,24 @@ const paymentAttempts = new Map();
 const FRAUD_WINDOW_MS = 15 * 60 * 1000;
 // Aligned with the express-rate-limit `paymentLimiter` (10/15 min) in index.js
 // so users who cancel and retry the Razorpay modal multiple times are not
-// penalised a second time by this in-process guard.
+// penalised a second time by this in-process guard. 10 attempts in 15 min is
+// well above any legitimate flow (a typical buy/cancel/retry loop is ≤3
+// attempts) but still low enough to throttle a card-stuffing bot — beyond
+// this layer the Razorpay API itself enforces stricter per-card / per-IP
+// limits before any real charge attempts succeed.
 const FRAUD_MAX = 10;
+// When the Map grows past this many entries, sweep all stale entries.
+// Without this the Map grows unbounded over uptime — IPs that hit the
+// endpoint once and never return would otherwise stay forever.
+const FRAUD_MAP_SWEEP_THRESHOLD = 500;
+
+function sweepStaleAttempts(now) {
+  for (const [ip, record] of paymentAttempts) {
+    if (now - record.first > FRAUD_WINDOW_MS) {
+      paymentAttempts.delete(ip);
+    }
+  }
+}
 
 /**
  * Optional auth — populate req.user when a valid access token is present
@@ -175,10 +191,48 @@ function flagFraud(req, res, next) {
 
   paymentAttempts.set(ip, record);
 
+  // Periodic eviction of stale entries — keeps the Map's memory bounded
+  // without needing a setInterval timer (which would prevent the worker
+  // from exiting cleanly during shutdown).
+  if (paymentAttempts.size > FRAUD_MAP_SWEEP_THRESHOLD) {
+    sweepStaleAttempts(now);
+  }
+
   if (record.count > FRAUD_MAX) {
     return res.status(429).json({ error: 'Too many payment attempts. Please try again later.' });
   }
   next();
+}
+
+/**
+ * Apply a status update to a Payment row triggered by a Razorpay webhook.
+ *
+ * Two-step lookup so the subscription can be activated even when the client
+ * never called POST /verify (e.g. browser closed right after paying):
+ *   1. Try `{ razorpayPaymentId }` — the normal happy path where /verify
+ *      already stamped the payment id on our record.
+ *   2. Fallback to `{ razorpayOrderId, razorpayPaymentId: null }` — find the
+ *      pending order written by /subscribe and stamp the payment id in the
+ *      same update so the row becomes a regular captured/failed record.
+ *
+ * Best-effort: errors are logged but never thrown — Razorpay retries
+ * webhook delivery on non-2xx so we always 200 to the webhook caller.
+ */
+function applyWebhookStatusUpdate({ paymentId, orderId, status, webhookEvent }) {
+  if (!paymentId) return;
+  Payment.findOneAndUpdate(
+    { razorpayPaymentId: paymentId },
+    { $set: { status, webhookEvent } }
+  ).then((updated) => {
+    if (!updated && orderId) {
+      return Payment.findOneAndUpdate(
+        { razorpayOrderId: orderId, razorpayPaymentId: null },
+        { $set: { razorpayPaymentId: paymentId, status, webhookEvent } }
+      );
+    }
+  }).catch((err) => {
+    console.warn(`Webhook DB update failed (${webhookEvent}):`, err.message);
+  });
 }
 
 // ── Razorpay webhook – uses raw body ───────────────────────────────────────
@@ -223,23 +277,9 @@ router.post(
         const entity = event.payload?.payment?.entity;
         const paymentId = entity?.id ? String(entity.id) : null;
         const orderId   = entity?.order_id ? String(entity.order_id) : null;
-        if (paymentId) {
-          // Primary lookup: the client already called /verify and stored the paymentId.
-          Payment.findOneAndUpdate(
-            { razorpayPaymentId: paymentId },
-            { $set: { status: 'captured', webhookEvent: 'payment.captured' } }
-          ).then((updated) => {
-            // Fallback: /verify was never called (browser closed, network error).
-            // Find the pending order by razorpayOrderId and stamp the paymentId so
-            // the subscription becomes active without requiring the client to retry.
-            if (!updated && orderId) {
-              return Payment.findOneAndUpdate(
-                { razorpayOrderId: orderId, razorpayPaymentId: null },
-                { $set: { razorpayPaymentId: paymentId, status: 'captured', webhookEvent: 'payment.captured' } }
-              );
-            }
-          }).catch((err) => console.warn('Webhook DB update failed (captured):', err.message));
-        }
+        applyWebhookStatusUpdate({
+          paymentId, orderId, status: 'captured', webhookEvent: 'payment.captured',
+        });
         console.log('Payment captured:', paymentId);
         break;
       }
@@ -247,19 +287,9 @@ router.post(
         const entity = event.payload?.payment?.entity;
         const paymentId = entity?.id ? String(entity.id) : null;
         const orderId   = entity?.order_id ? String(entity.order_id) : null;
-        if (paymentId) {
-          Payment.findOneAndUpdate(
-            { razorpayPaymentId: paymentId },
-            { $set: { status: 'failed', webhookEvent: 'payment.failed' } }
-          ).then((updated) => {
-            if (!updated && orderId) {
-              return Payment.findOneAndUpdate(
-                { razorpayOrderId: orderId, razorpayPaymentId: null },
-                { $set: { razorpayPaymentId: paymentId, status: 'failed', webhookEvent: 'payment.failed' } }
-              );
-            }
-          }).catch((err) => console.warn('Webhook DB update failed (failed):', err.message));
-        }
+        applyWebhookStatusUpdate({
+          paymentId, orderId, status: 'failed', webhookEvent: 'payment.failed',
+        });
         console.warn('Payment failed:', paymentId);
         break;
       }

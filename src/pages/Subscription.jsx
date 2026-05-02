@@ -122,8 +122,13 @@ export function Subscription() {
     try {
       // Hand off to the existing Payment page which owns the Razorpay
       // Checkout JS bring-up. We pass plan + cycle as query params so it
-      // can call /payments/subscribe with the right body.
-      navigate(`/payment?planId=${plan.id}&cycle=${billingCycle}`);
+      // can call /payments/subscribe with the right body.  The applied
+      // coupon (if any) is forwarded so the user actually pays the
+      // discounted price they were shown — without this, the coupon
+      // input is decorative only.
+      const params = new URLSearchParams({ planId: plan.id, cycle: billingCycle });
+      if (appliedCoupon) params.set('coupon', appliedCoupon);
+      navigate(`/payment?${params.toString()}`);
     } catch (err) {
       setActionError(err.message);
     } finally {

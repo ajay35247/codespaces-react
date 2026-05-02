@@ -40,6 +40,7 @@ export function Payment() {
 
   const planId = searchParams.get('planId');
   const cycle = searchParams.get('cycle') || 'monthly';
+  const couponCode = searchParams.get('coupon') || '';
 
   const [status, setStatus] = useState('idle'); // idle | processing | redirect | success | cancel | error
   const [errorMessage, setErrorMessage] = useState('');
@@ -55,9 +56,11 @@ export function Payment() {
     setStatus('processing');
     setErrorMessage('');
     try {
+      const subscribeBody = { planId, billingCycle: cycle };
+      if (couponCode) subscribeBody.couponCode = couponCode;
       const data = await apiRequest('/payments/subscribe', {
         method: 'POST',
-        body: { planId, billingCycle: cycle },
+        body: subscribeBody,
       });
       if (!data.orderId) throw new Error('Payment gateway error');
 
@@ -69,7 +72,11 @@ export function Payment() {
         amount: data.amount,
         currency: data.currency,
         name: 'Speedy Trucks',
-        description: data.plan?.description,
+        // The plan object returned from /subscribe carries `tagline` (the
+        // marketing one-liner shown on the pricing card), not `description`.
+        // Use tagline when present and fall back to a generic line so the
+        // Razorpay modal never shows the literal text "undefined".
+        description: data.plan?.tagline || data.plan?.description || `${planId} plan (${cycle})`,
         order_id: data.orderId,
         handler: async function (response) {
           if (!response.razorpay_payment_id) { setStatus('error'); return; }
@@ -110,7 +117,7 @@ export function Payment() {
       setErrorMessage(error?.message || '');
       setStatus('error');
     }
-  }, [planId, cycle, user?.name, user?.email, refreshSubscription]);
+  }, [planId, cycle, couponCode, user?.name, user?.email, refreshSubscription]);
 
   // Auto-start the checkout once on mount when params are present. If
   // params are missing, bounce the user to the pricing page where plan
