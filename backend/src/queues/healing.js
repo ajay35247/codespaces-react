@@ -2,14 +2,9 @@ import Queue from 'bull';
 import ErrorEvent from '../schemas/ErrorEventSchema.js';
 import HealingRule from '../schemas/HealingRuleSchema.js';
 import { broadcast } from '../utils/socketBus.js';
+import { bullRedisOpts } from '../config/redis.js';
 
 const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
-
-const redisOpts = {
-  enableReadyCheck: false,
-  maxRetriesPerRequest: null,
-  retryStrategy: (times) => Math.min(times * 100, 3000),
-};
 
 /**
  * Healing queue — runs auto-heal jobs:
@@ -21,7 +16,7 @@ const redisOpts = {
  * crash the worker; failures are logged and bounded by the default retry
  * config (3 attempts, exponential).
  */
-export const healingQueue = new Queue('healing-queue', redisUrl, { redis: redisOpts });
+export const healingQueue = new Queue('healing-queue', redisUrl, { redis: bullRedisOpts });
 
 const queueOptions = {
   removeOnComplete: true,

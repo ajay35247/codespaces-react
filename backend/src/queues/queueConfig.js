@@ -1,16 +1,11 @@
 import Queue from 'bull';
+import { bullRedisOpts } from '../config/redis.js';
 
 const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
 
-const redisOpts = {
-  enableReadyCheck: false,
-  maxRetriesPerRequest: null,
-  retryStrategy: (times) => Math.min(times * 100, 3000),
-};
+export const matchingQueue = new Queue('matching-queue', redisUrl, { redis: bullRedisOpts });
 
-export const matchingQueue = new Queue('matching-queue', redisUrl, { redis: redisOpts });
-
-export const notificationQueue = new Queue('notification-queue', redisUrl, { redis: redisOpts });
+export const notificationQueue = new Queue('notification-queue', redisUrl, { redis: bullRedisOpts });
 
 export const queueOptions = {
   removeOnComplete: true,
