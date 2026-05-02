@@ -468,8 +468,14 @@ router.post('/subscribe', verifyJWT, requirePaymentsEnabled(), flagFraud, valida
       },
     });
   } catch (error) {
-    console.error('Razorpay order creation error:', error.message);
-    return res.status(500).json({ error: 'Failed to create payment order' });
+    // Log the full Razorpay error body so mis-configured credentials are
+    // immediately visible in Railway deploy logs (not just the top-level message).
+    const razorpayDetail = error.body?.error?.description || error.body?.message || null;
+    console.error('Razorpay order creation error:', error.message, razorpayDetail ? `| Razorpay: ${razorpayDetail}` : '', error.status ? `| HTTP ${error.status}` : '');
+    const userMessage = razorpayDetail
+      ? `Failed to create payment order: ${razorpayDetail}`
+      : 'Failed to create payment order. Please try again or contact support.';
+    return res.status(500).json({ error: userMessage });
   }
 });
 
