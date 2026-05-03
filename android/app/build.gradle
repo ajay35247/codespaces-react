@@ -30,7 +30,13 @@ android {
         applicationId "com.speedytrucks.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
+        // versionCode is driven by the `ANDROID_VERSION_CODE` env var in CI
+        // (set to ${{ github.run_number }} in build-apk.yml) so each Play
+        // Store upload is monotonically increasing — Play rejects an AAB
+        // whose versionCode is <= the previously uploaded one. Falls back
+        // to 1 for local builds where the env var isn't set.
+        def envVersionCode = System.getenv('ANDROID_VERSION_CODE')
+        versionCode (envVersionCode != null && envVersionCode.isInteger()) ? envVersionCode.toInteger() : 1
         versionName "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
