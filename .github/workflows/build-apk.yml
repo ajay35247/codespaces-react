@@ -84,12 +84,20 @@ jobs:
       # When the `ANDROID_KEYSTORE_BASE64` secret is set the base64-encoded
       # `upload.jks` is decoded into `android/app/release.keystore`, which is
       # the path `android/app/build.gradle` looks for. When the secret is
-      # absent (e.g. on PRs from forks) this step is skipped and Gradle
+      # absent (e.g. on PRs from forks) this step is a no-op and Gradle
       # falls back to an unsigned release build — debug build still works.
-      if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+      #
+      # NOTE: the `secrets` context is not allowed in step-level `if:`
+      # expressions, so the presence check is performed inside the shell
+      # script via the env var. See build-apk-release.yml for the same
+      # pattern.
       env:
         ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
       run: |
+        if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+          echo "ANDROID_KEYSTORE_BASE64 secret is not set — skipping keystore decode (release build will be unsigned)."
+          exit 0
+        fi
         echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/app/release.keystore
         if [ ! -s android/app/release.keystore ]; then
           echo "::error::Decoded keystore is empty — check ANDROID_KEYSTORE_BASE64 secret"
