@@ -36,7 +36,11 @@ android {
         // whose versionCode is <= the previously uploaded one. Falls back
         // to 1 for local builds where the env var isn't set.
         def envVersionCode = System.getenv('ANDROID_VERSION_CODE')
-        versionCode (envVersionCode != null && envVersionCode.isInteger()) ? envVersionCode.toInteger() : 1
+        // NOTE: parentheses are required around the entire ternary; without them
+        // Groovy parses `versionCode (boolExpr) ? a : b` as the method call
+        // `versionCode(boolExpr)` and feeds a Boolean into AGP's versionCode setter,
+        // which then fails with `IllegalArgumentException: Value is null`.
+        versionCode((envVersionCode != null && envVersionCode.isInteger()) ? envVersionCode.toInteger() : 1)
         versionName "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {

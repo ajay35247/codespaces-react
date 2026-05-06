@@ -44,5 +44,8 @@
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
+  },
+  "overrides": {
+    "axios": "^1.16.0"
   }
 }
