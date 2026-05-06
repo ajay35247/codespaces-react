@@ -1,0 +1,59 @@
+# Keep the Docker build context small & deterministic for Railway / CI builds.
+# (Both Dockerfile.backend and Dockerfile.frontend are built from the repo root.)
+
+# VCS / editor
+.git
+.gitignore
+.gitattributes
+.gitleaks.toml
+.vscode
+.idea
+
+# Local env files (NEVER ship secrets into images)
+.env
+.env.*
+!.env.example
+!.env.dev.example
+!.env.prod.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+!backend/.env.prod.example
+
+# Installed deps & build outputs (let `npm install` rebuild inside the image)
+node_modules
+**/node_modules
+dist
+build
+coverage
+.cache
+.parcel-cache
+.next
+out
+
+# Mobile / desktop / unrelated artefacts
+android
+android-native
+ios
+e2e
+playwright-report
+test-results
+
+# CI / docs / infra that aren't needed at runtime
+.github
+docs
+k8s
+nginx
+docker-compose*.yml
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Logs & tmp
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+tmp
+temp
