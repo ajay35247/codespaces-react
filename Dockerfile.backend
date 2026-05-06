@@ -1,17 +1,27 @@
+# Backend Dockerfile — designed to be built with the REPOSITORY ROOT as the
+# build context (which is how Railway / docker-compose / generic CI runs it).
+# All COPY paths are therefore prefixed with `backend/` so we pick up the
+# backend's package.json + src — NOT the frontend's, which has no src/index.js
+# and would cause `node src/index.js` to fail at runtime with MODULE_NOT_FOUND.
+
 FROM node:20-alpine AS dev
 WORKDIR /app
-COPY package.json package-lock.json* ./
+COPY backend/package.json backend/package-lock.json* ./
 RUN npm install
-COPY src ./src
+COPY backend/src ./src
 EXPOSE 5000
 CMD ["npx", "nodemon", "src/index.js"]
 
 FROM node:20-alpine
 WORKDIR /app
-COPY package.json package-lock.json* ./
-RUN npm install --omit=dev
-COPY src ./src
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+COPY backend/package.json backend/package-lock.json* ./
+RUN npm install --omit=dev && npm cache clean --force
+COPY backend/src ./src
+# Fail the build loudly (instead of silently shipping a broken image) if the
+# entry script is missing — protects against Docker build context regressions.
+RUN test -f /app/src/index.js || (echo 'ERROR: /app/src/index.js missing — Dockerfile build context is wrong (expected repo root).' >&2 && exit 1)
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup \
+    && chown -R appuser:appgroup /app
 USER appuser
 EXPOSE 5000
 CMD ["node", "src/index.js"]
