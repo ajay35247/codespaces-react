@@ -491,7 +491,7 @@ const startWorker = async () => {
     });
   });
 
-  server.listen(PORT, () => {
+  server.listen(PORT, '0.0.0.0', () => {
     console.log(`${process.pid} listening on port ${PORT}`);
   });
 
