@@ -71,6 +71,63 @@ function normalizePath(path = '') {
   return path.startsWith('/') ? path : `/${path}`;
 }
 
+/**
+ * Default per-request timeout in ms. Overridable via VITE_API_TIMEOUT_MS.
+ * Applied to *each* fetch attempt (initial + fallback + retry) so a stalled
+ * request can never hang the UI indefinitely on a flaky mobile network.
+ */
+function getDefaultTimeoutMs() {
+  const raw = Number(import.meta.env?.VITE_API_TIMEOUT_MS);
+  if (Number.isFinite(raw) && raw > 0) return raw;
+  return 15_000;
+}
+
+/**
+ * Wrap a fetch() call with an AbortController so it rejects after `timeoutMs`.
+ * Honors a caller-supplied `signal` (e.g. from a higher-level AbortController)
+ * by chaining cancellation: aborting the outer signal also aborts the fetch.
+ *
+ * Throws an Error with `name === 'TimeoutError'` on timeout so callers can
+ * distinguish it from generic network errors.
+ */
+async function fetchWithTimeout(url, init = {}, timeoutMs) {
+  const effective = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : getDefaultTimeoutMs();
+  const controller = new AbortController();
+  const externalSignal = init.signal;
+
+  const timer = setTimeout(() => controller.abort(new Error('timeout')), effective);
+  let externalAbortHandler = null;
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      controller.abort(externalSignal.reason);
+    } else {
+      externalAbortHandler = () => controller.abort(externalSignal.reason);
+      externalSignal.addEventListener('abort', externalAbortHandler, { once: true });
+    }
+  }
+
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (err && err.name === 'AbortError') {
+      // Distinguish timeout-triggered abort from a caller-initiated abort.
+      if (externalSignal && externalSignal.aborted) {
+        throw err;
+      }
+      const timeoutErr = new Error(`Request timeout after ${effective}ms`);
+      timeoutErr.name = 'TimeoutError';
+      timeoutErr.cause = err;
+      throw timeoutErr;
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+    if (externalSignal && externalAbortHandler) {
+      externalSignal.removeEventListener('abort', externalAbortHandler);
+    }
+  }
+}
+
 export function getApiOrigin() {
   const configured = stripTrailingSlash(import.meta.env.VITE_API_URL || DEFAULT_API_ORIGIN);
   return configured.endsWith('/api') ? configured.slice(0, -4) : configured;
@@ -150,7 +207,7 @@ function reportFailedRequest(path, method, info) {
 }
 
 export async function apiFetch(path, options = {}) {
-  const { _isRetry, _attempt = 0, retry = true, retryMaxAttempts = 3, ...fetchOptions } = options;
+  const { _isRetry, _attempt = 0, retry = true, retryMaxAttempts = 3, timeoutMs, ...fetchOptions } = options;
 
   const method = (fetchOptions.method || 'GET').toUpperCase();
   const csrfHeaders = CSRF_METHODS.has(method) ? { 'X-CSRF-Token': getCsrfToken() } : {};
@@ -165,11 +222,11 @@ export async function apiFetch(path, options = {}) {
   let response;
   let networkError = null;
   try {
-    response = await fetch(targetUrl, {
+    response = await fetchWithTimeout(targetUrl, {
       credentials: 'include',
       ...fetchOptions,
       headers: createJsonHeaders({ ...csrfHeaders, ...fetchOptions.headers }),
-    });
+    }, timeoutMs);
   } catch (err) {
     networkError = err;
   }
@@ -181,11 +238,11 @@ export async function apiFetch(path, options = {}) {
     const fallbackUrl = !_isRetry ? buildFallbackUrl(path) : null;
     if (fallbackUrl && _attempt === 0) {
       try {
-        const fbResponse = await fetch(fallbackUrl, {
+        const fbResponse = await fetchWithTimeout(fallbackUrl, {
           credentials: 'include',
           ...fetchOptions,
           headers: createJsonHeaders({ ...csrfHeaders, ...fetchOptions.headers }),
-        });
+        }, timeoutMs);
         if (fbResponse.ok) {
           breakerOnSuccess(key);
           return parseApiBody(fbResponse);
@@ -212,11 +269,11 @@ export async function apiFetch(path, options = {}) {
     const payload = await parseApiBody(response);
     if (payload?.code === 'TOKEN_EXPIRED') {
       try {
-        const refreshResponse = await fetch(buildApiUrl('/auth/refresh-token'), {
+        const refreshResponse = await fetchWithTimeout(buildApiUrl('/auth/refresh-token'), {
           method: 'POST',
           credentials: 'include',
           headers: createJsonHeaders({ 'X-CSRF-Token': getCsrfToken() }),
-        });
+        }, timeoutMs);
         if (refreshResponse.ok) {
           // Retry the original request once with fresh cookies.
           return apiFetch(path, { ...fetchOptions, _isRetry: true });
@@ -276,13 +333,15 @@ export async function apiFetch(path, options = {}) {
   return payload;
 }
 
-export async function apiRequest(path, { method = 'GET', body, headers, retry, retryOnPost } = {}) {
+export async function apiRequest(path, { method = 'GET', body, headers, retry, retryOnPost, timeoutMs, signal } = {}) {
   return apiFetch(path, {
     method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
     retry,
     retryOnPost,
+    timeoutMs,
+    signal,
   });
 }
 

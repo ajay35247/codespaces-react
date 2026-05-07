@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { GoogleMap, useJsApiLoader, Marker, Polyline } from '@react-google-maps/api';
 
 const containerStyle = {
@@ -14,8 +14,42 @@ const defaultCenter = {
 
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAP_API_KEY || import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
 
+function MapStatusCard({ tone = 'neutral', title, body }) {
+  const toneClass = tone === 'error'
+    ? 'border-rose-400/30 text-rose-200'
+    : tone === 'warn'
+      ? 'border-amber-400/30 text-amber-200'
+      : 'border-white/10 text-slate-300';
+  return (
+    <div className={`h-[330px] rounded-[1.75rem] bg-slate-950/80 border ${toneClass} p-6 flex flex-col items-center justify-center text-center`}>
+      <p className="text-sm font-semibold uppercase tracking-[0.18em]">{title}</p>
+      {body && <p className="mt-2 max-w-md text-xs leading-relaxed text-slate-400">{body}</p>}
+    </div>
+  );
+}
+
 export function TrackingMap({ shipments = [], routePath = null }) {
-  const { isLoaded } = useJsApiLoader({
+  // Capture Google Maps auth failures (`gm_authFailure` is the documented
+  // global hook fired by the Maps JS API when the API key is missing,
+  // unauthorised for the current referrer/package, or billing is disabled).
+  // Without this hook the user sees an empty grey tile with no clue why.
+  const [authFailed, setAuthFailed] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const previous = window.gm_authFailure;
+    window.gm_authFailure = () => {
+      setAuthFailed(true);
+      if (typeof previous === 'function') {
+        try { previous(); } catch { /* ignore */ }
+      }
+    };
+    return () => {
+      // Restore previous handler on unmount so we don't leak across pages.
+      window.gm_authFailure = previous;
+    };
+  }, []);
+
+  const { isLoaded, loadError } = useJsApiLoader({
     id: 'google-map-script',
     googleMapsApiKey: GOOGLE_MAPS_API_KEY,
   });
@@ -36,6 +70,36 @@ export function TrackingMap({ shipments = [], routePath = null }) {
   const onUnmount = useCallback(() => {
     setMap(null);
   }, []);
+
+  if (!GOOGLE_MAPS_API_KEY) {
+    return (
+      <MapStatusCard
+        tone="warn"
+        title="Map unavailable"
+        body="Google Maps API key is not configured for this build. Set VITE_GOOGLE_MAP_API_KEY (or VITE_GOOGLE_MAPS_API_KEY) and rebuild."
+      />
+    );
+  }
+
+  if (authFailed) {
+    return (
+      <MapStatusCard
+        tone="error"
+        title="Map authorization failed"
+        body="Google rejected the Maps API key for this app. Check key restrictions (HTTP referrers / Android package + SHA-1) and that billing is enabled on the GCP project."
+      />
+    );
+  }
+
+  if (loadError) {
+    return (
+      <MapStatusCard
+        tone="error"
+        title="Map failed to load"
+        body={loadError?.message || 'Unable to reach Google Maps. Check your network connection and try again.'}
+      />
+    );
+  }
 
   if (!isLoaded) {
     return <div className="h-[330px] rounded-[1.75rem] bg-slate-950/80 flex items-center justify-center text-slate-400">Loading map...</div>;

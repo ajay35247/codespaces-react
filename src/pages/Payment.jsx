@@ -32,6 +32,32 @@ function loadRazorpayScript() {
   });
 }
 
+/**
+ * Normalize a payment error into a user-actionable message.
+ *
+ * Captures the most common mobile-WebView failure modes (missing CSRF token,
+ * timeout, generic network error) and rewrites them as recovery guidance so
+ * users aren't stuck at a generic "Payment failed" screen.
+ */
+function normalizePaymentError(error) {
+  const raw = String(error?.message || error || '').trim();
+  if (!raw) return 'Payment failed. Please try again.';
+  const lc = raw.toLowerCase();
+  if (lc.includes('csrf')) {
+    return 'Security check failed. Please log out, sign back in, and retry the payment. (If you just installed/updated the app, clearing app storage may help.)';
+  }
+  if (lc.includes('timeout')) {
+    return 'The payment server took too long to respond. Check your connection and try again in a moment.';
+  }
+  if (lc.includes('network') || lc.includes('failed to fetch')) {
+    return 'Network error reaching the payment server. Check your connection and try again.';
+  }
+  if (lc.includes('service temporarily unavailable')) {
+    return 'Our payment service is temporarily unavailable. Please retry in a moment.';
+  }
+  return raw;
+}
+
 export function Payment() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -97,7 +123,7 @@ export function Payment() {
             setStatus('success');
           } catch (verifyError) {
             console.error('Payment verification failed:', verifyError);
-            setErrorMessage(verifyError?.message || '');
+            setErrorMessage(normalizePaymentError(verifyError));
             setStatus('error');
           }
         },
@@ -114,7 +140,7 @@ export function Payment() {
       setStatus('redirect');
     } catch (error) {
       console.error(error);
-      setErrorMessage(error?.message || '');
+      setErrorMessage(normalizePaymentError(error));
       setStatus('error');
     }
   }, [planId, cycle, couponCode, user?.name, user?.email, refreshSubscription]);

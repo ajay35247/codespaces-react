@@ -73,6 +73,28 @@ export function validateStartupEnv() {
     );
   }
 
+  // Cookie / CORS interplay — common cause of mobile-WebView CSRF/cookie
+  // failures (e.g. "Forbidden: missing CSRF token" from Capacitor APKs).
+  if (isProd) {
+    const sameSite = String(process.env.AUTH_COOKIE_SAME_SITE || 'lax').trim().toLowerCase();
+    const cookieSecure = String(process.env.COOKIE_SECURE || '').trim().toLowerCase() === 'true';
+    const cookieDomain = String(process.env.AUTH_COOKIE_DOMAIN || '').trim();
+
+    if (sameSite !== 'none') {
+      warnings.push(
+        `AUTH_COOKIE_SAME_SITE=${sameSite} in production. Cross-site clients (Capacitor APK, separate frontend domain) require AUTH_COOKIE_SAME_SITE=none + COOKIE_SECURE=true to receive cookies.`
+      );
+    }
+    if (sameSite === 'none' && !cookieSecure) {
+      issues.push('AUTH_COOKIE_SAME_SITE=none requires COOKIE_SECURE=true (browsers reject SameSite=None without Secure).');
+    }
+    if (cookieDomain) {
+      warnings.push(
+        `AUTH_COOKIE_DOMAIN="${cookieDomain}" is set. Mobile-WebView clients on a different host (e.g. Capacitor APK against a Railway backend) will reject these cookies. Leave AUTH_COOKIE_DOMAIN empty unless you specifically share cookies across subdomains.`
+      );
+    }
+  }
+
   // Admin identity — required in all environments
   if (isMissing(process.env.ADMIN_EMAIL)) {
     issues.push('ADMIN_EMAIL is required. Set it to the designated admin email address.');
