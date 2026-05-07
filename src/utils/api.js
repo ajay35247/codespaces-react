@@ -83,6 +83,21 @@ function getDefaultTimeoutMs() {
 }
 
 /**
+ * Extended per-request budget in ms for endpoints that fan out to a slow
+ * external system (e.g. Razorpay Orders / Razorpay Verify, which can take
+ * 10-25 s end-to-end on flaky mobile networks before the gateway responds).
+ * Pass via `apiRequest(path, { timeoutMs: LONG_TIMEOUT_MS })`. Overridable
+ * via VITE_API_LONG_TIMEOUT_MS.
+ */
+export function getLongTimeoutMs() {
+  const raw = Number(import.meta.env?.VITE_API_LONG_TIMEOUT_MS);
+  if (Number.isFinite(raw) && raw > 0) return raw;
+  return 45_000;
+}
+
+export const LONG_TIMEOUT_MS = getLongTimeoutMs();
+
+/**
  * Wrap a fetch() call with an AbortController so it rejects after `timeoutMs`.
  * Honors a caller-supplied `signal` (e.g. from a higher-level AbortController)
  * by chaining cancellation: aborting the outer signal also aborts the fetch.

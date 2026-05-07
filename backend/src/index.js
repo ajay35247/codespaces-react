@@ -21,6 +21,7 @@ import promClient from 'prom-client';
 import connectDatabase from './config/db.js';
 import { validateStartupEnv } from './config/envValidation.js';
 import { getAllowedOriginsFromEnv } from './config/origins.js';
+import { isCapacitorOrigin } from './config/capacitorOrigins.js';
 import { globalErrorHandler, correlationIdMiddleware } from './middleware/errorHandler.js';
 import { auditLogger } from './middleware/auditLogger.js';
 import { enforceTrustedOriginForCookieAuth } from './middleware/csrfProtection.js';
@@ -218,13 +219,7 @@ const createApp = async () => {
     // first-party native origins only — browser cross-site requests are
     // still blocked.
     const requestOrigin = String(req.get('origin') || '').replace(/\/$/, '').toLowerCase();
-    const CAPACITOR_TRUSTED_ORIGINS = new Set([
-      'https://localhost',
-      'http://localhost',
-      'capacitor://localhost',
-      'ionic://localhost',
-    ]);
-    if (requestOrigin && CAPACITOR_TRUSTED_ORIGINS.has(requestOrigin)) {
+    if (isCapacitorOrigin(requestOrigin)) {
       return next();
     }
     // Double-submit CSRF token check — the frontend reads the non-HttpOnly

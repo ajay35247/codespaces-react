@@ -18,7 +18,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { apiRequest } from '../utils/api';
+import { apiRequest, LONG_TIMEOUT_MS } from '../utils/api';
 import { useSubscription } from '../hooks/useSubscription';
 
 function loadRazorpayScript() {
@@ -87,6 +87,10 @@ export function Payment() {
       const data = await apiRequest('/payments/subscribe', {
         method: 'POST',
         body: subscribeBody,
+        // Razorpay Orders round-trip can exceed the default 15 s budget on
+        // flaky mobile networks; give it the long budget so the user doesn't
+        // see a spurious TimeoutError before Razorpay actually responds.
+        timeoutMs: LONG_TIMEOUT_MS,
       });
       if (!data.orderId) throw new Error('Payment gateway error');
 
@@ -114,6 +118,11 @@ export function Payment() {
                 razorpay_payment_id: response.razorpay_payment_id,
                 razorpay_signature: response.razorpay_signature,
               },
+              // Verify performs HMAC + DB writes; on slow mobile networks the
+              // post-checkout window can take >15 s. Long budget so users
+              // never see a "request timed out" right after a successful
+              // Razorpay charge (the worst possible UX moment to time out).
+              timeoutMs: LONG_TIMEOUT_MS,
             });
             // Refresh subscription state so the header/nav reflects the new
             // plan immediately without requiring a hard page reload.

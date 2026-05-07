@@ -8,6 +8,7 @@ import {
   parseCookieHeader,
 } from './authorize.js';
 import { getAllowedOriginsSet } from '../config/origins.js';
+import { isCapacitorOrigin } from '../config/capacitorOrigins.js';
 
 function normalizeOrigin(value) {
   return String(value || '').replace(/\/$/, '');
@@ -81,18 +82,13 @@ export function enforceTrustedOriginForCookieAuth(req, res, next) {
     return next();
   }
 
-  // Capacitor / native-WebView origins: see comment in src/index.js. Skip the
-  // strict double-submit check for authenticated requests from these
-  // first-party native origins; the cookie auth (HttpOnly access token)
-  // remains in force and the trusted-origin check below still applies.
-  const CAPACITOR_TRUSTED_ORIGINS = new Set([
-    'https://localhost',
-    'http://localhost',
-    'capacitor://localhost',
-    'ionic://localhost',
-  ]);
-  const incomingOriginLc = getRequestOrigin(req).toLowerCase();
-  const isCapacitorOrigin = incomingOriginLc && CAPACITOR_TRUSTED_ORIGINS.has(incomingOriginLc);
+  // Capacitor / native-WebView origins: see config/capacitorOrigins.js for
+  // the rationale. Skip the strict double-submit check for authenticated
+  // requests from these first-party native origins; the cookie auth
+  // (HttpOnly access token) remains in force and the trusted-origin check
+  // below still applies.
+  const incomingOrigin = getRequestOrigin(req);
+  const isCapacitor = isCapacitorOrigin(incomingOrigin);
 
   // ── Double-submit CSRF token validation ────────────────────────────────────
   // The frontend reads the `csrf-token` cookie (non-HttpOnly) and echoes it
@@ -101,7 +97,7 @@ export function enforceTrustedOriginForCookieAuth(req, res, next) {
   const cookieToken = String(cookies[CSRF_COOKIE] || '');
   const headerToken = String(req.get('x-csrf-token') || '');
 
-  if (!isCapacitorOrigin) {
+  if (!isCapacitor) {
     if (!cookieToken || !headerToken) {
       return res.status(403).json({ error: 'Forbidden: missing CSRF token' });
     }
@@ -125,7 +121,7 @@ export function enforceTrustedOriginForCookieAuth(req, res, next) {
   const allowedOrigins = getAllowedOriginsSet();
 
   // Capacitor origins are always considered trusted at the origin layer too.
-  if (isCapacitorOrigin) {
+  if (isCapacitor) {
     return next();
   }
 
