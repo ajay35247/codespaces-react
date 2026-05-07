@@ -117,7 +117,6 @@ export function enforceTrustedOriginForCookieAuth(req, res, next) {
   }
 
   // ── Defence-in-depth: trusted origin check ─────────────────────────────────
-  const requestOrigin = getRequestOrigin(req);
   const allowedOrigins = getAllowedOriginsSet();
 
   // Capacitor origins are always considered trusted at the origin layer too.
@@ -125,7 +124,7 @@ export function enforceTrustedOriginForCookieAuth(req, res, next) {
     return next();
   }
 
-  if (!requestOrigin || !allowedOrigins.has(requestOrigin)) {
+  if (!incomingOrigin || !allowedOrigins.has(incomingOrigin)) {
     return res.status(403).json({ error: 'Forbidden: invalid request origin' });
   }
 
