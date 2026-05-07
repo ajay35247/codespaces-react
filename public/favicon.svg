@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Speedy Trucks — Favicon (32x32 optimized geometry)
+  Geometry tuned for sub-pixel clarity at 16x16 and 32x32. Stroke widths
+  rebalanced relative to the master mark so the trine remains legible
+  inside browser tab strips, OS bookmarks, and SERP favicons.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Speedy Trucks">
+  <title>Speedy Trucks</title>
+  <rect x="0" y="0" width="32" height="32" rx="7" ry="7" fill="#0B3D91"/>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="3">
+    <path d="M8 12 L12 16 L8 20" stroke="#FFFFFF" stroke-opacity="0.45"/>
+    <path d="M14 12 L18 16 L14 20" stroke="#FFFFFF" stroke-opacity="0.85"/>
+    <path d="M20 12 L24 16 L20 20" stroke="#F59E0B"/>
+  </g>
+</svg>

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Speedy Trucks — Master Logo Mark ("Velocity Trine")
+  © Speedy Trucks. All rights reserved.
+  Concept: three forward chevrons inside a cobalt gem.
+  - Trailing chevron (left, low-opacity)  = momentum trail
+  - Middle chevron                          = continuity / journey
+  - Leading chevron (amber)                 = the delivery, the destination
+  Silhouette is fully recognizable down to 16x16 favicon scale.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Speedy Trucks">
+  <title>Speedy Trucks</title>
+  <defs>
+    <linearGradient id="st-cobalt" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0B3D91"/>
+      <stop offset="55%" stop-color="#0A2F73"/>
+      <stop offset="100%" stop-color="#062463"/>
+    </linearGradient>
+    <linearGradient id="st-glass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.18"/>
+      <stop offset="55%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="st-amber" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#FBBF24"/>
+      <stop offset="100%" stop-color="#F59E0B"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Cobalt gem container -->
+  <rect x="0" y="0" width="512" height="512" rx="112" ry="112" fill="url(#st-cobalt)"/>
+  <!-- Premium top-edge glass highlight -->
+  <rect x="0" y="0" width="512" height="512" rx="112" ry="112" fill="url(#st-glass)"/>
+
+  <!-- Velocity Trine: three forward-pointing chevrons -->
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="44">
+    <!-- Trailing chevron -->
+    <path d="M130 196 L190 256 L130 316" stroke="#FFFFFF" stroke-opacity="0.32"/>
+    <!-- Middle chevron -->
+    <path d="M230 196 L290 256 L230 316" stroke="#FFFFFF" stroke-opacity="0.72"/>
+    <!-- Leading chevron (amber accent — the destination) -->
+    <path d="M330 196 L390 256 L330 316" stroke="url(#st-amber)"/>
+  </g>
+
+  <!-- Subtle horizon line (road / ground anchor) -->
+  <rect x="130" y="376" width="260" height="6" rx="3" fill="#FFFFFF" fill-opacity="0.12"/>
+</svg>
