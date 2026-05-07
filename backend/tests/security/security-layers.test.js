@@ -38,7 +38,7 @@ const {
   verifyJWT,
   verifyRefreshToken,
 } = authorize;
-const { enforceTrustedOriginForCookieAuth } = await import('../../src/middleware/csrfProtection.js');
+const { enforceTrustedOriginForCookieAuth, isPublicAuthBootstrapPath } = await import('../../src/middleware/csrfProtection.js');
 const { isCapacitorOrigin, CAPACITOR_TRUSTED_ORIGINS } = await import('../../src/config/capacitorOrigins.js');
 
 function createRes() {
@@ -518,6 +518,164 @@ test('L11.10 unauthenticated public POST (no auth cookie) is allowed regardless 
   let nextCalled = false;
   enforceTrustedOriginForCookieAuth(req, createRes(), () => { nextCalled = true; });
   assert.equal(nextCalled, true);
+});
+
+// ── Public credential-exchange endpoints exempt from cookie CSRF ───────────
+// Returning users keep stale auth cookies (`st_access` / `st_refresh`) in
+// their browser whose matching non-HttpOnly `csrf-token` cookie has since
+// expired (different Max-Age). Without this exemption POST /auth/login
+// would 403 with "Forbidden: missing CSRF token" and lock them out. Pin
+// the contract: login / register / password-reset endpoints always pass
+// the CSRF guard, while the trusted-origin defence-in-depth still applies.
+
+test('L11.20 isPublicAuthBootstrapPath flags exactly the 4 credential-exchange routes', () => {
+  for (const p of [
+    '/auth/login',
+    '/auth/register',
+    '/auth/request-password-reset',
+    '/auth/reset-password',
+    '/api/auth/login',
+    '/api/auth/register',
+    '/api/auth/request-password-reset',
+    '/api/auth/reset-password',
+  ]) {
+    assert.equal(isPublicAuthBootstrapPath(p), true, `${p} must be exempt`);
+  }
+  for (const p of [
+    '/auth/logout',
+    '/auth/refresh-token',
+    '/auth/kyc',
+    '/loads',
+    '/auth/login/extra',
+    '',
+    null,
+    undefined,
+  ]) {
+    assert.equal(isPublicAuthBootstrapPath(p), false, `${p} must NOT be exempt`);
+  }
+});
+
+test('L11.21 POST /auth/login with stale auth cookie + missing csrf-token cookie is allowed', () => {
+  // Exact reproduction of the bug from the screenshot:
+  //   * user has `st_access` from a prior session,
+  //   * `csrf-token` cookie is gone (expired or never set),
+  //   * frontend posts /auth/login with credentials.
+  process.env.FRONTEND_URL = 'https://www.aptrucking.in';
+  process.env.CLIENT_URL = 'https://www.aptrucking.in';
+  const req = {
+    method: 'POST',
+    path: '/auth/login',
+    cookies: { st_access: 'stale-token' }, // no csrf-token cookie
+    get(header) {
+      if (header === 'origin') return 'https://www.aptrucking.in';
+      if (header === 'authorization') return undefined;
+      return undefined;
+    },
+    headers: {},
+  };
+  let nextCalled = false;
+  const res = createRes();
+  enforceTrustedOriginForCookieAuth(req, res, () => { nextCalled = true; });
+  assert.equal(nextCalled, true, 'login must reach next() despite missing CSRF token');
+  assert.notEqual(res.statusCode, 403);
+});
+
+test('L11.22 POST /auth/login from untrusted origin is still rejected (origin guard intact)', () => {
+  process.env.FRONTEND_URL = 'https://www.aptrucking.in';
+  process.env.CLIENT_URL = 'https://www.aptrucking.in';
+  const req = {
+    method: 'POST',
+    path: '/auth/login',
+    cookies: { st_access: 'stale-token' },
+    get(header) {
+      if (header === 'origin') return 'https://evil.example';
+      if (header === 'authorization') return undefined;
+      return undefined;
+    },
+    headers: {},
+  };
+  const res = createRes();
+  enforceTrustedOriginForCookieAuth(req, res, () => {});
+  assert.equal(res.statusCode, 403, 'cross-site login attempt must still be blocked at origin');
+});
+
+test('L11.23 POST /auth/register with stale auth cookie + missing csrf-token cookie is allowed', () => {
+  process.env.FRONTEND_URL = 'https://www.aptrucking.in';
+  process.env.CLIENT_URL = 'https://www.aptrucking.in';
+  const req = {
+    method: 'POST',
+    path: '/auth/register',
+    cookies: { st_refresh: 'stale-refresh' },
+    get(header) {
+      if (header === 'origin') return 'https://www.aptrucking.in';
+      if (header === 'authorization') return undefined;
+      return undefined;
+    },
+    headers: {},
+  };
+  let nextCalled = false;
+  enforceTrustedOriginForCookieAuth(req, createRes(), () => { nextCalled = true; });
+  assert.equal(nextCalled, true);
+});
+
+test('L11.24 POST /auth/request-password-reset with stale auth cookie + missing csrf-token cookie is allowed', () => {
+  process.env.FRONTEND_URL = 'https://www.aptrucking.in';
+  process.env.CLIENT_URL = 'https://www.aptrucking.in';
+  const req = {
+    method: 'POST',
+    path: '/auth/request-password-reset',
+    cookies: { st_access: 'stale-token' },
+    get(header) {
+      if (header === 'origin') return 'https://www.aptrucking.in';
+      if (header === 'authorization') return undefined;
+      return undefined;
+    },
+    headers: {},
+  };
+  let nextCalled = false;
+  enforceTrustedOriginForCookieAuth(req, createRes(), () => { nextCalled = true; });
+  assert.equal(nextCalled, true);
+});
+
+test('L11.25 POST /auth/reset-password with stale auth cookie + missing csrf-token cookie is allowed', () => {
+  process.env.FRONTEND_URL = 'https://www.aptrucking.in';
+  process.env.CLIENT_URL = 'https://www.aptrucking.in';
+  const req = {
+    method: 'POST',
+    path: '/auth/reset-password',
+    cookies: { st_refresh: 'stale-refresh' },
+    get(header) {
+      if (header === 'origin') return 'https://www.aptrucking.in';
+      if (header === 'authorization') return undefined;
+      return undefined;
+    },
+    headers: {},
+  };
+  let nextCalled = false;
+  enforceTrustedOriginForCookieAuth(req, createRes(), () => { nextCalled = true; });
+  assert.equal(nextCalled, true);
+});
+
+test('L11.26 non-bootstrap authenticated POST still requires CSRF token (regression guard)', () => {
+  // /auth/logout is authenticated and MUST keep CSRF protection: this
+  // exercises the negative path — that the exemption list is narrow.
+  process.env.FRONTEND_URL = 'https://www.aptrucking.in';
+  process.env.CLIENT_URL = 'https://www.aptrucking.in';
+  const req = {
+    method: 'POST',
+    path: '/auth/logout',
+    cookies: { st_access: 'cookie-token' }, // no csrf-token cookie
+    get(header) {
+      if (header === 'origin') return 'https://www.aptrucking.in';
+      if (header === 'authorization') return undefined;
+      return undefined;
+    },
+    headers: {},
+  };
+  const res = createRes();
+  enforceTrustedOriginForCookieAuth(req, res, () => {});
+  assert.equal(res.statusCode, 403);
+  assert.match(res.body?.error || '', /CSRF/i);
 });
 
 // ── isCapacitorOrigin() shared helper ──────────────────────────────────────

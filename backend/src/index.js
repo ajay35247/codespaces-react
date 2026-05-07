@@ -24,7 +24,7 @@ import { getAllowedOriginsFromEnv } from './config/origins.js';
 import { isCapacitorOrigin } from './config/capacitorOrigins.js';
 import { globalErrorHandler, correlationIdMiddleware } from './middleware/errorHandler.js';
 import { auditLogger } from './middleware/auditLogger.js';
-import { enforceTrustedOriginForCookieAuth } from './middleware/csrfProtection.js';
+import { enforceTrustedOriginForCookieAuth, isPublicAuthBootstrapPath } from './middleware/csrfProtection.js';
 import { getSocketAccessToken, verifyAccessToken } from './middleware/authorize.js';
 import { ensureAdminAccount } from './services/securityBootstrap.js';
 import { getAdminPathSegment } from './middleware/adminSecurity.js';
@@ -202,6 +202,14 @@ const createApp = async () => {
     if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
     // Bearer-token requests are not vulnerable to CSRF.
     if (req.get('authorization')) return next();
+    // Public credential-exchange endpoints (login / register / password reset)
+    // bypass the double-submit CSRF check so a returning user with stale auth
+    // cookies from a previous session — whose matching `csrf-token` cookie
+    // has since expired — can still re-authenticate. The trusted-origin
+    // check inside enforceTrustedOriginForCookieAuth still runs below.
+    if (isPublicAuthBootstrapPath(req.path)) {
+      return enforceTrustedOriginForCookieAuth(req, res, next);
+    }
     // Requests without an auth cookie (e.g. webhook, public contact form)
     // are not subject to cookie-based CSRF.
     const cookies = req.cookies || {};
