@@ -8,6 +8,7 @@ import {
   parseCookieHeader,
 } from './authorize.js';
 import { getAllowedOriginsSet } from '../config/origins.js';
+import { isCapacitorOrigin } from '../config/capacitorOrigins.js';
 
 function normalizeOrigin(value) {
   return String(value || '').replace(/\/$/, '');
@@ -81,6 +82,14 @@ export function enforceTrustedOriginForCookieAuth(req, res, next) {
     return next();
   }
 
+  // Capacitor / native-WebView origins: see config/capacitorOrigins.js for
+  // the rationale. Skip the strict double-submit check for authenticated
+  // requests from these first-party native origins; the cookie auth
+  // (HttpOnly access token) remains in force and the trusted-origin check
+  // below still applies.
+  const incomingOrigin = getRequestOrigin(req);
+  const isCapacitor = isCapacitorOrigin(incomingOrigin);
+
   // ── Double-submit CSRF token validation ────────────────────────────────────
   // The frontend reads the `csrf-token` cookie (non-HttpOnly) and echoes it
   // back as the `X-CSRF-Token` request header.  We compare them here.
@@ -88,28 +97,34 @@ export function enforceTrustedOriginForCookieAuth(req, res, next) {
   const cookieToken = String(cookies[CSRF_COOKIE] || '');
   const headerToken = String(req.get('x-csrf-token') || '');
 
-  if (!cookieToken || !headerToken) {
-    return res.status(403).json({ error: 'Forbidden: missing CSRF token' });
-  }
+  if (!isCapacitor) {
+    if (!cookieToken || !headerToken) {
+      return res.status(403).json({ error: 'Forbidden: missing CSRF token' });
+    }
 
-  try {
-    const cookieBuf = Buffer.from(cookieToken, 'utf8');
-    const headerBuf = Buffer.from(headerToken, 'utf8');
-    if (
-      cookieBuf.length !== headerBuf.length
-      || !crypto.timingSafeEqual(cookieBuf, headerBuf)
-    ) {
+    try {
+      const cookieBuf = Buffer.from(cookieToken, 'utf8');
+      const headerBuf = Buffer.from(headerToken, 'utf8');
+      if (
+        cookieBuf.length !== headerBuf.length
+        || !crypto.timingSafeEqual(cookieBuf, headerBuf)
+      ) {
+        return res.status(403).json({ error: 'Forbidden: invalid CSRF token' });
+      }
+    } catch {
       return res.status(403).json({ error: 'Forbidden: invalid CSRF token' });
     }
-  } catch {
-    return res.status(403).json({ error: 'Forbidden: invalid CSRF token' });
   }
 
   // ── Defence-in-depth: trusted origin check ─────────────────────────────────
-  const requestOrigin = getRequestOrigin(req);
   const allowedOrigins = getAllowedOriginsSet();
 
-  if (!requestOrigin || !allowedOrigins.has(requestOrigin)) {
+  // Capacitor origins are always considered trusted at the origin layer too.
+  if (isCapacitor) {
+    return next();
+  }
+
+  if (!incomingOrigin || !allowedOrigins.has(incomingOrigin)) {
     return res.status(403).json({ error: 'Forbidden: invalid request origin' });
   }
 

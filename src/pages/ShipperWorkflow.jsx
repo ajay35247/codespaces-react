@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { apiRequest } from '../utils/api';
+import { apiRequest, LONG_TIMEOUT_MS } from '../utils/api';
 import { RatingBadge, StarPicker } from '../components/RatingBadge';
 import { loadRazorpayScript } from '../utils/razorpay';
 import { TripChatPanel } from '../components/TripChatPanel';
@@ -419,7 +419,11 @@ function LoadCard({ load, onStatusChange }) {
   const fundEscrow = async () => {
     setUpdating(true); setError(null);
     try {
-      const data = await apiRequest(`/loads/${load.loadId}/escrow/create`, { method: 'POST', body: {} });
+      const data = await apiRequest(`/loads/${load.loadId}/escrow/create`, {
+        method: 'POST',
+        body: {},
+        timeoutMs: LONG_TIMEOUT_MS,
+      });
       if (!data?.orderId) throw new Error('Escrow gateway returned no order');
       const ok = await loadRazorpayScript();
       if (!ok) throw new Error('Unable to load Razorpay checkout');
@@ -439,6 +443,7 @@ function LoadCard({ load, onStatusChange }) {
                 razorpay_payment_id: response.razorpay_payment_id,
                 razorpay_signature: response.razorpay_signature,
               },
+              timeoutMs: LONG_TIMEOUT_MS,
             });
             onStatusChange();
           } catch (verifyErr) {

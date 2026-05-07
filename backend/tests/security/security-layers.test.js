@@ -39,6 +39,7 @@ const {
   verifyRefreshToken,
 } = authorize;
 const { enforceTrustedOriginForCookieAuth } = await import('../../src/middleware/csrfProtection.js');
+const { isCapacitorOrigin, CAPACITOR_TRUSTED_ORIGINS } = await import('../../src/config/capacitorOrigins.js');
 
 function createRes() {
   return {
@@ -430,4 +431,131 @@ test('L11.5 bearer-authenticated mutation is not blocked by origin middleware', 
 
   enforceTrustedOriginForCookieAuth(req, createRes(), () => { nextCalled = true; });
   assert.equal(nextCalled, true);
+});
+
+// ── Capacitor / native-WebView CSRF allow-list ─────────────────────────────
+// Android WebView does not reliably round-trip the non-HttpOnly `csrf-token`
+// cookie required by the double-submit check, which made `POST /payments/*`
+// fail in the installed APK with "Forbidden: missing CSRF token". The fix
+// allow-lists the four first-party Capacitor origins and skips the
+// double-submit check for them while keeping HttpOnly cookie auth +
+// trusted-origin defence-in-depth in force. These tests pin that contract.
+
+function makeCapacitorReq(origin, opts = {}) {
+  const headers = { ...(opts.headers || {}) };
+  return {
+    method: 'POST',
+    cookies: { st_access: 'cookie-token', ...(opts.cookies || {}) },
+    get(header) {
+      const h = String(header || '').toLowerCase();
+      if (h === 'origin') return origin;
+      if (h === 'authorization') return undefined;
+      if (h === 'x-csrf-token') return opts.csrfHeader;
+      return undefined;
+    },
+    headers,
+  };
+}
+
+for (const origin of [
+  'https://localhost',
+  'http://localhost',
+  'capacitor://localhost',
+  'ionic://localhost',
+]) {
+  test(`L11.6 Capacitor origin ${origin} bypasses CSRF double-submit but stays auth-gated`, () => {
+    const req = makeCapacitorReq(origin); // no csrf cookie, no x-csrf-token header
+    let nextCalled = false;
+    enforceTrustedOriginForCookieAuth(req, createRes(), () => { nextCalled = true; });
+    assert.equal(nextCalled, true, `${origin} must reach next() without CSRF token`);
+  });
+}
+
+test('L11.7 Capacitor origin is matched case-insensitively (WebView may upcase scheme)', () => {
+  const req = makeCapacitorReq('HTTPS://LOCALHOST');
+  let nextCalled = false;
+  enforceTrustedOriginForCookieAuth(req, createRes(), () => { nextCalled = true; });
+  assert.equal(nextCalled, true);
+});
+
+test('L11.8 lookalike origin "https://localhost.evil" is NOT treated as Capacitor', () => {
+  const req = makeCapacitorReq('https://localhost.evil');
+  const res = createRes();
+  enforceTrustedOriginForCookieAuth(req, res, () => {});
+  assert.equal(res.statusCode, 403, 'lookalike origin must be rejected');
+});
+
+test('L11.9 web origin without CSRF token is still rejected (regression guard)', () => {
+  process.env.FRONTEND_URL = 'https://www.aptrucking.in';
+  process.env.CLIENT_URL = 'https://www.aptrucking.in';
+  const req = {
+    method: 'POST',
+    cookies: { st_access: 'cookie-token' }, // no csrf-token cookie
+    get(header) {
+      if (header === 'origin') return 'https://www.aptrucking.in';
+      if (header === 'authorization') return undefined;
+      return undefined;
+    },
+    headers: {},
+  };
+  const res = createRes();
+  enforceTrustedOriginForCookieAuth(req, res, () => {});
+  assert.equal(res.statusCode, 403);
+  assert.match(res.body?.error || '', /CSRF/i);
+});
+
+test('L11.10 unauthenticated public POST (no auth cookie) is allowed regardless of CSRF', () => {
+  // e.g. Razorpay webhook, public contact form
+  const req = {
+    method: 'POST',
+    cookies: {},
+    get(header) {
+      if (header === 'origin') return 'https://api.razorpay.com';
+      return undefined;
+    },
+    headers: {},
+  };
+  let nextCalled = false;
+  enforceTrustedOriginForCookieAuth(req, createRes(), () => { nextCalled = true; });
+  assert.equal(nextCalled, true);
+});
+
+// ── isCapacitorOrigin() shared helper ──────────────────────────────────────
+test('L11.11 isCapacitorOrigin matches all 4 trusted origins exactly', () => {
+  for (const o of [
+    'https://localhost',
+    'http://localhost',
+    'capacitor://localhost',
+    'ionic://localhost',
+  ]) {
+    assert.equal(isCapacitorOrigin(o), true, `${o} must match`);
+  }
+});
+
+test('L11.12 isCapacitorOrigin tolerates trailing slash and mixed case', () => {
+  assert.equal(isCapacitorOrigin('https://localhost/'), true);
+  assert.equal(isCapacitorOrigin('CAPACITOR://LOCALHOST'), true);
+});
+
+test('L11.13 isCapacitorOrigin rejects empty/falsy and lookalikes', () => {
+  assert.equal(isCapacitorOrigin(''), false);
+  assert.equal(isCapacitorOrigin(null), false);
+  assert.equal(isCapacitorOrigin(undefined), false);
+  assert.equal(isCapacitorOrigin('https://localhost.evil'), false);
+  assert.equal(isCapacitorOrigin('https://localhost:3000'), false);
+  assert.equal(isCapacitorOrigin('https://www.aptrucking.in'), false);
+});
+
+test('L11.14 CAPACITOR_TRUSTED_ORIGINS contains exactly the expected 4 entries', () => {
+  // Membership is the actual security contract. Adding any other entry
+  // re-opens cross-site CSRF, so we pin the exact size + members.
+  assert.equal(CAPACITOR_TRUSTED_ORIGINS.size, 4);
+  for (const o of [
+    'https://localhost',
+    'http://localhost',
+    'capacitor://localhost',
+    'ionic://localhost',
+  ]) {
+    assert.equal(CAPACITOR_TRUSTED_ORIGINS.has(o), true);
+  }
 });

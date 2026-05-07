@@ -8,8 +8,17 @@ export const ADMIN_ACCESS_COOKIE = 'st_admin_access';
 export const ADMIN_REFRESH_COOKIE = 'st_admin_refresh';
 
 function getJwtConfig() {
-  const jwtSecret = process.env.JWT_SECRET || 'speedy-trucks-ephemeral-jwt-secret';
-  const jwtRefreshSecret = process.env.JWT_REFRESH_SECRET || `${jwtSecret}-refresh`;
+  // Hard requirement: JWT_SECRET / JWT_REFRESH_SECRET must be configured.
+  // validateStartupEnv() already enforces this on boot, but we re-check here
+  // as defence-in-depth so any code path that reaches signing/verifying
+  // tokens cannot silently fall back to a hard-coded ephemeral secret.
+  const jwtSecret = process.env.JWT_SECRET;
+  const jwtRefreshSecret = process.env.JWT_REFRESH_SECRET;
+  if (!jwtSecret || !jwtRefreshSecret) {
+    throw new Error(
+      'JWT_SECRET and JWT_REFRESH_SECRET must be set. Refusing to issue/verify tokens with a fallback secret.'
+    );
+  }
   const jwtExpire = process.env.JWT_EXPIRE || '15m';
   const jwtRefreshExpire = process.env.JWT_REFRESH_EXPIRE || '7d';
 

@@ -21,6 +21,7 @@ import promClient from 'prom-client';
 import connectDatabase from './config/db.js';
 import { validateStartupEnv } from './config/envValidation.js';
 import { getAllowedOriginsFromEnv } from './config/origins.js';
+import { isCapacitorOrigin } from './config/capacitorOrigins.js';
 import { globalErrorHandler, correlationIdMiddleware } from './middleware/errorHandler.js';
 import { auditLogger } from './middleware/auditLogger.js';
 import { enforceTrustedOriginForCookieAuth } from './middleware/csrfProtection.js';
@@ -209,6 +210,18 @@ const createApp = async () => {
       || cookies['st_admin_access'] || cookies['st_admin_refresh']
     );
     if (!hasAuthCookie) return next();
+    // Capacitor / native-WebView origins occasionally fail to round-trip the
+    // non-HttpOnly `csrf-token` cookie reliably (mixed cookie partitioning
+    // semantics across Android WebView versions). For *authenticated*
+    // requests originating from a trusted Capacitor origin we still rely on
+    // the cookie auth (st_access is HttpOnly + SameSite=None+Secure) and
+    // skip the strict double-submit check. This narrows the relaxation to
+    // first-party native origins only — browser cross-site requests are
+    // still blocked.
+    const requestOrigin = String(req.get('origin') || '').replace(/\/$/, '').toLowerCase();
+    if (isCapacitorOrigin(requestOrigin)) {
+      return next();
+    }
     // Double-submit CSRF token check — the frontend reads the non-HttpOnly
     // `csrf-token` cookie and echoes it as the `X-CSRF-Token` request header.
     const cookieToken = cookies['csrf-token'] || '';

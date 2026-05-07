@@ -18,7 +18,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { apiRequest } from '../utils/api';
+import { apiRequest, LONG_TIMEOUT_MS } from '../utils/api';
 import { useSubscription } from '../hooks/useSubscription';
 
 function loadRazorpayScript() {
@@ -30,6 +30,32 @@ function loadRazorpayScript() {
     script.onerror = () => resolve(false);
     document.body.appendChild(script);
   });
+}
+
+/**
+ * Normalize a payment error into a user-actionable message.
+ *
+ * Captures the most common mobile-WebView failure modes (missing CSRF token,
+ * timeout, generic network error) and rewrites them as recovery guidance so
+ * users aren't stuck at a generic "Payment failed" screen.
+ */
+function normalizePaymentError(error) {
+  const raw = String(error?.message || error || '').trim();
+  if (!raw) return 'Payment failed. Please try again.';
+  const lc = raw.toLowerCase();
+  if (lc.includes('csrf')) {
+    return 'Security check failed. Please log out, sign back in, and retry the payment. (If you just installed/updated the app, clearing app storage may help.)';
+  }
+  if (lc.includes('timeout')) {
+    return 'The payment server took too long to respond. Check your connection and try again in a moment.';
+  }
+  if (lc.includes('network') || lc.includes('failed to fetch')) {
+    return 'Network error reaching the payment server. Check your connection and try again.';
+  }
+  if (lc.includes('service temporarily unavailable')) {
+    return 'Our payment service is temporarily unavailable. Please retry in a moment.';
+  }
+  return raw;
 }
 
 export function Payment() {
@@ -61,6 +87,10 @@ export function Payment() {
       const data = await apiRequest('/payments/subscribe', {
         method: 'POST',
         body: subscribeBody,
+        // Razorpay Orders round-trip can exceed the default 15 s budget on
+        // flaky mobile networks; give it the long budget so the user doesn't
+        // see a spurious TimeoutError before Razorpay actually responds.
+        timeoutMs: LONG_TIMEOUT_MS,
       });
       if (!data.orderId) throw new Error('Payment gateway error');
 
@@ -88,6 +118,11 @@ export function Payment() {
                 razorpay_payment_id: response.razorpay_payment_id,
                 razorpay_signature: response.razorpay_signature,
               },
+              // Verify performs HMAC + DB writes; on slow mobile networks the
+              // post-checkout window can take >15 s. Long budget so users
+              // never see a "request timed out" right after a successful
+              // Razorpay charge (the worst possible UX moment to time out).
+              timeoutMs: LONG_TIMEOUT_MS,
             });
             // Refresh subscription state so the header/nav reflects the new
             // plan immediately without requiring a hard page reload.
@@ -97,7 +132,7 @@ export function Payment() {
             setStatus('success');
           } catch (verifyError) {
             console.error('Payment verification failed:', verifyError);
-            setErrorMessage(verifyError?.message || '');
+            setErrorMessage(normalizePaymentError(verifyError));
             setStatus('error');
           }
         },
@@ -114,7 +149,7 @@ export function Payment() {
       setStatus('redirect');
     } catch (error) {
       console.error(error);
-      setErrorMessage(error?.message || '');
+      setErrorMessage(normalizePaymentError(error));
       setStatus('error');
     }
   }, [planId, cycle, couponCode, user?.name, user?.email, refreshSubscription]);
