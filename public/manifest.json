@@ -1,25 +1,42 @@
 {
   "short_name": "SpeedyTrucks",
   "name": "Speedy Trucks Logistics Platform",
+  "description": "India-first logistics platform for shippers, drivers, brokers, and fleet managers.",
   "icons": [
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
     {
       "src": "favicon.ico",
       "sizes": "64x64 32x32 24x24 16x16",
       "type": "image/x-icon"
     },
     {
-      "src": "aptrucking-logo.png",
-      "type": "image/png",
-      "sizes": "192x192"
+      "src": "brand/app-icon-maskable.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "maskable"
     },
     {
       "src": "aptrucking-logo.png",
       "type": "image/png",
-      "sizes": "512x512"
+      "sizes": "192x192",
+      "purpose": "any"
+    },
+    {
+      "src": "aptrucking-logo.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any"
     }
   ],
   "start_url": ".",
   "display": "standalone",
+  "orientation": "portrait",
   "theme_color": "#0B3D91",
-  "background_color": "#0B3D91"
+  "background_color": "#0B3D91",
+  "categories": ["business", "productivity", "logistics"]
 }

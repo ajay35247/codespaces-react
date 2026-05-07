@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Speedy Trucks — Monochrome Mark
+  Single-color variant for engraving, embossing, single-color print,
+  watermarks, dark surfaces. Use currentColor to inherit any color.
+  Default: cobalt for use on white. Override fill/color in CSS.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Speedy Trucks" fill="currentColor" color="#0B3D91">
+  <title>Speedy Trucks</title>
+  <rect x="0" y="0" width="512" height="512" rx="112" ry="112"/>
+  <g fill="none" stroke="#FFFFFF" stroke-linecap="round" stroke-linejoin="round" stroke-width="44">
+    <path d="M130 196 L190 256 L130 316" stroke-opacity="0.4"/>
+    <path d="M230 196 L290 256 L230 316" stroke-opacity="0.7"/>
+    <path d="M330 196 L390 256 L330 316"/>
+  </g>
+</svg>
