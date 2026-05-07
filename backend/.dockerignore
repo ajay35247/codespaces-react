@@ -1,9 +1,8 @@
-# Backend image is built with the **repo root** as the Docker build context
-# (matches Railway + docker-compose.yml + docker-compose.dev.yml). This file
-# is therefore not the active .dockerignore for the backend image — the root
-# `.dockerignore` is. It is kept here as a reference / safety net for anyone
-# who manually runs `docker build -f Dockerfile.backend backend/` (which is
-# NOT supported; that will fail because the Dockerfile expects the repo root).
+# Active .dockerignore for the backend image. The backend image is always
+# built with `./backend` as the Docker build context — Railway (Root Directory
+# = backend/, see ./railway.toml + ./Dockerfile.backend), prod compose
+# (docker-compose.yml: context: ./backend), and dev compose
+# (docker-compose.dev.yml: context: ./backend) all agree.
 
 # VCS / editor
 .git

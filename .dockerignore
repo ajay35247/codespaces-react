@@ -1,6 +1,7 @@
 # Keep the Docker build context small & deterministic for Railway / CI builds.
-# This file applies to the FRONTEND build (Dockerfile.frontend, context = repo
-# root). The backend uses its own backend/.dockerignore (context = ./backend).
+# This file applies ONLY to the FRONTEND build (Dockerfile.frontend at the
+# repo root, context = repo root). The backend image is built with
+# `./backend` as the context and uses backend/.dockerignore.
 
 # VCS / editor
 .git
