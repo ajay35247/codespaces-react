@@ -1,0 +1,33 @@
+# Backend Dockerfile — co-located inside `backend/` and built with `backend/`
+# as the Docker build context. This is the **single canonical layout** used by:
+#
+#   * Railway production    (Root Directory = backend/, see ./railway.toml)
+#   * docker-compose.yml    (context: ./backend, dockerfile: Dockerfile.backend)
+#   * docker-compose.dev.yml (context: ./backend, dockerfile: Dockerfile.backend, target: dev)
+#
+# Because the build context is `backend/`, COPY paths are NOT prefixed with
+# `backend/`. If you accidentally build from the repo root with this file, the
+# COPYs below will fail loudly (`package.json: not found`) instead of silently
+# shipping a broken image.
+
+FROM node:20-alpine AS dev
+WORKDIR /app
+COPY package.json package-lock.json* ./
+RUN npm install
+COPY src ./src
+EXPOSE 5000
+CMD ["npx", "nodemon", "src/index.js"]
+
+FROM node:20-alpine
+WORKDIR /app
+COPY package.json package-lock.json* ./
+RUN npm install --omit=dev && npm cache clean --force
+COPY src ./src
+# Fail the build loudly (instead of silently shipping a broken image) if the
+# entry script is missing — protects against Docker build context regressions.
+RUN test -f /app/src/index.js || (echo 'ERROR: /app/src/index.js missing — Dockerfile build context is wrong (expected ./backend, no path prefix on COPYs).' >&2 && exit 1)
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup \
+    && chown -R appuser:appgroup /app
+USER appuser
+EXPOSE 5000
+CMD ["node", "src/index.js"]
