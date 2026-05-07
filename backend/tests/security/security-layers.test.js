@@ -618,7 +618,45 @@ test('L11.23 POST /auth/register with stale auth cookie + missing csrf-token coo
   assert.equal(nextCalled, true);
 });
 
-test('L11.24 non-bootstrap authenticated POST still requires CSRF token (regression guard)', () => {
+test('L11.24 POST /auth/request-password-reset with stale auth cookie + missing csrf-token cookie is allowed', () => {
+  process.env.FRONTEND_URL = 'https://www.aptrucking.in';
+  process.env.CLIENT_URL = 'https://www.aptrucking.in';
+  const req = {
+    method: 'POST',
+    path: '/auth/request-password-reset',
+    cookies: { st_access: 'stale-token' },
+    get(header) {
+      if (header === 'origin') return 'https://www.aptrucking.in';
+      if (header === 'authorization') return undefined;
+      return undefined;
+    },
+    headers: {},
+  };
+  let nextCalled = false;
+  enforceTrustedOriginForCookieAuth(req, createRes(), () => { nextCalled = true; });
+  assert.equal(nextCalled, true);
+});
+
+test('L11.25 POST /auth/reset-password with stale auth cookie + missing csrf-token cookie is allowed', () => {
+  process.env.FRONTEND_URL = 'https://www.aptrucking.in';
+  process.env.CLIENT_URL = 'https://www.aptrucking.in';
+  const req = {
+    method: 'POST',
+    path: '/auth/reset-password',
+    cookies: { st_refresh: 'stale-refresh' },
+    get(header) {
+      if (header === 'origin') return 'https://www.aptrucking.in';
+      if (header === 'authorization') return undefined;
+      return undefined;
+    },
+    headers: {},
+  };
+  let nextCalled = false;
+  enforceTrustedOriginForCookieAuth(req, createRes(), () => { nextCalled = true; });
+  assert.equal(nextCalled, true);
+});
+
+test('L11.26 non-bootstrap authenticated POST still requires CSRF token (regression guard)', () => {
   // /auth/logout is authenticated and MUST keep CSRF protection: this
   // exercises the negative path — that the exemption list is narrow.
   process.env.FRONTEND_URL = 'https://www.aptrucking.in';
